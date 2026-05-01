@@ -1368,6 +1368,17 @@ PYRESP
 `.trim();
 }
 
+function buildCompatibleEndpointSandboxSmokeCommand(model: string): string {
+  const script = buildCompatibleEndpointSandboxSmokeScript(model);
+  const encoded = Buffer.from(script, "utf8").toString("base64");
+  return [
+    'tmp="$(mktemp)"',
+    'trap \'rm -f "$tmp"\' EXIT',
+    `python3 -c 'import base64, pathlib, sys; pathlib.Path(sys.argv[1]).write_bytes(base64.b64decode(sys.argv[2]))' "$tmp" ${shellQuote(encoded)}`,
+    'sh "$tmp"',
+  ].join("; ");
+}
+
 function verifyCompatibleEndpointSandboxSmoke(options: {
   sandboxName: string;
   provider: string;
@@ -1434,7 +1445,7 @@ function verifyCompatibleEndpointSandboxSmoke(options: {
     );
   }
 
-  const script = buildCompatibleEndpointSandboxSmokeScript(options.model);
+  const script = buildCompatibleEndpointSandboxSmokeCommand(options.model);
   const smokeResult = runOpenshell(
     ["sandbox", "exec", "-n", options.sandboxName, "--", "sh", "-lc", script],
     {
@@ -8630,6 +8641,7 @@ module.exports = {
   buildOrphanedSandboxRollbackMessage,
   buildProviderArgs,
   buildGatewayBootstrapSecretsScript,
+  buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
   buildSandboxConfigSyncScript,
   compactText,

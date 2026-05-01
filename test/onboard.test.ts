@@ -41,6 +41,7 @@ type OnboardTestInternals = {
     credentialEnv: string,
     baseUrl: string | null,
   ) => string[];
+  buildCompatibleEndpointSandboxSmokeCommand: (model: string) => string;
   buildCompatibleEndpointSandboxSmokeScript: (model: string) => string;
   buildSandboxConfigSyncScript: ShimFn<string>;
   classifySandboxCreateFailure: (output?: string) => { kind: string; uploadedToGateway: boolean };
@@ -148,6 +149,7 @@ if (!isOnboardTestInternals(onboardTestInternals)) {
 
 const {
   buildProviderArgs,
+  buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
   buildSandboxConfigSyncScript,
   classifySandboxCreateFailure,
@@ -299,6 +301,15 @@ describe("onboard helpers", () => {
     assert.match(script, /curl[\s\S]*\/chat\/completions/);
     assert.doesNotMatch(script, /COMPATIBLE_API_KEY/);
     assert.doesNotMatch(script, /api\.deepinfra\.com/);
+  });
+
+  it("wraps compatible-endpoint smoke script without newlines for OpenShell exec", () => {
+    const command = buildCompatibleEndpointSandboxSmokeCommand("deepseek-ai/DeepSeek-V4-Flash");
+
+    assert.doesNotMatch(command, /[\r\n]/);
+    assert.match(command, /base64\.b64decode/);
+    assert.match(command, /sh "\$tmp"/);
+    assert.doesNotMatch(command, /COMPATIBLE_API_KEY/);
   });
 
   it("uses explicit messaging selections for policy suggestions when provided", () => {
