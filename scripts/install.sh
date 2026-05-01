@@ -1062,12 +1062,47 @@ install_vllm() {
       info "vLLM already running on :${port} with model '${model_id}' — skipping pull"
       return 0
     fi
+
+    # Capture VRAM on the target GPU before teardown so we can prove the
+    # old model's memory was released.
+    local vram_before=""
+    if [[ -n "$best_gpu_idx" ]] && command -v nvidia-smi >/dev/null 2>&1; then
+      vram_before=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits \
+        -i "$best_gpu_idx" 2>/dev/null | tr -d ' ')
+    fi
+
     printf "${C_RED}[WARN]  vLLM is running a different model — replacing it:${C_RESET}\n"
     printf "${C_RED}        Loaded:    %s${C_RESET}\n" "$running_model"
     printf "${C_RED}        Requested: %s${C_RESET}\n" "$model_id"
     printf "${C_RED}        Stopping container '%s'...${C_RESET}\n" "$container_name"
     maybe_sudo docker stop "$container_name" 2>/dev/null || true
     maybe_sudo docker rm   "$container_name" 2>/dev/null || true
+
+    # Wait for the container to actually disappear and for CUDA to release
+    # the GPU memory. nvidia-smi can lag a few seconds after `docker stop`.
+    if [[ -n "$best_gpu_idx" ]] && command -v nvidia-smi >/dev/null 2>&1; then
+      local wait_n=0 vram_after="" prev=""
+      while (( wait_n < 30 )); do
+        if maybe_sudo docker ps -a --format '{{.Names}}' 2>/dev/null \
+             | grep -q "^${container_name}$"; then
+          sleep 1
+          (( wait_n++ ))
+          continue
+        fi
+        vram_after=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits \
+          -i "$best_gpu_idx" 2>/dev/null | tr -d ' ')
+        # Stable for two consecutive samples → memory release has settled.
+        [[ -n "$prev" && "$vram_after" == "$prev" ]] && break
+        prev="$vram_after"
+        sleep 1
+        (( wait_n++ ))
+      done
+      printf "${C_RED}        Container removed.${C_RESET}\n"
+      printf "${C_RED}        GPU %s VRAM used: %s MiB → %s MiB (memory released)${C_RESET}\n" \
+        "$best_gpu_idx" "${vram_before:-?}" "${vram_after:-?}"
+    else
+      printf "${C_RED}        Container removed.${C_RESET}\n"
+    fi
   fi
 
   # Remove any remaining stopped container before creating a new one.
@@ -1112,15 +1147,25 @@ install_vllm() {
   # as soon as docker-proxy binds the host port, which is before vLLM is ready.
   # Allow up to 10 minutes (large models take 5-6 min on first load from cache).
   info "Waiting for vLLM to become ready on :${port} (up to 10 min for large models)…"
-  local attempts=0 max_attempts=60
-  until curl -sf "http://127.0.0.1:${port}/health" >/dev/null 2>&1 \
-        || (( ++attempts >= max_attempts )); do
-    sleep 10
+  local timeout_sec=600 poll_sec=5
+  local start_ts elapsed remaining mm ss
+  start_ts=$(date +%s)
+  while ! curl -sf "http://127.0.0.1:${port}/health" >/dev/null 2>&1; do
+    elapsed=$(( $(date +%s) - start_ts ))
+    if (( elapsed >= timeout_sec )); then
+      break
+    fi
+    remaining=$(( timeout_sec - elapsed ))
+    mm=$(( remaining / 60 )); ss=$(( remaining % 60 ))
+    printf "  [vLLM] loading model… %3ds elapsed, up to %dm%02ds remaining\n" \
+      "$elapsed" "$mm" "$ss"
+    sleep "$poll_sec"
   done
   if ! curl -sf "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
-    warn "vLLM did not become healthy within $((max_attempts * 10))s — continuing; onboard will retry"
+    warn "vLLM did not become healthy within ${timeout_sec}s — continuing; onboard will retry"
   else
-    info "vLLM ready on :${port}"
+    elapsed=$(( $(date +%s) - start_ts ))
+    info "vLLM ready on :${port} after ${elapsed}s"
   fi
 }
 
