@@ -504,10 +504,57 @@
 <section class="tex2jax_ignore mathjax_ignore" id="manage-sandbox-lifecycle">
 <h1>Manage Sandbox Lifecycle<a class="headerlink" href="#manage-sandbox-lifecycle" title="Link to this heading">#</a></h1>
 <p>Use this guide after you finish the <a class="reference internal" href="../get-started/quickstart.html"><span class="std std-doc">OpenClaw quickstart</span></a>.
-It covers day-two sandbox operations such as managing ports, rebuilding safely, upgrading, and uninstalling.
+It covers day-two sandbox operations such as listing sandboxes, checking health, managing ports, rebuilding safely, upgrading, and uninstalling.
 When a workflow uses the lower-level OpenShell CLI, see <a class="reference internal" href="../reference/cli-selection-guide.html"><span class="std std-doc">CLI Selection Guide</span></a> for the boundary between <code class="docutils literal notranslate"><span class="pre">nemoclaw</span></code> and <code class="docutils literal notranslate"><span class="pre">openshell</span></code>.</p>
-<section id="restart-the-port-forward">
-<h2>Restart the Port Forward<a class="headerlink" href="#restart-the-port-forward" title="Link to this heading">#</a></h2>
+<section id="list-sandboxes">
+<h2>List Sandboxes<a class="headerlink" href="#list-sandboxes" title="Link to this heading">#</a></h2>
+<p>List every sandbox registered on this host:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>nemoclaw<span class="w"> </span>list
+</pre></div>
+</div>
+<p>The list shows each sandbox’s model, provider, policy presets, active SSH session indicator, and dashboard URL when a dashboard port is recorded.
+Use JSON output for scripts:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>nemoclaw<span class="w"> </span>list<span class="w"> </span>--json
+</pre></div>
+</div>
+</section>
+<section id="check-sandbox-health">
+<h2>Check Sandbox Health<a class="headerlink" href="#check-sandbox-health" title="Link to this heading">#</a></h2>
+<p>Check a specific sandbox’s health, inference route, active connections, live policy, update status, and messaging-channel overlap warnings:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>nemoclaw<span class="w"> </span>my-assistant<span class="w"> </span>status
+</pre></div>
+</div>
+<p>Use the host-level status command when you want the sandbox inventory plus host auxiliary service state, such as cloudflared:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>nemoclaw<span class="w"> </span>status
+</pre></div>
+</div>
+</section>
+<section id="inspect-logs">
+<h2>Inspect Logs<a class="headerlink" href="#inspect-logs" title="Link to this heading">#</a></h2>
+<p>View recent sandbox logs:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>nemoclaw<span class="w"> </span>my-assistant<span class="w"> </span>logs
+</pre></div>
+</div>
+<p>Stream logs while you reproduce a problem:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>nemoclaw<span class="w"> </span>my-assistant<span class="w"> </span>logs<span class="w"> </span>--follow
+</pre></div>
+</div>
+<p>The log command reads both OpenClaw gateway output and OpenShell audit events, so policy denials appear beside gateway logs.</p>
+</section>
+<section id="collect-diagnostics">
+<h2>Collect Diagnostics<a class="headerlink" href="#collect-diagnostics" title="Link to this heading">#</a></h2>
+<p>Collect diagnostics for bug reports or support handoff:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>nemoclaw<span class="w"> </span>debug<span class="w"> </span>--sandbox<span class="w"> </span>my-assistant<span class="w"> </span>--output<span class="w"> </span>nemoclaw-debug.tar.gz
+</pre></div>
+</div>
+<p>Use <code class="docutils literal notranslate"><span class="pre">--quick</span></code> for a smaller local summary:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>nemoclaw<span class="w"> </span>debug<span class="w"> </span>--quick<span class="w"> </span>--sandbox<span class="w"> </span>my-assistant
+</pre></div>
+</div>
+<p>The debug command gathers system information, Docker state, gateway logs, and sandbox status.</p>
+</section>
+<section id="manage-dashboard-ports">
+<h2>Manage Dashboard Ports<a class="headerlink" href="#manage-dashboard-ports" title="Link to this heading">#</a></h2>
 <p>If the forward stopped, or the installer reported that no active forward was found and the URL does not load, restart it manually with the port from the install summary.</p>
 <div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>openshell<span class="w"> </span>forward<span class="w"> </span>start<span class="w"> </span>--background<span class="w"> </span>&lt;dashboard-port&gt;<span class="w"> </span>my-gpt-claw
 </pre></div>
@@ -535,21 +582,6 @@ When the default port is already held by another sandbox, <code class="docutils 
 </pre></div>
 </div>
 <p>For full details on port conflicts and overrides, refer to <a class="reference internal" href="../reference/troubleshooting.html#port-already-in-use"><span class="std std-ref">Port already in use</span></a>.</p>
-</section>
-<section id="chat-with-the-agent-from-the-terminal">
-<h2>Chat with the Agent from the Terminal<a class="headerlink" href="#chat-with-the-agent-from-the-terminal" title="Link to this heading">#</a></h2>
-<p>Connect to the sandbox and use the OpenClaw terminal UI.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>nemoclaw<span class="w"> </span>my-assistant<span class="w"> </span>connect
-</pre></div>
-</div>
-<p>In the sandbox shell, open the OpenClaw terminal UI and start a chat.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>openclaw<span class="w"> </span>tui
-</pre></div>
-</div>
-<p>To send a single message and print the response instead, run:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>openclaw<span class="w"> </span>agent<span class="w"> </span>--agent<span class="w"> </span>main<span class="w"> </span>--local<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;hello&quot;</span><span class="w"> </span>--session-id<span class="w"> </span><span class="nb">test</span>
-</pre></div>
-</div>
 </section>
 <section id="reconfigure-or-recover">
 <h2>Reconfigure or Recover<a class="headerlink" href="#reconfigure-or-recover" title="Link to this heading">#</a></h2>
@@ -733,9 +765,12 @@ Your existing container keeps serving traffic until the new image is ready.</p>
   </div>
   <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="visible nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#restart-the-port-forward">Restart the Port Forward</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#list-sandboxes">List Sandboxes</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#check-sandbox-health">Check Sandbox Health</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#inspect-logs">Inspect Logs</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#collect-diagnostics">Collect Diagnostics</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#manage-dashboard-ports">Manage Dashboard Ports</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#run-multiple-sandboxes">Run Multiple Sandboxes</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#chat-with-the-agent-from-the-terminal">Chat with the Agent from the Terminal</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#reconfigure-or-recover">Reconfigure or Recover</a><ul class="nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#change-inference-model-or-api">Change Inference Model or API</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#reset-a-stored-credential">Reset a Stored Credential</a></li>
