@@ -41,6 +41,7 @@ type OnboardTestInternals = {
     credentialEnv: string,
     baseUrl: string | null,
   ) => string[];
+  buildCompatibleEndpointSandboxSmokeScript: (model: string) => string;
   buildSandboxConfigSyncScript: ShimFn<string>;
   classifySandboxCreateFailure: (output?: string) => { kind: string; uploadedToGateway: boolean };
   compactText: (value?: string) => string;
@@ -103,6 +104,11 @@ type OnboardTestInternals = {
   summarizeCurlFailure: ShimFn<string>;
   summarizeProbeFailure: ShimFn<string>;
   shouldIncludeBuildContextPath: ShimFn<boolean>;
+  shouldRunCompatibleEndpointSandboxSmoke: (
+    provider?: string | null,
+    messagingChannels?: string[] | null,
+    agent?: AgentDefinition | null,
+  ) => boolean;
   writeSandboxConfigSyncFile: (script: string) => string;
 };
 
@@ -142,6 +148,7 @@ if (!isOnboardTestInternals(onboardTestInternals)) {
 
 const {
   buildProviderArgs,
+  buildCompatibleEndpointSandboxSmokeScript,
   buildSandboxConfigSyncScript,
   classifySandboxCreateFailure,
   compactText,
@@ -183,6 +190,7 @@ const {
   summarizeCurlFailure,
   summarizeProbeFailure,
   shouldIncludeBuildContextPath,
+  shouldRunCompatibleEndpointSandboxSmoke,
   writeSandboxConfigSyncFile,
   findDashboardForwardOwner,
   formatOnboardConfigSummary,
@@ -264,6 +272,33 @@ describe("onboard helpers", () => {
     assert.doesNotMatch(script, /cat > ~\/\.openclaw\/openclaw\.json/);
     assert.doesNotMatch(script, /openclaw models set/);
     assert.match(script, /^exit$/m);
+  });
+
+  it("runs the compatible-endpoint sandbox smoke only for OpenClaw messaging sandboxes", () => {
+    expect(shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", ["telegram"], null)).toBe(
+      true,
+    );
+    expect(shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", [], null)).toBe(false);
+    expect(shouldRunCompatibleEndpointSandboxSmoke("openai-api", ["telegram"], null)).toBe(false);
+    expect(
+      shouldRunCompatibleEndpointSandboxSmoke(
+        "compatible-endpoint",
+        ["telegram"],
+        loadAgent("hermes"),
+      ),
+    ).toBe(false);
+  });
+
+  it("builds a compatible-endpoint smoke script that validates managed inference config", () => {
+    const script = buildCompatibleEndpointSandboxSmokeScript("deepseek-ai/DeepSeek-V4-Flash");
+
+    assert.match(script, /models\.providers\.inference/);
+    assert.match(script, /https:\/\/inference\.local\/v1/);
+    assert.match(script, /apiKey.*unused/);
+    assert.match(script, /agents\.defaults\.model\.primary/);
+    assert.match(script, /curl[\s\S]*\/chat\/completions/);
+    assert.doesNotMatch(script, /COMPATIBLE_API_KEY/);
+    assert.doesNotMatch(script, /api\.deepinfra\.com/);
   });
 
   it("uses explicit messaging selections for policy suggestions when provided", () => {
@@ -557,6 +592,21 @@ describe("onboard helpers", () => {
         inferenceBaseUrl: "https://inference.local/v1",
         inferenceApi: "openai-completions",
         inferenceCompat: null,
+      },
+    );
+  });
+
+  it("maps OpenAI-compatible endpoints to the managed inference provider", () => {
+    assert.deepEqual(
+      getSandboxInferenceConfig("deepseek-ai/DeepSeek-V4-Flash", "compatible-endpoint"),
+      {
+        providerKey: "inference",
+        primaryModelRef: "inference/deepseek-ai/DeepSeek-V4-Flash",
+        inferenceBaseUrl: "https://inference.local/v1",
+        inferenceApi: "openai-completions",
+        inferenceCompat: {
+          supportsStore: false,
+        },
       },
     );
   });

@@ -1122,3 +1122,40 @@ describe("Slack token rewriter (#2085)", () => {
     expect(run('{"token":"openshell:resolve:env:SLACK_BOT_TOKEN"}\n')).toBe(1);
   });
 });
+
+describe("Telegram diagnostics (#2766)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("installs a Telegram diagnostics preload only when Telegram is configured", () => {
+    expect(src).toContain('_TELEGRAM_DIAGNOSTICS_SCRIPT="/tmp/nemoclaw-telegram-diagnostics.js"');
+    expect(src).toContain("install_telegram_diagnostics()");
+    expect(src).toContain("grep -q '\"telegram\"'");
+    expect(src).toContain(
+      'export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_TELEGRAM_DIAGNOSTICS_SCRIPT"',
+    );
+  });
+
+  it("logs provider readiness and inference-specific agent failures", () => {
+    expect(src).toContain("provider ready (Bot API reachable; agent replies use inference.local)");
+    expect(src).toContain("agent turn failed after provider startup; inference error:");
+    expect(src).toContain("LLM request failed");
+    expect(src).toContain("Embedded agent failed before reply");
+  });
+
+  it("calls install_telegram_diagnostics in both entrypoint paths before gateway launch", () => {
+    const calls =
+      src.match(/configure_messaging_channels[\s\S]*?install_telegram_diagnostics/g) || [];
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("validates the Telegram diagnostics preload permissions when present", () => {
+    const calls = src.match(/validate_tmp_permissions\s+.*"\$_TELEGRAM_DIAGNOSTICS_SCRIPT"/g) || [];
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("connect-shell rc sources the diagnostics preload when present", () => {
+    expect(src).toMatch(
+      /\[ -f \\"\$_TELEGRAM_DIAGNOSTICS_SCRIPT\\" \].*--require \$_TELEGRAM_DIAGNOSTICS_SCRIPT/,
+    );
+  });
+});
