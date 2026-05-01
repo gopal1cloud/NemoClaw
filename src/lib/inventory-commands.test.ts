@@ -303,9 +303,9 @@ describe("inventory commands", () => {
 
   it("flags messaging bridge as degraded when checkMessagingBridgeHealth reports conflicts", () => {
     const lines: string[] = [];
-    const checkMessagingBridgeHealth = vi.fn().mockReturnValue([
-      { channel: "telegram", conflicts: 7 },
-    ]);
+    const checkMessagingBridgeHealth = vi
+      .fn()
+      .mockReturnValue([{ channel: "telegram", conflicts: 7 }]);
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
@@ -349,9 +349,9 @@ describe("inventory commands", () => {
 
   it("prints a cross-sandbox overlap warning when backfillAndFindOverlaps reports overlaps", () => {
     const lines: string[] = [];
-    const backfillAndFindOverlaps = vi.fn().mockReturnValue([
-      { channel: "telegram", sandboxes: ["alice", "bob"] },
-    ]);
+    const backfillAndFindOverlaps = vi
+      .fn()
+      .mockReturnValue([{ channel: "telegram", sandboxes: ["alice", "bob"] }]);
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
@@ -367,20 +367,22 @@ describe("inventory commands", () => {
     });
 
     expect(backfillAndFindOverlaps).toHaveBeenCalled();
-    expect(
-      lines.some((l) => l.includes("telegram is enabled on both 'alice' and 'bob'")),
-    ).toBe(true);
+    expect(lines.some((l) => l.includes("telegram is enabled on both 'alice' and 'bob'"))).toBe(
+      true,
+    );
   });
 
   it("surfaces Hermes gateway log when messaging is degraded", () => {
     const lines: string[] = [];
-    const checkMessagingBridgeHealth = vi.fn().mockReturnValue([
-      { channel: "telegram", conflicts: 3 },
-    ]);
-    const readGatewayLog = vi.fn().mockReturnValue(
-      "2026-04-17 getUpdates conflict: terminated by other getUpdates\n" +
-      "2026-04-17 retrying in 5s",
-    );
+    const checkMessagingBridgeHealth = vi
+      .fn()
+      .mockReturnValue([{ channel: "telegram", conflicts: 3 }]);
+    const readGatewayLog = vi
+      .fn()
+      .mockReturnValue(
+        "2026-04-17 getUpdates conflict: terminated by other getUpdates\n" +
+          "2026-04-17 retrying in 5s",
+      );
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
@@ -407,9 +409,9 @@ describe("inventory commands", () => {
 
   it("does not show gateway log for non-Hermes sandboxes", () => {
     const lines: string[] = [];
-    const checkMessagingBridgeHealth = vi.fn().mockReturnValue([
-      { channel: "telegram", conflicts: 3 },
-    ]);
+    const checkMessagingBridgeHealth = vi
+      .fn()
+      .mockReturnValue([{ channel: "telegram", conflicts: 3 }]);
     const readGatewayLog = vi.fn();
     showStatusCommand({
       listSandboxes: () => ({

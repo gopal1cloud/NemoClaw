@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { getChatCompletionsProbePayload } from "../../dist/lib/onboard-inference-probes";
+const { getChatCompletionsProbePayload } = require("../../dist/lib/onboard-inference-probes");
 
 describe("OpenAI-compatible inference probes", () => {
   it("uses the NVIDIA Build request shape for DeepSeek V4 Pro", () => {
