@@ -31,6 +31,7 @@ SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-rebuild-hm}"
 register_sandbox_for_teardown "$SANDBOX_NAME"
 
 OLD_HERMES_VERSION="v2026.4.13"
+OLD_HERMES_REGISTRY_VERSION="${OLD_HERMES_VERSION#v}"
 OLD_HERMES_TARBALL_SHA256="5e4529b8cb6e4821eb916b81517e48125109b1764d6d1e68a204a9f0ddf2d98c"
 MARKER_FILE="/sandbox/.hermes/memories/rebuild-marker.txt"
 MARKER_CONTENT="REBUILD_HM_E2E_$(date +%s)"
@@ -199,7 +200,7 @@ reg = {'sandboxes': {'${SANDBOX_NAME}': {
     'policies': [],
     'policyTier': None,
     'agent': 'hermes',
-    'agentVersion': '2026.4.13'
+    'agentVersion': '${OLD_HERMES_REGISTRY_VERSION}'
 }}, 'defaultSandbox': '${SANDBOX_NAME}'}
 with open('${REGISTRY_FILE}', 'w') as f:
     json.dump(reg, f, indent=2)
@@ -278,10 +279,10 @@ with open('${REGISTRY_FILE}') as f:
 sb = data.get('sandboxes', {}).get('${SANDBOX_NAME}', {})
 print(sb.get('agentVersion', 'null'))
 " 2>/dev/null || echo "error")
-if [ "$REGISTRY_VERSION" != "null" ] && [ "$REGISTRY_VERSION" != "error" ] && [ "$REGISTRY_VERSION" != "2026.3.12" ]; then
+if [ "$REGISTRY_VERSION" != "null" ] && [ "$REGISTRY_VERSION" != "error" ] && [ "$REGISTRY_VERSION" != "$OLD_HERMES_REGISTRY_VERSION" ]; then
   pass "Registry agentVersion updated to ${REGISTRY_VERSION}"
 else
-  fail "Registry agentVersion not updated: got '${REGISTRY_VERSION}', expected != '2026.3.12'"
+  fail "Registry agentVersion not updated: got '${REGISTRY_VERSION}', expected != '${OLD_HERMES_REGISTRY_VERSION}'"
 fi
 
 # No credentials in backup

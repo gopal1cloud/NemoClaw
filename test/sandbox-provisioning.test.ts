@@ -91,7 +91,8 @@ describe("Hermes sandbox provisioning", () => {
       `nohup gosu gateway sh -c 'exec "$@" >/tmp/gateway.log 2>&1' sh "$HERMES" gateway run`,
     );
     for (const dockerSrc of [src, baseSrc]) {
-      expect(dockerSrc).toContain("chmod 770 /sandbox/.hermes");
+      expect(dockerSrc).toContain("chmod 750 /sandbox/.hermes");
+      expect(dockerSrc).toContain("/sandbox/.hermes/runtime");
       expect(dockerSrc).toContain("/sandbox/.hermes/logs");
       expect(dockerSrc).toContain("/sandbox/.hermes/cache");
     }

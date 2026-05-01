@@ -42,14 +42,38 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # ── Early stderr/stdout capture ──────────────────────────────────
 # Capture all entrypoint output to /tmp/nemoclaw-start.log so startup
 # failures before /tmp/gateway.log exists are still diagnosable.
+prepare_restricted_log() {
+  local path="$1"
+  local owner="${2:-}"
+  local mode="${3:-600}"
+  local dir base tmp
+
+  dir="$(dirname "$path")"
+  base="$(basename "$path")"
+  tmp="$(mktemp "${dir}/.${base}.tmp.XXXXXX")" || return 1
+  : >"$tmp" || {
+    rm -f "$tmp"
+    return 1
+  }
+  if [ "$(id -u)" -eq 0 ] && [ -n "$owner" ] && ! chown "$owner" "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! chmod "$mode" "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! mv -f "$tmp" "$path"; then
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
 _START_LOG="/tmp/nemoclaw-start.log"
 if [ "$(id -u)" -eq 0 ]; then
-  : >"$_START_LOG"
-  chown root:root "$_START_LOG"
-  chmod 600 "$_START_LOG"
+  prepare_restricted_log "$_START_LOG" root:root 600
 else
-  : >"$_START_LOG"
-  chmod 600 "$_START_LOG" 2>/dev/null || true
+  prepare_restricted_log "$_START_LOG" "" 600
 fi
 exec > >(tee -a "$_START_LOG") 2> >(tee -a "$_START_LOG" >&2)
 
@@ -91,10 +115,9 @@ PUBLIC_PORT=8642
 INTERNAL_PORT=18642
 HERMES="$(command -v hermes)" # Resolve once, use absolute path everywhere
 
-# Hermes writes state files (PID, state.db, .channel_directory) directly into
-# HERMES_HOME alongside config. Config is mutable by default for the sandbox user
-# and group-readable by the gateway user. Runtime state dirs are group-writable
-# because the Hermes gateway writes logs, PID files, and channel directory state.
+# Hermes resolves config and runtime state relative to HERMES_HOME. The config
+# root is mutable by the sandbox owner and readable by the gateway group, while
+# gateway-created top-level state is redirected to a scoped runtime directory.
 # Immutability is opt-in via `shields up`.
 HERMES_DIR="/sandbox/.hermes"
 HERMES_HASH_FILE="/etc/nemoclaw/hermes.config-hash"
@@ -474,9 +497,7 @@ if [ "$(id -u)" -ne 0 ]; then
     exec "${NEMOCLAW_CMD[@]}"
   fi
 
-  # TODO(#2277-P2): migrate to shared emit_restricted_log() helper
-  touch /tmp/gateway.log
-  chmod 600 /tmp/gateway.log
+  prepare_restricted_log /tmp/gateway.log "" 600
 
   # Defence-in-depth: verify /tmp file permissions before launching services.
   # shellcheck disable=SC2119
@@ -521,10 +542,7 @@ if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
 fi
 
 # SECURITY: Protect gateway log from sandbox user tampering
-# TODO(#2277-P2): migrate to shared emit_restricted_log() helper
-touch /tmp/gateway.log
-chown gateway:gateway /tmp/gateway.log
-chmod 600 /tmp/gateway.log
+prepare_restricted_log /tmp/gateway.log gateway:gateway 600
 
 # Defence-in-depth: verify /tmp file permissions before launching services.
 # shellcheck disable=SC2119
