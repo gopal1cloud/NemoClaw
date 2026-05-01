@@ -547,8 +547,8 @@ For details, refer to <a class="reference internal" href="../reference/commands.
 Open Telegram, send <code class="docutils literal notranslate"><span class="pre">/newbot</span></code> to <a class="reference external" href="https://t.me/BotFather" rel="noreferer noopener" target="_blank">&#64;BotFather</a>, follow the prompts, and copy the token.
 <code class="docutils literal notranslate"><span class="pre">TELEGRAM_ALLOWED_IDS</span></code> is a comma-separated list of Telegram user IDs for DM access.
 Group chats stay open by default so rebuilt sandboxes do not silently drop Telegram group messages because of an empty group allowlist.
-Set <code class="docutils literal notranslate"><span class="pre">TELEGRAM_REQUIRE_MENTION=1</span></code> to make the bot reply in Telegram groups only when mentioned.
-Direct messages are unaffected by this setting and remain subject to pairing and <code class="docutils literal notranslate"><span class="pre">TELEGRAM_ALLOWED_IDS</span></code>.</p>
+Set <code class="docutils literal notranslate"><span class="pre">TELEGRAM_REQUIRE_MENTION=1</span></code> to make the bot reply in Telegram groups only when users mention it.
+Pairing and <code class="docutils literal notranslate"><span class="pre">TELEGRAM_ALLOWED_IDS</span></code> still govern direct messages.</p>
 <p>Discord uses a bot token from the Discord Developer Portal.
 For server channels, enable Developer Mode in Discord, right-click the server, and copy the Server ID into <code class="docutils literal notranslate"><span class="pre">DISCORD_SERVER_ID</span></code>.
 By default, NemoClaw configures the bot to reply only when mentioned.
@@ -633,7 +633,7 @@ If you enable a messaging channel and another sandbox already uses the same toke
 <h2>Stop Messaging Delivery<a class="headerlink" href="#stop-messaging-delivery" title="Link to this heading">#</a></h2>
 <p>Use <code class="docutils literal notranslate"><span class="pre">channels</span> <span class="pre">stop</span></code> when you want to pause one bridge and keep the sandbox running.
 Use <code class="docutils literal notranslate"><span class="pre">nemoclaw</span> <span class="pre">tunnel</span> <span class="pre">stop</span></code> or its deprecated alias <code class="docutils literal notranslate"><span class="pre">nemoclaw</span> <span class="pre">stop</span></code> when you want to stop host auxiliary services and also ask NemoClaw to stop the OpenClaw gateway inside the selected sandbox.
-Stopping the in-sandbox gateway stops Telegram, Discord, and Slack polling for that sandbox until the sandbox or gateway is started again.</p>
+Stopping the in-sandbox gateway stops Telegram, Discord, and Slack polling for that sandbox until you restart the sandbox or gateway.</p>
 </section>
 <section id="confirm-delivery">
 <h2>Confirm Delivery<a class="headerlink" href="#confirm-delivery" title="Link to this heading">#</a></h2>
@@ -643,7 +643,7 @@ Use the matching policy preset (<code class="docutils literal notranslate"><span
 </section>
 <section id="tunnel-command">
 <h2>Tunnel Command<a class="headerlink" href="#tunnel-command" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">nemoclaw</span> <span class="pre">tunnel</span> <span class="pre">start</span></code> starts cloudflared when it is installed, which can expose the dashboard with a public URL.
+<p>When the host has <code class="docutils literal notranslate"><span class="pre">cloudflared</span></code>, <code class="docutils literal notranslate"><span class="pre">nemoclaw</span> <span class="pre">tunnel</span> <span class="pre">start</span></code> starts a cloudflared tunnel that can expose the dashboard with a public URL.
 <code class="docutils literal notranslate"><span class="pre">nemoclaw</span> <span class="pre">tunnel</span> <span class="pre">stop</span></code> stops the tunnel and asks NemoClaw to stop the in-sandbox gateway for the selected or default sandbox.
 The older <code class="docutils literal notranslate"><span class="pre">nemoclaw</span> <span class="pre">start</span></code> still works as a deprecated alias.</p>
 <div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>nemoclaw<span class="w"> </span>tunnel<span class="w"> </span>start

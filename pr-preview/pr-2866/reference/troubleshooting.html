@@ -978,7 +978,7 @@ onboarding so the wizard rebuilds the image with chat completions:</p>
 </div>
 <p>If you previously set <code class="docutils literal notranslate"><span class="pre">NEMOCLAW_PREFERRED_API=openai-responses</span></code> to force the
 Responses API, unset it before re-running onboard.</p>
-<p>When Telegram messaging is enabled with an OpenAI-compatible endpoint, onboarding also checks <code class="docutils literal notranslate"><span class="pre">inference.local</span></code> from inside the sandbox.
+<p>When you enable Telegram messaging with an OpenAI-compatible endpoint, onboarding also checks <code class="docutils literal notranslate"><span class="pre">inference.local</span></code> from inside the sandbox.
 If that smoke check fails, fix the compatible-endpoint base URL, credentials, model, or network route before testing the Telegram bot again.</p>
 <p>Do not rely on <code class="docutils literal notranslate"><span class="pre">NEMOCLAW_INFERENCE_API_OVERRIDE</span></code> alone — it patches the config
 at container startup but does not update the Dockerfile ARG baked into the
