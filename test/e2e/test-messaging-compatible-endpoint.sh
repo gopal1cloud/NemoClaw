@@ -103,6 +103,23 @@ host_ip_for_sandbox() {
   echo "127.0.0.1"
 }
 
+quote_for_remote_sh() {
+  local value="${1:-}"
+  printf "'%s'" "$(printf '%s' "$value" | sed "s/'/'\\\\''/g")"
+}
+
+sandbox_exec_sh_script() {
+  local script="$1"
+  shift
+  local encoded remote_cmd arg
+  encoded="$(printf '%s' "$script" | base64 | tr -d '\n')"
+  remote_cmd="tmp=\$(mktemp); trap 'rm -f \"\$tmp\"' EXIT; printf %s $(quote_for_remote_sh "$encoded") | base64 -d > \"\$tmp\"; sh \"\$tmp\""
+  for arg in "$@"; do
+    remote_cmd+=" $(quote_for_remote_sh "$arg")"
+  done
+  openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc "$remote_cmd"
+}
+
 stop_compat_mock() {
   if [ -n "${COMPAT_MOCK_PID:-}" ] && kill -0 "$COMPAT_MOCK_PID" 2>/dev/null; then
     kill "$COMPAT_MOCK_PID" 2>/dev/null || true
@@ -313,8 +330,10 @@ run_compatible_onboard() {
 }
 
 check_openclaw_config() {
-  local output rc=0
-  output=$(openshell sandbox exec --name "$SANDBOX_NAME" -- python3 -c '
+  local output rc=0 script
+  script=$(
+    cat <<'SH'
+python3 - "$1" <<'PY'
 import json
 import sys
 
@@ -348,7 +367,10 @@ print(json.dumps({
     "errors": errors,
 }))
 sys.exit(1 if errors else 0)
-' "$COMPAT_MODEL" 2>&1) || rc=$?
+PY
+SH
+  )
+  output=$(sandbox_exec_sh_script "$script" "$COMPAT_MODEL" 2>&1) || rc=$?
   info "OpenClaw config summary: ${output:0:500}"
   if [ "$rc" -eq 0 ]; then
     pass "C3: openclaw.json uses managed inference.local provider and Telegram config"
@@ -358,14 +380,19 @@ sys.exit(1 if errors else 0)
 }
 
 check_gateway_ready() {
-  local result
-  result=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc 'node -e "
-const net = require(\"net\");
-const sock = net.connect(18789, \"127.0.0.1\");
-sock.on(\"connect\", () => { console.log(\"OPEN\"); sock.end(); });
-sock.on(\"error\", (err) => console.log(\"ERROR \" + err.message));
-setTimeout(() => { console.log(\"TIMEOUT\"); sock.destroy(); }, 5000);
-"' 2>&1 || true)
+  local result script
+  script=$(
+    cat <<'SH'
+node <<'NODE'
+const net = require("net");
+const sock = net.connect(18789, "127.0.0.1");
+sock.on("connect", () => { console.log("OPEN"); sock.end(); });
+sock.on("error", (err) => console.log("ERROR " + err.message));
+setTimeout(() => { console.log("TIMEOUT"); sock.destroy(); }, 5000);
+NODE
+SH
+  )
+  result=$(sandbox_exec_sh_script "$script" 2>&1 || true)
   if echo "$result" | grep -q "OPEN"; then
     pass "C4: Gateway stayed up after Telegram provider initialization"
   else
