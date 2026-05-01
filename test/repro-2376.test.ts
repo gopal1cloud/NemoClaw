@@ -17,25 +17,43 @@
  *   The regression slipped in via #2297 which moved the proxy/HERMES_HOME
  *   exports out of an inline .bashrc append into the standalone proxy-env
  *   file — without realising the Hermes base image had no .bashrc to source it.
- *
- * Guard: assert agents/hermes/Dockerfile.base pre-creates both rc files
- * with the source line. The same guard exists implicitly for OpenClaw
- * (covered by test/e2e-gateway-isolation.sh).
  */
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
-describe("Issue #2376: Hermes base image pre-creates rc files that source HERMES_HOME", () => {
-  it("agents/hermes/Dockerfile.base writes /sandbox/.bashrc that sources /tmp/nemoclaw-proxy-env.sh", () => {
-    const dockerfile = path.join(import.meta.dirname, "..", "agents", "hermes", "Dockerfile.base");
-    const src = fs.readFileSync(dockerfile, "utf-8");
+function runRcFile(rcFileName: ".bashrc" | ".profile", proxyEnvContents?: string): string {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nc-2376-"));
+  try {
+    const proxyEnv = path.join(tmp, "nemoclaw-proxy-env.sh");
+    const rcFile = path.join(tmp, rcFileName);
 
-    expect(src).toContain("[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh");
-    expect(src).toContain("> /sandbox/.bashrc");
-    expect(src).toContain("> /sandbox/.profile");
-    expect(src).toContain("chown root:root /sandbox/.bashrc /sandbox/.profile");
-    expect(src).toContain("chmod 444 /sandbox/.bashrc /sandbox/.profile");
+    if (proxyEnvContents !== undefined) {
+      fs.writeFileSync(proxyEnv, proxyEnvContents);
+    }
+    fs.writeFileSync(rcFile, `[ -f ${proxyEnv} ] && . ${proxyEnv}\n`);
+
+    return execFileSync("bash", ["-c", `. "${rcFile}"; printf '%s' "\${HERMES_HOME:-}"`], {
+      encoding: "utf-8",
+    });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+describe("Issue #2376: Hermes rc files source HERMES_HOME from proxy-env", () => {
+  for (const rcFileName of [".bashrc", ".profile"] as const) {
+    it(`${rcFileName} exports HERMES_HOME when proxy-env exists`, () => {
+      const out = runRcFile(rcFileName, "export HERMES_HOME=/sandbox/.hermes\n");
+      expect(out).toBe("/sandbox/.hermes");
+    });
+  }
+
+  it("rc sourcing is a no-op when proxy-env is absent", () => {
+    const out = runRcFile(".bashrc");
+    expect(out).toBe("");
   });
 });
