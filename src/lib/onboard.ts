@@ -4781,6 +4781,17 @@ async function setupNim(
               console.error(
                 "  Set NEMOCLAW_PROVIDER explicitly, or restore the missing local-inference dependency.",
               );
+              if (recoveredKey === "ollama") {
+                const winHostKey = options.find(
+                  (o) =>
+                    o.key === "start-windows-ollama" || o.key === "install-windows-ollama",
+                )?.key;
+                if (winHostKey) {
+                  console.error(
+                    `  Hint: Windows-host Ollama is available here — re-run with NEMOCLAW_PROVIDER=${winHostKey} to use it.`,
+                  );
+                }
+              }
               process.exit(1);
             }
             providerKey = recoveredKey;

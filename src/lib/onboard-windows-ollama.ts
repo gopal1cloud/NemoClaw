@@ -138,7 +138,17 @@ function launchAndAwaitWindowsOllama(watcherPath?: string): boolean {
   const launchScript = watcherPath
     ? `$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath '${watcherPath.replace(/'/g, "''")}' -WindowStyle Hidden`
     : "$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath ollama.exe -ArgumentList serve -WindowStyle Hidden";
-  runCapture(["powershell.exe", "-Command", launchScript], { ignoreError: true });
+  const result = run(["powershell.exe", "-Command", launchScript], {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  if (result.status !== 0) {
+    const stderr = String(result.stderr || "").trim();
+    console.error(
+      `  PowerShell launch failed (exit ${result.status})${stderr ? `: ${stderr}` : ""}`,
+    );
+    return false;
+  }
   return awaitWindowsOllamaReady();
 }
 
