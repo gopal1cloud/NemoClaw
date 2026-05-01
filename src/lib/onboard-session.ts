@@ -313,7 +313,6 @@ export function createSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
-// eslint-disable-next-line complexity
 export function normalizeSession(data: Session | SessionJsonValue | undefined): Session | null {
   if (!isObject(data) || data.version !== SESSION_VERSION) return null;
 
