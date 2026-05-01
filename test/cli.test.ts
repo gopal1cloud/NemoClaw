@@ -756,6 +756,17 @@ describe("CLI dispatch", () => {
     expect(calls.some((call) => call.startsWith("sandbox exec -n alpha"))).toBe(false);
   });
 
+  it("passes --follow --since to OpenShell logs without an unfiltered gateway tail", () => {
+    const setup = createLogsTestSetup("nemoclaw-cli-logs-since-follow-");
+    const r = setup.runLogs("alpha logs --follow --since 5m");
+
+    const calls = setup.readCalls();
+    expect(r.code).toBe(0);
+    expect(calls).toContain("settings set alpha --key ocsf_json_enabled --value true");
+    expect(calls).toContain("logs alpha -n 200 --source all --since 5m --tail");
+    expect(calls.some((call) => call.startsWith("sandbox exec -n alpha"))).toBe(false);
+  });
+
   it("rejects unknown logs flags", () => {
     const setup = createLogsTestSetup("nemoclaw-cli-logs-unknown-");
     const r = setup.runLogs("alpha logs --bogus 2>&1");
