@@ -4774,6 +4774,24 @@ async function setupNim(
             // Refuse to silently switch providers behind the user's back; if
             // the previously-recorded one is gone, surface the recorded value
             // so the user can fix the dependency or override via env var.
+            // Special case: on WSL, recorded ollama-local was WSL Ollama at
+            // record time. If the only reachable Ollama is now Windows-host
+            // (so the menu's "ollama" key points there), the availability
+            // check below would pass and silently swap the daemon. Detect
+            // and fail-loud with a hint.
+            if (
+              isWsl() &&
+              recordedProvider === "ollama-local" &&
+              ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL
+            ) {
+              console.error(
+                `  Recorded provider '${recordedProvider}' (WSL Ollama) is not available in this environment.`,
+              );
+              console.error(
+                "  Hint: Windows-host Ollama is reachable here; re-run with NEMOCLAW_PROVIDER=ollama to use it explicitly.",
+              );
+              process.exit(1);
+            }
             if (!options.some((o) => o.key === recoveredKey)) {
               console.error(
                 `  Recorded provider '${recordedProvider}' is not available in this environment.`,
