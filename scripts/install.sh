@@ -981,12 +981,12 @@ select_station_model() {
   printf "  ──────────────────────────────────────────────────\n"
   printf "  1) Qwen2.5 72B Instruct         (open weights, no HF token required)\n"
   printf "  2) DeepSeek-R1 Distill 70B      (open weights, no HF token required)\n"
-  printf "  3) Nemotron-3 Super 120B NVFP4  (gated — requires HF token)  [default]\n"
-  printf "  4) MiniMax M2.7                 (open weights, no HF token required)\n"
+  printf "  3) MiniMax M2.7                 (open weights, no HF token required)\n"
+  printf "  4) Nemotron-3 Super 120B NVFP4  (gated — requires HF token)  [default]\n"
   printf "  ──────────────────────────────────────────────────\n"
-  printf "  Choose 1-4 (Enter for default 3): "
+  printf "  Choose 1-4: "
   read -r choice
-  choice="${choice:-3}"
+  choice="${choice:-4}"
 
   case "$choice" in
     1)
@@ -997,12 +997,12 @@ select_station_model() {
       export NEMOCLAW_VLLM_MODEL="deepseek-ai/DeepSeek-R1-Distill-Llama-70B"
       info "Selected model: ${NEMOCLAW_VLLM_MODEL}"
       ;;
-    3|"")
-      export NEMOCLAW_VLLM_MODEL="nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4"
+    3)
+      export NEMOCLAW_VLLM_MODEL="MiniMaxAI/MiniMax-M2.7"
       info "Selected model: ${NEMOCLAW_VLLM_MODEL}"
       ;;
-    4)
-      export NEMOCLAW_VLLM_MODEL="MiniMaxAI/MiniMax-M2.7"
+    4|"")
+      export NEMOCLAW_VLLM_MODEL="nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4"
       info "Selected model: ${NEMOCLAW_VLLM_MODEL}"
       ;;
     *)

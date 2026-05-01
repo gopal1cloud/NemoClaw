@@ -13,8 +13,8 @@ options:
 |---|---------------------------------------------|----------|-------|
 | 1 | `Qwen/Qwen2.5-72B-Instruct`                 | optional | Open weights |
 | 2 | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | optional | Open weights, reasoning-tuned |
-| 3 | `nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4` | required | Gated; default |
-| 4 | `MiniMaxAI/MiniMax-M2.7`                    | optional | Open weights — see <https://huggingface.co/MiniMaxAI/MiniMax-M2.7> |
+| 3 | `MiniMaxAI/MiniMax-M2.7`                    | optional | Open weights — see <https://huggingface.co/MiniMaxAI/MiniMax-M2.7> |
+| 4 | `nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4` | required | Gated; default |
 
 A HuggingFace token is **required** for Nemotron and **strongly recommended** for the
 open-weight models — unauthenticated downloads from the HF Hub are rate-limited and a
@@ -275,14 +275,14 @@ After the dependency-status table, the Station picker prompts:
   ──────────────────────────────────────────────────
   1) Qwen2.5 72B Instruct         (open weights, no HF token required)
   2) DeepSeek-R1 Distill 70B      (open weights, no HF token required)
-  3) Nemotron-3 Super 120B NVFP4  (gated — requires HF token)  [default]
-  4) MiniMax M2.7                 (open weights, no HF token required)
+  3) MiniMax M2.7                 (open weights, no HF token required)
+  4) Nemotron-3 Super 120B NVFP4  (gated — requires HF token)  [default]
   ──────────────────────────────────────────────────
-  Choose 1-4 (Enter for default 3):
+  Choose 1-4:
 ```
 
-Press Enter for the Nemotron default, or type `1` / `2` / `4` for the open-weight
-options. To skip the prompt entirely (CI / scripted installs), set
+Press Enter for the Nemotron default (option 4), or type `1` / `2` / `3` for the
+open-weight options. To skip the prompt entirely (CI / scripted installs), set
 `NEMOCLAW_VLLM_MODEL=<exact-hf-id>` in the environment.
 
 ### Onboard wizard answers
