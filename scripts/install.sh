@@ -2255,8 +2255,62 @@ run_installer_host_preflight() {
   [[ "$status" -ne 10 ]]
 }
 
+# When a vLLM container is already running locally, prefill the onboard
+# wizard's compatible-endpoint defaults (provider/URL/model) so the user
+# can press Enter to accept what's already serving instead of retyping.
+# The wizard's gateway probe runs inside a container and cannot reach
+# `localhost`, so we pick the first non-loopback IPv4 address as the host
+# LAN IP. Skips silently if vLLM isn't running, the model can't be parsed,
+# or the user has already exported the same variable.
+prefill_compatible_endpoint_defaults() {
+  command -v docker >/dev/null 2>&1 || return 0
+  local container_name="nemoclaw-vllm"
+  if ! maybe_sudo docker ps --format '{{.Names}}' 2>/dev/null \
+         | grep -q "^${container_name}$"; then
+    return 0
+  fi
+
+  local model
+  model=$(maybe_sudo docker inspect --format '{{join .Config.Cmd " "}}' \
+            "$container_name" 2>/dev/null \
+            | grep -oP '(?<=--model )\S+' || true)
+  [[ -z "$model" ]] && return 0
+
+  local lan_ip=""
+  if command -v ip >/dev/null 2>&1; then
+    lan_ip=$(ip -4 -o addr show scope global 2>/dev/null \
+               | awk '{print $4}' | cut -d/ -f1 | head -1)
+  fi
+  [[ -z "$lan_ip" ]] && lan_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+  [[ -z "$lan_ip" ]] && lan_ip="127.0.0.1"
+
+  local url="http://${lan_ip}:8000/v1"
+
+  # Don't clobber values the user explicitly exported.
+  if [[ -z "${NEMOCLAW_PROVIDER:-}" ]]; then
+    export NEMOCLAW_PROVIDER="custom"
+  fi
+  if [[ -z "${NEMOCLAW_ENDPOINT_URL:-}" ]]; then
+    export NEMOCLAW_ENDPOINT_URL="$url"
+  fi
+  if [[ -z "${NEMOCLAW_MODEL:-}" ]]; then
+    export NEMOCLAW_MODEL="$model"
+  fi
+  # vLLM doesn't enforce the developer role; force chat completions for
+  # consistency with what install_vllm() actually serves.
+  if [[ -z "${NEMOCLAW_PREFERRED_API:-}" ]]; then
+    export NEMOCLAW_PREFERRED_API="chat-completions"
+  fi
+
+  info "Wizard defaults from running vLLM:"
+  info "  Provider:  Other OpenAI-compatible endpoint (3)"
+  info "  Base URL:  ${NEMOCLAW_ENDPOINT_URL}"
+  info "  Model:     ${NEMOCLAW_MODEL}"
+}
+
 run_onboard() {
   show_usage_notice
+  prefill_compatible_endpoint_defaults
   info "Running nemoclaw onboard…"
   local -a onboard_cmd=(onboard)
   local session_file="${HOME}/.nemoclaw/onboard-session.json"
