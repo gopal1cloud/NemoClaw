@@ -2680,7 +2680,7 @@ const { setupInference } = require(${onboardPath});
     );
     const setupPos = source.indexOf("await agentOnboard.handleAgentSetup");
     const forwardPos = source.indexOf(
-      "ensureDashboardForward(sandboxName, agentDashboardUrl)",
+      "ensureAgentDashboardForward(sandboxName, agent)",
       setupPos,
     );
 
@@ -2688,6 +2688,34 @@ const { setupInference } = require(${onboardPath});
     assert.ok(
       forwardPos > setupPos,
       "agent dashboard forward should be re-established after agent health checks",
+    );
+  });
+
+  it("re-establishes the agent dashboard forward after policies are applied", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const policiesPos = source.indexOf("await setupPoliciesWithSelection");
+    const completePoliciesPos = source.indexOf(
+      'onboardSession.markStepComplete(\n        "policies"',
+      policiesPos,
+    );
+    const forwardPos = source.indexOf(
+      "ensureAgentDashboardForward(sandboxName, agent)",
+      completePoliciesPos,
+    );
+    const completeSessionPos = source.indexOf(
+      "onboardSession.completeSession",
+      completePoliciesPos,
+    );
+
+    assert.ok(policiesPos !== -1, "policy setup call not found");
+    assert.ok(completePoliciesPos !== -1, "policy completion call not found");
+    assert.ok(forwardPos > completePoliciesPos, "agent forward should be reset after policy setup");
+    assert.ok(
+      forwardPos < completeSessionPos,
+      "agent forward should be reset before onboarding is marked complete",
     );
   });
 

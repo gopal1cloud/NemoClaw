@@ -7206,6 +7206,19 @@ function ensureDashboardForward(
   return actualPort;
 }
 
+function ensureAgentDashboardForward(
+  sandboxName: string,
+  agent: { forwardPort?: number | null },
+): number {
+  const agentDashboardPort = agent.forwardPort || CONTROL_UI_PORT;
+  const agentDashboardUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${agentDashboardPort}`;
+  const actualAgentDashboardPort = ensureDashboardForward(sandboxName, agentDashboardUrl);
+  if (actualAgentDashboardPort !== Number(getDashboardForwardPort(agentDashboardUrl))) {
+    process.env.CHAT_UI_URL = `http://127.0.0.1:${actualAgentDashboardPort}`;
+  }
+  return actualAgentDashboardPort;
+}
+
 function findOpenclawJsonPath(dir: string): string | null {
   if (!fs.existsSync(dir)) return null;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -8185,12 +8198,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         startRecordedStep,
         skippedStepMessage,
       });
-      const agentDashboardPort = agent.forwardPort || CONTROL_UI_PORT;
-      const agentDashboardUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${agentDashboardPort}`;
-      const actualAgentDashboardPort = ensureDashboardForward(sandboxName, agentDashboardUrl);
-      if (actualAgentDashboardPort !== Number(getDashboardForwardPort(agentDashboardUrl))) {
-        process.env.CHAT_UI_URL = `http://127.0.0.1:${actualAgentDashboardPort}`;
-      }
+      ensureAgentDashboardForward(sandboxName, agent);
       onboardSession.markStepSkipped("openclaw");
     } else {
       const resumeOpenclaw = resume && sandboxName && isOpenclawReady(sandboxName);
@@ -8260,6 +8268,10 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         "policies",
         toSessionUpdates({ sandboxName, provider, model, policyPresets: appliedPolicyPresets }),
       );
+    }
+
+    if (agent) {
+      ensureAgentDashboardForward(sandboxName, agent);
     }
 
     onboardSession.completeSession(toSessionUpdates({ sandboxName, provider, model }));
