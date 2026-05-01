@@ -182,6 +182,18 @@ if [[ -n "$gpu_idx" ]] && command -v nvidia-smi >/dev/null 2>&1; then
 fi
 
 # ── 7. Optional: purge HuggingFace model cache (--all) ──────────────────────
+# vLLM runs in Docker as root, so weight files inside ~/.cache/huggingface/hub
+# are typically owned by root. User-level `rm` fails with "Permission denied"
+# on those. Try as the current user first; fall back to `sudo rm` if needed.
+_rm_model_dir() {
+  local d="$1"
+  if rm -rf "$d" 2>/dev/null; then
+    return 0
+  fi
+  warn "    user-level rm failed (root-owned files) — retrying with sudo"
+  sudo rm -rf "$d"
+}
+
 if [[ "$PURGE_CACHE" -eq 1 ]]; then
   info "Purging cached HuggingFace model weights…"
   hub="${HF_HOME:-${HOME}/.cache/huggingface}/hub"
@@ -194,7 +206,7 @@ if [[ "$PURGE_CACHE" -eq 1 ]]; then
       for d in "${matches[@]}"; do
         [[ -d "$d" ]] || continue
         info "  Removing $(basename "$d")"
-        rm -rf "$d"
+        _rm_model_dir "$d"
       done
       ok "Model cache cleared (was ${total_before:-?})"
     else
