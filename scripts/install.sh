@@ -1112,7 +1112,7 @@ install_vllm() {
   info "Pulling vLLM container (${image})…"
   maybe_sudo docker pull "$image"
 
-  local hf_token hf_token_source="" hf_cache
+  local hf_token="" hf_token_source="" hf_cache
   hf_cache="${HOME}/.cache/huggingface"
   mkdir -p "$hf_cache"
 
