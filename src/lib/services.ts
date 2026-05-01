@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
+import { dockerSpawnSync } from "./docker";
 import { DASHBOARD_PORT } from "./ports";
 import { resolveOpenshell } from "./resolve-openshell";
 import { buildSubprocessEnv } from "./subprocess-env";
@@ -248,49 +249,155 @@ export function showStatus(opts: ServiceOptions = {}): void {
 /**
  * Stop the OpenClaw gateway (and its messaging channels) inside the sandbox.
  *
- * Sends SIGTERM to the gateway process via `openshell sandbox exec`.
- * The gateway's own signal handler (`cleanup()` in nemoclaw-start.sh)
- * forwards the signal to child processes, which stops Telegram/Discord/
- * Slack polling.  When openshell is not available or the sandbox is
- * unreachable the function warns and continues — host-side cleanup
- * should still proceed.
+ * Uses the OpenShell gateway container's kubectl as the privileged path so it
+ * can signal the gateway process even when the sandbox SSH/exec user is
+ * `sandbox` and the gateway process runs as the separate `gateway` user.  The
+ * fallback `openshell sandbox exec` path uses the same verified script for
+ * older/non-root deployments where the exec user can signal the gateway.
  *
- * The pkill pattern uses regex `openclaw[- ]gateway` so it matches both
- * the space-separated launcher form (`openclaw gateway run`) and the
- * re-exec'd binary name (`openclaw-gateway`).  The gateway re-execs
- * after startup, replacing its argv — the `run` subcommand is no longer
- * present in the running process's cmdline.
+ * The in-sandbox script intentionally does not rely on a bare `pkill -f`
+ * result: `pkill -f openclaw[- ]gateway` can match the transient shell/pkill
+ * command line and report success while the real `openclaw-gateway` process
+ * survives.  Instead, it gathers concrete PIDs from `ps`, excludes its own
+ * process tree, sends TERM/KILL as needed, and only reports success after a
+ * post-stop process scan is empty.
  */
 export function stopSandboxChannels(sandboxName: string): void {
+  info(`Stopping in-sandbox OpenClaw gateway (sandbox: ${sandboxName})...`);
+
+  const privilegedResult = stopSandboxChannelsViaKubectl(sandboxName);
+  if (reportStopResult(privilegedResult)) return;
+
   const openshell = resolveOpenshell();
   if (!openshell) {
     warn("openshell not found — cannot stop in-sandbox messaging channels.");
     return;
   }
 
-  info(`Stopping in-sandbox OpenClaw gateway (sandbox: ${sandboxName})...`);
-  const result = spawnSync(
+  const fallbackResult = spawnSync(
     openshell,
-    [
-      "sandbox", "exec", "--name", sandboxName, "--",
-      "pkill", "-TERM", "-f", "openclaw[- ]gateway",
-    ],
-    { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
+    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-lc", GATEWAY_STOP_SCRIPT],
+    { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 20000 },
   );
+  reportStopResult(fallbackResult);
+}
 
-  // pkill exits 0 when at least one process was matched, 1 when no
-  // processes matched (gateway already stopped).  Treat both as success.
+const GATEWAY_CLUSTER_CONTAINER = "openshell-cluster-nemoclaw";
+
+const GATEWAY_STOP_SCRIPT = String.raw`
+set -eu
+self="$$"
+parent="$PPID"
+find_gateway_pids() {
+  ps -eo pid=,args= 2>/dev/null | awk -v self="$self" -v parent="$parent" '
+    $1 ~ /^[0-9]+$/ && $1 != self && $1 != parent {
+      cmd = $0
+      sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "", cmd)
+      if (cmd ~ /(^|[[:space:]\/])openclaw-gateway([[:space:]]|$)/ || cmd ~ /(^|[[:space:]\/])openclaw[[:space:]]+gateway([[:space:]]|$)/) {
+        seen[$1] = 1
+      }
+    }
+    END { for (pid in seen) print pid }
+  '
+}
+
+pids="$(find_gateway_pids)"
+if [ -z "$pids" ]; then
+  exit 1
+fi
+
+# Ask the gateway to shut down cleanly so its signal handler can stop channel
+# pollers and other children.
+kill -TERM $pids 2>/dev/null || true
+
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  remaining="$(find_gateway_pids)"
+  [ -z "$remaining" ] && exit 0
+  sleep 0.2
+done
+
+# If the process ignored SIGTERM, stop it anyway.  The caller must not report
+# success until the verification below observes that the gateway is gone.
+kill -KILL $remaining 2>/dev/null || true
+for _ in 1 2 3 4 5; do
+  remaining="$(find_gateway_pids)"
+  [ -z "$remaining" ] && exit 0
+  sleep 0.2
+done
+
+printf '%s\n' "$remaining" >&2
+exit 2
+`;
+
+type StopAttemptResult = ReturnType<typeof spawnSync>;
+
+function stopSandboxChannelsViaKubectl(sandboxName: string): StopAttemptResult | null {
+  const podsResult = dockerSpawnSync(
+    [
+      "exec",
+      GATEWAY_CLUSTER_CONTAINER,
+      "kubectl",
+      "get",
+      "pods",
+      "-n",
+      "openshell",
+      "-o",
+      "name",
+    ],
+    { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 10000 },
+  );
+  if (podsResult.status !== 0 || !podsResult.stdout) return null;
+
+  const podOutput = typeof podsResult.stdout === "string" ? podsResult.stdout : podsResult.stdout.toString();
+  const pod = podOutput
+    .split(/\r?\n/)
+    .map((line: string) => line.trim())
+    .find((line: string) => line.startsWith("pod/") && line.includes(sandboxName));
+  if (!pod) return null;
+
+  return dockerSpawnSync(
+    [
+      "exec",
+      GATEWAY_CLUSTER_CONTAINER,
+      "kubectl",
+      "exec",
+      "-n",
+      "openshell",
+      "-c",
+      "agent",
+      pod,
+      "--",
+      "sh",
+      "-lc",
+      GATEWAY_STOP_SCRIPT,
+    ],
+    { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 20000 },
+  );
+}
+
+function reportStopResult(result: StopAttemptResult | null): boolean {
+  if (!result) return false;
+
   if (result.status === 0) {
     info("OpenClaw gateway stopped inside sandbox.");
-  } else if (result.status === 1) {
-    info("OpenClaw gateway was not running inside sandbox.");
-  } else {
-    // Exit code >1 or spawn failure — sandbox may be unreachable.
-    warn(
-      `Could not stop in-sandbox gateway (exit ${String(result.status ?? "unknown")}).` +
-        " The sandbox may be unreachable.",
-    );
+    return true;
   }
+  if (result.status === 1) {
+    info("OpenClaw gateway was not running inside sandbox.");
+    return true;
+  }
+
+  const details = [result.stderr, result.stdout]
+    .map((text) => (typeof text === "string" ? text : text?.toString()))
+    .filter((text): text is string => Boolean(text?.trim()))
+    .map((text) => text.trim())
+    .join(" ");
+  warn(
+    `Could not stop in-sandbox gateway (exit ${String(result.status ?? "unknown")}).` +
+      " The sandbox may be unreachable or the gateway may still be running." +
+      (details ? ` Details: ${details}` : ""),
+  );
+  return true;
 }
 
 export function stopAll(opts: ServiceOptions = {}): void {

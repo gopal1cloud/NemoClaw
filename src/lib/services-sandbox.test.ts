@@ -45,24 +45,83 @@ describe("stopSandboxChannels", () => {
     spawnSyncSpy.mockRestore();
   });
 
-  it("execs pkill inside the sandbox via openshell", () => {
+  it("uses kubectl via the OpenShell gateway container for privileged shutdown", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    spawnSyncSpy
+      .mockReturnValueOnce({ status: 0, stdout: "pod/my-sandbox-0\n" })
+      .mockReturnValueOnce({ status: 0 });
 
     stopSandboxChannels("my-sandbox");
 
-    expect(spawnSyncSpy).toHaveBeenCalledWith(
+    expect(spawnSyncSpy).toHaveBeenNthCalledWith(
+      1,
+      "docker",
+      [
+        "exec",
+        "openshell-cluster-nemoclaw",
+        "kubectl",
+        "get",
+        "pods",
+        "-n",
+        "openshell",
+        "-o",
+        "name",
+      ],
+      expect.objectContaining({ timeout: 10000 }),
+    );
+    expect(spawnSyncSpy).toHaveBeenNthCalledWith(
+      2,
+      "docker",
+      [
+        "exec",
+        "openshell-cluster-nemoclaw",
+        "kubectl",
+        "exec",
+        "-n",
+        "openshell",
+        "-c",
+        "agent",
+        "pod/my-sandbox-0",
+        "--",
+        "sh",
+        "-lc",
+        expect.any(String),
+      ],
+      expect.objectContaining({ timeout: 20000 }),
+    );
+    const args = spawnSyncSpy.mock.calls[1][1] as string[];
+    const script = args[args.length - 1];
+    expect(script).toContain("ps -eo pid=,args=");
+    expect(script).toContain("openclaw-gateway");
+    expect(script).toContain("kill -TERM $pids");
+    expect(script).toContain("kill -KILL $remaining");
+    const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("OpenClaw gateway stopped inside sandbox");
+    logSpy.mockRestore();
+  });
+
+  it("falls back to openshell sandbox exec when the gateway container is unavailable", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    spawnSyncSpy.mockReturnValueOnce({ status: 1, stdout: "" }).mockReturnValueOnce({ status: 0 });
+
+    stopSandboxChannels("my-sandbox");
+
+    expect(spawnSyncSpy).toHaveBeenNthCalledWith(
+      2,
       "/usr/local/bin/openshell",
-      ["sandbox", "exec", "--name", "my-sandbox", "--", "pkill", "-TERM", "-f", "openclaw[- ]gateway"],
-      expect.objectContaining({ timeout: 15000 }),
+      ["sandbox", "exec", "--name", "my-sandbox", "--", "sh", "-lc", expect.any(String)],
+      expect.objectContaining({ timeout: 20000 }),
     );
     const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
     expect(output).toContain("OpenClaw gateway stopped inside sandbox");
     logSpy.mockRestore();
   });
 
-  it("treats pkill exit 1 (no process matched) as success", () => {
+  it("treats stop script exit 1 (no process matched) as already stopped", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    spawnSyncSpy.mockReturnValue({ status: 1 });
+    spawnSyncSpy
+      .mockReturnValueOnce({ status: 0, stdout: "pod/my-sandbox-0\n" })
+      .mockReturnValueOnce({ status: 1 });
 
     stopSandboxChannels("my-sandbox");
 
@@ -71,21 +130,26 @@ describe("stopSandboxChannels", () => {
     logSpy.mockRestore();
   });
 
-  it("warns when sandbox is unreachable (exit > 1)", () => {
+  it("warns when privileged shutdown reports the gateway may still be running", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    spawnSyncSpy.mockReturnValue({ status: 255 });
+    spawnSyncSpy
+      .mockReturnValueOnce({ status: 0, stdout: "pod/my-sandbox-0\n" })
+      .mockReturnValueOnce({ status: 2, stderr: "205" });
 
     stopSandboxChannels("my-sandbox");
 
     const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
     expect(output).toContain("Could not stop in-sandbox gateway");
-    expect(output).toContain("sandbox may be unreachable");
+    expect(output).toContain("gateway may still be running");
+    expect(output).toContain("205");
     logSpy.mockRestore();
   });
 
   it("warns when spawn returns null status (timeout)", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    spawnSyncSpy.mockReturnValue({ status: null });
+    spawnSyncSpy
+      .mockReturnValueOnce({ status: 0, stdout: "pod/my-sandbox-0\n" })
+      .mockReturnValueOnce({ status: null });
 
     stopSandboxChannels("my-sandbox");
 
@@ -94,41 +158,47 @@ describe("stopSandboxChannels", () => {
     logSpy.mockRestore();
   });
 
-  it("warns and skips when openshell is not found", () => {
+  it("warns when privileged shutdown is unavailable and openshell is not found", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     resolveOpenshellModule.resolveOpenshell = vi.fn(() => null);
+    spawnSyncSpy.mockReturnValueOnce({ status: 1, stdout: "" });
 
     stopSandboxChannels("my-sandbox");
 
-    expect(spawnSyncSpy).not.toHaveBeenCalled();
+    expect(spawnSyncSpy).toHaveBeenCalledTimes(1);
     const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
     expect(output).toContain("openshell not found");
     logSpy.mockRestore();
   });
 
-  it("uses --name flag for sandbox selection (not positional)", () => {
+  it("uses --name flag for fallback sandbox selection (not positional)", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    spawnSyncSpy.mockReturnValueOnce({ status: 1, stdout: "" }).mockReturnValueOnce({ status: 0 });
 
     stopSandboxChannels("my-sandbox");
 
-    const args = spawnSyncSpy.mock.calls[0][1] as string[];
+    const args = spawnSyncSpy.mock.calls[1][1] as string[];
     expect(args[1]).toBe("exec");
     expect(args[2]).toBe("--name");
     expect(args[3]).toBe("my-sandbox");
     logSpy.mockRestore();
   });
 
-  it("targets 'openclaw[- ]gateway' regex to match both launcher and re-exec'd binary", () => {
+  it("targets both launcher and re-exec'd gateway process forms", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    spawnSyncSpy
+      .mockReturnValueOnce({ status: 0, stdout: "pod/my-sandbox-0\n" })
+      .mockReturnValueOnce({ status: 0 });
 
     stopSandboxChannels("my-sandbox");
 
-    const args = spawnSyncSpy.mock.calls[0][1] as string[];
-    const pkillPattern = args[args.length - 1];
+    const args = spawnSyncSpy.mock.calls[1][1] as string[];
+    const script = args[args.length - 1];
     // Must match both the launcher form ("openclaw gateway run") and the
     // re-exec'd binary ("openclaw-gateway"). The gateway re-execs after
     // startup, dropping "run" from argv entirely.
-    expect(pkillPattern).toBe("openclaw[- ]gateway");
+    expect(script).toContain("openclaw-gateway");
+    expect(script).toContain("openclaw[[:space:]]+gateway");
     logSpy.mockRestore();
   });
 });
@@ -159,12 +229,15 @@ describe("stopAll with sandbox channels", () => {
 
   it("stops in-sandbox channels when sandboxName is provided", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    spawnSyncSpy
+      .mockReturnValueOnce({ status: 0, stdout: "pod/test-sb-0\n" })
+      .mockReturnValueOnce({ status: 0 });
 
     stopAll({ pidDir, sandboxName: "test-sb" });
 
     expect(spawnSyncSpy).toHaveBeenCalledWith(
-      "/usr/local/bin/openshell",
-      ["sandbox", "exec", "--name", "test-sb", "--", "pkill", "-TERM", "-f", "openclaw[- ]gateway"],
+      "docker",
+      expect.arrayContaining(["kubectl", "exec", "-n", "openshell", "-c", "agent"]),
       expect.any(Object),
     );
     const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
