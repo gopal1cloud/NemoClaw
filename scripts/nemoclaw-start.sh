@@ -304,16 +304,15 @@ apply_model_override() {
   local max_tokens="${NEMOCLAW_MAX_TOKENS:-}"
   local reasoning="${NEMOCLAW_REASONING:-}"
 
-  # Validate numeric values
-  if [ -n "$context_window" ] && ! printf '%s' "$context_window" | grep -qE '^[0-9]+$'; then
+  # Validate supplemental override values before relaxing or writing config.
+  if [ -n "$context_window" ] && ! printf '%s' "$context_window" | grep -qE '^[1-9][0-9]*$'; then
     printf '[SECURITY] NEMOCLAW_CONTEXT_WINDOW must be a positive integer, got "%s" — skipping override\n' "$context_window" >&2
     return 0
   fi
-  if [ -n "$max_tokens" ] && ! printf '%s' "$max_tokens" | grep -qE '^[0-9]+$'; then
+  if [ -n "$max_tokens" ] && ! printf '%s' "$max_tokens" | grep -qE '^[1-9][0-9]*$'; then
     printf '[SECURITY] NEMOCLAW_MAX_TOKENS must be a positive integer, got "%s" — skipping override\n' "$max_tokens" >&2
     return 0
   fi
-  # Validate reasoning is true/false
   if [ -n "$reasoning" ]; then
     case "$reasoning" in
       true | false) ;;

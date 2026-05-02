@@ -294,28 +294,18 @@ function recoverSandboxProcesses(sandboxName: string): boolean {
   const script =
     agentScript ||
     [
-      // Source /tmp/nemoclaw-proxy-env.sh explicitly so NODE_OPTIONS preload
-      // guards (safety-net, ciao, slack, …) survive gateway respawn. Without
-      // this, library errors crash-loop the gateway because the original
-      // .bashrc-only path silently failed when the env file was unreadable
-      // or the shell did not source ~/.bashrc. See #2478. Mirrors the
-      // hardened block in src/lib/agent-runtime.ts:buildRecoveryScript.
-      // Defer warning emission until AFTER touch+chmod gateway.log so
-      // warnings land in the persistent log a sysadmin would tail. Stderr
-      // alone hides them because executeSandboxCommand captures stderr
-      // without surfacing it. Mirrors src/lib/agent-runtime.ts.
-      "if [ -r /tmp/nemoclaw-proxy-env.sh ]; then . /tmp/nemoclaw-proxy-env.sh; _PE_MISSING=0; else _PE_MISSING=1; fi;",
       "[ -f ~/.bashrc ] && . ~/.bashrc;",
-      'case "${NODE_OPTIONS:-}" in *nemoclaw-sandbox-safety-net*) _SN_MISSING=0 ;; *) _SN_MISSING=1 ;; esac; case "${NODE_OPTIONS:-}" in *nemoclaw-ciao-network-guard*) _CIAO_MISSING=0 ;; *) _CIAO_MISSING=1 ;; esac; if [ "$_SN_MISSING" = "0" ] && [ "$_CIAO_MISSING" = "0" ]; then _GUARDS_MISSING=0; else _GUARDS_MISSING=1; fi;',
-      `if curl -sf --max-time 3 http://127.0.0.1:${DASHBOARD_PORT}/ > /dev/null 2>&1; then echo ALREADY_RUNNING; exit 0; fi;`,
       "rm -rf /tmp/openclaw-*/gateway.*.lock 2>/dev/null;",
       "rm -f /tmp/gateway.log /tmp/auto-pair.log;",
       "touch /tmp/gateway.log; chmod 600 /tmp/gateway.log;",
       "touch /tmp/auto-pair.log; chmod 600 /tmp/auto-pair.log;",
-      '[ "$_PE_MISSING" = "1" ] && { _W="[gateway-recovery] WARNING: /tmp/nemoclaw-proxy-env.sh missing — gateway launching without library guards (#2478)"; echo "$_W" >&2; echo "$_W" >> /tmp/gateway.log; };',
-      '[ "$_GUARDS_MISSING" = "1" ] && { _W="[gateway-recovery] WARNING: NODE_OPTIONS missing safety-net preload or ciao preload — gateway may crash on unhandled library errors (#2478)"; echo "$_W" >&2; echo "$_W" >> /tmp/gateway.log; };',
+      'pkill -TERM -f "[o]penclaw([ -]gateway| gateway run|$)" 2>/dev/null || true; for _i in 1 2 3 4 5; do pgrep -f "[o]penclaw([ -]gateway| gateway run|$)" >/dev/null 2>&1 || break; sleep 1; done; pkill -KILL -f "[o]penclaw([ -]gateway| gateway run|$)" 2>/dev/null || true; for _i in 1 2 3 4 5; do pgrep -f "[o]penclaw([ -]gateway| gateway run|$)" >/dev/null 2>&1 || break; sleep 1; done; if pgrep -f "[o]penclaw([ -]gateway| gateway run|$)" >/dev/null 2>&1; then echo GATEWAY_STALE_PROCESSES; exit 1; fi;',
       'OPENCLAW="$(command -v openclaw)";',
       'if [ -z "$OPENCLAW" ]; then echo OPENCLAW_MISSING; exit 1; fi;',
+      "if [ -r /tmp/nemoclaw-proxy-env.sh ]; then . /tmp/nemoclaw-proxy-env.sh; _PE_MISSING=0; else _PE_MISSING=1; fi;",
+      'if [ "$_PE_MISSING" = "0" ]; then case "${NODE_OPTIONS:-}" in *nemoclaw-sandbox-safety-net*) _SN_MISSING=0 ;; *) _SN_MISSING=1 ;; esac; case "${NODE_OPTIONS:-}" in *nemoclaw-ciao-network-guard*) _CIAO_MISSING=0 ;; *) _CIAO_MISSING=1 ;; esac; if [ "$_SN_MISSING" = "0" ] && [ "$_CIAO_MISSING" = "0" ]; then _GUARDS_MISSING=0; else _GUARDS_MISSING=1; fi; else _GUARDS_MISSING=0; fi;',
+      '[ "$_PE_MISSING" = "1" ] && { _W="[gateway-recovery] WARNING: /tmp/nemoclaw-proxy-env.sh missing — gateway launching without library guards (#2478)"; echo "$_W" >&2; echo "$_W" >> /tmp/gateway.log; };',
+      '[ "$_PE_MISSING" = "0" ] && [ "$_GUARDS_MISSING" = "1" ] && { _E="[gateway-recovery] ERROR: /tmp/nemoclaw-proxy-env.sh present but NODE_OPTIONS missing safety-net preload or ciao preload — refusing unguarded gateway relaunch (#2478)"; echo "$_E" >&2; echo "$_E" >> /tmp/gateway.log; exit 1; };',
       // Append rather than truncate so [gateway-recovery] WARNING lines
       // written above survive past the launch. (#2478)
       `nohup "$OPENCLAW" gateway run --port ${DASHBOARD_PORT} >> /tmp/gateway.log 2>&1 &`,

@@ -74,6 +74,7 @@ describe("buildRecoveryScript", () => {
     const script = buildRecoveryScript(agent, 19000);
     expect(script).toContain("GATEWAY_CMD_BIN='custom-launch'");
     expect(script).toContain('command -v "$GATEWAY_CMD_BIN" >/dev/null 2>&1');
+    expect(script).toContain("_GATEWAY_PROC_PATTERN='[c]ustom-launch([ -]gateway| gateway run|$)'");
     expect(script).toContain("nohup custom-launch --mode recovery --port 19000");
   });
 
@@ -111,19 +112,37 @@ describe("buildRecoveryScript", () => {
       expect(script).toContain("or ciao preload");
     });
 
+    it("stops stale launcher and gateway processes before relaunch", () => {
+      const script = buildRecoveryScript(minimalAgent, 19000);
+      expect(script).toContain("_GATEWAY_PROC_PATTERN='[t]est-agent([ -]gateway| gateway run|$)'");
+      expect(script).toContain('pkill -TERM -f "$_GATEWAY_PROC_PATTERN"');
+      expect(script).toContain('pkill -KILL -f "$_GATEWAY_PROC_PATTERN"');
+      expect(script).toContain("GATEWAY_STALE_PROCESSES");
+    });
+
     it("sources proxy-env.sh BEFORE launching the gateway binary", () => {
       const script = buildRecoveryScript(minimalAgent, 19000);
       expect(script).not.toBeNull();
-      const sourceIdx = script!.indexOf("/tmp/nemoclaw-proxy-env.sh");
-      const launchIdx = script!.indexOf("gateway run");
+      const staleStopIdx = script!.indexOf('pkill -TERM -f "$_GATEWAY_PROC_PATTERN"');
+      const sourceIdx = script!.indexOf("then . /tmp/nemoclaw-proxy-env.sh");
+      const launchIdx = script!.indexOf("nohup");
+      expect(staleStopIdx).toBeGreaterThanOrEqual(0);
       expect(sourceIdx).toBeGreaterThanOrEqual(0);
       expect(launchIdx).toBeGreaterThanOrEqual(0);
+      expect(staleStopIdx).toBeLessThan(sourceIdx);
       expect(sourceIdx).toBeLessThan(launchIdx);
+    });
+
+    it("fails recovery when an existing proxy-env.sh does not install required guards", () => {
+      const script = buildRecoveryScript(minimalAgent, 19000);
+      expect(script).toContain('if [ "$_PE_MISSING" = "0" ]');
+      expect(script).toContain("refusing unguarded gateway relaunch");
+      expect(script).toContain('echo "$_E" >> /tmp/gateway.log; exit 1');
     });
 
     it("writes the warning to gateway.log so it persists for sysadmin tail", () => {
       const script = buildRecoveryScript(minimalAgent, 19000);
-      // Both warnings must end up in /tmp/gateway.log, not just stderr —
+      // The missing-env warning must end up in /tmp/gateway.log, not just stderr —
       // executeSandboxCommand silently discards stderr from the recovery
       // script, so a warning that only goes to stderr is invisible to
       // anyone debugging a crash-loop. (#2478)
