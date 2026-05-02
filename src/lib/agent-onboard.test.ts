@@ -128,10 +128,10 @@ describe("handleAgentSetup guards", () => {
     const source = fs.readFileSync(path.join(import.meta.dirname, "agent-onboard.ts"), "utf-8");
 
     expect(source).toContain("verifyAgentBinaryAvailable");
-    expect(source).toContain(
-      'resolved="$(command -v ${shellQuote(executable)} 2>/dev/null || true)"',
-    );
-    expect(source).toContain('[ "$resolved" = ${shellQuote(binaryPath)} ]');
+    expect(source).toContain("AGENT_BINARY_CHECK_PREFIX");
+    expect(source).toContain("if [ -x ${shellQuote(binaryPath)} ]; then");
+    expect(source).toContain("exit 0");
+    expect(source).toContain(".find((line) => line.startsWith(AGENT_BINARY_CHECK_PREFIX))");
     expect(source).toMatch(
       /"sandbox",\s*"exec",\s*"-n",\s*sandboxName,\s*"--",\s*"sh",\s*"-lc",\s*script/,
     );
