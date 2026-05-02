@@ -4763,6 +4763,9 @@ async function runDispatchResult(
         throw new Error(`Missing sandbox name for legacy dispatch target ${result.target}`);
       }
       switch (result.target) {
+        case "status":
+          await sandboxStatus(sandboxName);
+          return;
         case "doctor":
           await sandboxDoctor(sandboxName, actionArgs);
           return;
