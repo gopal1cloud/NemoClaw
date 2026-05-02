@@ -279,6 +279,9 @@ function applyStateDirLockMode(sandboxName: string, configDir: string, owner: st
     }
     try {
       kubectlExec(sandboxName, ["chmod", dirMode, dirPath]);
+      if (isLocking) {
+        kubectlExec(sandboxName, ["chmod", "g-s", dirPath]);
+      }
       kubectlExec(sandboxName, ["chmod", "-R", writeStrip, dirPath]);
     } catch {
       // Silently skip
@@ -301,6 +304,7 @@ for dir in "$config_dir"/workspace-*; do
   [ -d "$dir" ] || continue
   chown -R "$owner" "$dir" 2>/dev/null || true
   chmod "$dir_mode" "$dir" 2>/dev/null || true
+  if [ "$dir_mode" = "755" ]; then chmod g-s "$dir" 2>/dev/null || true; fi
   chmod -R "$write_strip" "$dir" 2>/dev/null || true
 done
 `,
@@ -482,6 +486,11 @@ function lockAgentConfig(
     kubectlExec(sandboxName, ["chmod", "755", target.configDir]);
   } catch {
     errors.push("chmod 755 config dir");
+  }
+  try {
+    kubectlExec(sandboxName, ["chmod", "g-s", target.configDir]);
+  } catch {
+    errors.push("chmod g-s config dir");
   }
 
   try {

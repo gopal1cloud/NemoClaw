@@ -194,6 +194,12 @@ describe("buildRecoveryScript", () => {
       expect(script).toContain("gosu 'gateway'");
     });
 
+    it("terminates the conditional launch branch before capturing the gateway pid", () => {
+      const script = buildOpenClawRecoveryScript(18789);
+      expect(script).toContain(" fi; GPID=$!");
+      expect(script).not.toContain(" fi GPID=$!");
+    });
+
     it("prepares auto-pair.log without unlinking or following symlinks", () => {
       const script = buildOpenClawRecoveryScript(18789);
       expect(script).toContain("refusing to prepare symlinked /tmp/auto-pair.log");

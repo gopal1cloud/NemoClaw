@@ -129,7 +129,8 @@ type AgentBinaryAvailability =
       resolvedPath?: string;
     };
 
-function verifyAgentBinaryAvailable(
+// Exported for unit coverage of the sandbox-side guard without running onboarding.
+export function verifyAgentBinaryAvailable(
   sandboxName: string,
   agent: AgentDefinition,
   runCaptureOpenshell: OnboardContext["runCaptureOpenshell"],
@@ -138,10 +139,10 @@ function verifyAgentBinaryAvailable(
   const binaryPath = typeof agent.binary_path === "string" ? agent.binary_path.trim() : "";
   const script = binaryPath
     ? [
-        `resolved="$(command -v ${shellQuote(executable)} 2>/dev/null || true)"`,
-        `[ -n "$resolved" ] || { echo not_found; exit 1; }`,
+        `[ -e ${shellQuote(binaryPath)} ] || { echo not_found; exit 1; }`,
         `[ -x ${shellQuote(binaryPath)} ] || { echo not_executable; exit 1; }`,
-        `[ "$resolved" = ${shellQuote(binaryPath)} ] || { printf 'path_mismatch:%s\\n' "$resolved"; exit 1; }`,
+        `resolved="$(command -v ${shellQuote(executable)} 2>/dev/null || true)"`,
+        `[ -z "$resolved" ] || [ "$resolved" = ${shellQuote(binaryPath)} ] || { printf 'path_mismatch:%s\\n' "$resolved"; exit 1; }`,
         "echo ok",
       ].join(" && ")
     : `command -v ${shellQuote(executable)} >/dev/null 2>&1 && echo ok || echo not_found`;
