@@ -23,7 +23,7 @@ C_CYAN=$'\033[0;36m'
 C_RESET=$'\033[0m'
 
 info() { printf "%b[cleanup]%b %s\n" "${C_CYAN}" "${C_RESET}" "$*"; }
-ok()   { printf "%b[cleanup]%b %b✓%b %s\n" "${C_CYAN}" "${C_RESET}" "${C_GREEN}" "${C_RESET}" "$*"; }
+ok() { printf "%b[cleanup]%b %b✓%b %s\n" "${C_CYAN}" "${C_RESET}" "${C_GREEN}" "${C_RESET}" "$*"; }
 warn() { printf "%b[cleanup]%b %s\n" "${C_YELLOW}" "${C_RESET}" "$*"; }
 fail() { printf "%b[cleanup]%b %s\n" "${C_RED}" "${C_RESET}" "$*" >&2; }
 
@@ -57,10 +57,17 @@ EOF
 
 for arg in "$@"; do
   case "$arg" in
-    --all)        PURGE_CACHE=1 ;;
-    --yes|-y)     ASSUME_YES=1 ;;
-    -h|--help)    usage; exit 0 ;;
-    *)            fail "Unknown argument: $arg"; usage >&2; exit 2 ;;
+    --all) PURGE_CACHE=1 ;;
+    --yes | -y) ASSUME_YES=1 ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      fail "Unknown argument: $arg"
+      usage >&2
+      exit 2
+      ;;
   esac
 done
 
@@ -84,7 +91,8 @@ info "Stopping all NemoClaw sandboxes…"
 sandboxes_file="${HOME}/.nemoclaw/sandboxes.json"
 sandbox_names=""
 if [[ -f "$sandboxes_file" ]] && command -v python3 >/dev/null 2>&1; then
-  sandbox_names=$(python3 - "$sandboxes_file" <<'PY' || true
+  sandbox_names=$(
+    python3 - "$sandboxes_file" <<'PY' || true
 import json, sys
 try:
     d = json.load(open(sys.argv[1]))
@@ -92,7 +100,7 @@ try:
 except Exception:
     pass
 PY
-)
+  )
 fi
 
 if [[ -n "$sandbox_names" ]]; then
@@ -104,7 +112,7 @@ if [[ -n "$sandbox_names" ]]; then
     else
       warn "    nemoclaw CLI not found — skipping stop for ${name}"
     fi
-  done <<< "$sandbox_names"
+  done <<<"$sandbox_names"
   ok "Sandboxes stopped"
 else
   info "  No sandboxes registered"
@@ -127,7 +135,7 @@ gpu_idx=""
 vram_before=""
 if command -v nvidia-smi >/dev/null 2>&1; then
   gpu_row=$(nvidia-smi --query-gpu=index,memory.total --format=csv,noheader,nounits 2>/dev/null \
-            | sort -t',' -k2 -rn | head -1 || true)
+    | sort -t',' -k2 -rn | head -1 || true)
   gpu_idx=$(printf "%s" "$gpu_row" | awk -F',' '{print $1}' | tr -d ' ')
   if [[ -n "$gpu_idx" ]]; then
     vram_before=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits \
@@ -140,7 +148,7 @@ info "Stopping and removing 'nemoclaw-vllm' container…"
 if command -v docker >/dev/null 2>&1; then
   if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^nemoclaw-vllm$"; then
     docker stop nemoclaw-vllm >/dev/null 2>&1 || warn "  docker stop nemoclaw-vllm failed"
-    docker rm   nemoclaw-vllm >/dev/null 2>&1 || warn "  docker rm nemoclaw-vllm failed"
+    docker rm nemoclaw-vllm >/dev/null 2>&1 || warn "  docker rm nemoclaw-vllm failed"
     ok "vLLM container removed"
   else
     info "  No 'nemoclaw-vllm' container found"
@@ -168,7 +176,7 @@ if [[ -n "$gpu_idx" ]] && command -v nvidia-smi >/dev/null 2>&1; then
   vram_after=""
   prev=""
   attempts=0
-  while (( attempts < 30 )); do
+  while ((attempts < 30)); do
     vram_after=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits \
       -i "$gpu_idx" 2>/dev/null | tr -d ' ')
     if [[ -n "$prev" && "$vram_after" == "$prev" ]]; then
@@ -176,7 +184,7 @@ if [[ -n "$gpu_idx" ]] && command -v nvidia-smi >/dev/null 2>&1; then
     fi
     prev="$vram_after"
     sleep 1
-    (( ++attempts ))
+    ((++attempts))
   done
   ok "GPU ${gpu_idx} VRAM used: ${vram_before:-?} MiB → ${vram_after:-?} MiB"
 fi
@@ -201,7 +209,7 @@ if [[ "$PURGE_CACHE" -eq 1 ]]; then
     shopt -s nullglob
     matches=("$hub"/models--*)
     shopt -u nullglob
-    if (( ${#matches[@]} > 0 )); then
+    if ((${#matches[@]} > 0)); then
       total_before=$(du -sh "$hub" 2>/dev/null | awk '{print $1}')
       for d in "${matches[@]}"; do
         [[ -d "$d" ]] || continue

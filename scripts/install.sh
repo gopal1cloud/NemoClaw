@@ -51,7 +51,6 @@ MIN_DOCKER_VERSION="28.0"
 MIN_OPENSHELL_VERSION="0.0.32"
 NEMOCLAW_STATE_DIR="/var/lib/nemoclaw"
 NEMOCLAW_MANIFEST_PATH="${NEMOCLAW_STATE_DIR}/manifest.json"
-NEMOCLAW_MODEL_DIR="${NEMOCLAW_STATE_DIR}/models"
 MODEL_PULL_UNIT="nemoclaw-model-pull.service"
 
 # Selected backend (populated by select_backend); recorded in manifest.
@@ -1115,7 +1114,6 @@ install_or_upgrade_ollama() {
   fi
 }
 
-
 # ===========================================================================
 # Recipe §4 — Dependency Resolver (REUSE / INSTALL lanes)
 # Recipe §6 — Component Details (backend selection, platform fixups, model pull)
@@ -1150,8 +1148,8 @@ detect_platform() {
 
   if [[ "$model" == *Spark* || "$model" == *spark* || "$model" == *DGX*Spark* ]]; then
     plat="spark"
-  elif [[ "$model" == *P3830* || "$model" == *Galaxy* ]] || \
-       [[ "$model" == *Station* && "$model" == *GB300* ]]; then
+  elif [[ "$model" == *P3830* || "$model" == *Galaxy* ]] \
+    || [[ "$model" == *Station* && "$model" == *GB300* ]]; then
     plat="station"
   else
     plat="linux"
@@ -1202,11 +1200,11 @@ _decide_action() {
 _friendly_model_name() {
   case "${1:-}" in
     *Nemotron-3-Super-120B*A12B-NVFP4*) printf "Nemotron-3 Super 120B NVFP4" ;;
-    *Qwen2.5-72B-Instruct*)             printf "Qwen2.5 72B Instruct" ;;
-    *DeepSeek-R1-Distill-Llama-70B*)    printf "DeepSeek-R1 Distill 70B" ;;
-    *MiniMax-M2.7*)                     printf "MiniMax M2.7" ;;
-    "")                                  printf "-" ;;
-    *)                                   printf "%s" "${1}" ;;
+    *Qwen2.5-72B-Instruct*) printf "Qwen2.5 72B Instruct" ;;
+    *DeepSeek-R1-Distill-Llama-70B*) printf "DeepSeek-R1 Distill 70B" ;;
+    *MiniMax-M2.7*) printf "MiniMax M2.7" ;;
+    "") printf "-" ;;
+    *) printf "%s" "${1}" ;;
   esac
 }
 
@@ -2271,7 +2269,6 @@ run_installer_host_preflight() {
 
   [[ "$status" -ne 10 ]]
 }
-
 
 run_onboard() {
   show_usage_notice
