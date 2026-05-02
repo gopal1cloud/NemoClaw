@@ -123,19 +123,22 @@ describe("buildRecoveryScript", () => {
 
     it("writes the warning to gateway.log so it persists for sysadmin tail", () => {
       const script = buildRecoveryScript(minimalAgent, 19000);
-      // Both warnings must end up in /tmp/gateway.log, not just stderr —
+      // Both warnings must end up in the selected gateway log, not just stderr —
       // executeSandboxCommand silently discards stderr from the recovery
       // script, so a warning that only goes to stderr is invisible to
       // anyone debugging a crash-loop. (#2478)
-      expect(script).toContain('echo "$_W" >> /tmp/gateway.log');
+      expect(script).toContain('echo "$_W" >> "$_GATEWAY_LOG"');
       // And the warning must be deferred until AFTER gateway.log is
       // safely opened with O_NOFOLLOW, otherwise the redirect targets a
       // stale or attacker-controlled file.
       const gatewayPrepIdx = script!.indexOf(" /tmp/gateway.log || exit 1;");
-      const warnIdx = script!.indexOf('echo "$_W" >> /tmp/gateway.log');
+      const logSelectionIdx = script!.indexOf("_GATEWAY_LOG=/tmp/gateway.log");
+      const warnIdx = script!.indexOf('echo "$_W" >> "$_GATEWAY_LOG"');
       expect(gatewayPrepIdx).toBeGreaterThanOrEqual(0);
+      expect(logSelectionIdx).toBeGreaterThanOrEqual(0);
       expect(warnIdx).toBeGreaterThanOrEqual(0);
-      expect(gatewayPrepIdx).toBeLessThan(warnIdx);
+      expect(gatewayPrepIdx).toBeLessThan(logSelectionIdx);
+      expect(logSelectionIdx).toBeLessThan(warnIdx);
     });
 
     it("stops recovery when hardened log setup fails", () => {
@@ -158,6 +161,10 @@ describe("buildRecoveryScript", () => {
       expect(script).not.toContain("rm -f /tmp/gateway.log");
       expect(script).toContain("_GATEWAY_LOG=/tmp/gateway.log");
       expect(script).toContain("_GATEWAY_LOG=/tmp/gateway-recovery.log");
+      expect(script).toContain('echo "$_W" >> "$_GATEWAY_LOG"');
+      expect(script).toContain('tail -5 "$_GATEWAY_LOG"');
+      expect(script).not.toContain('echo "$_W" >> /tmp/gateway.log');
+      expect(script).not.toContain("cat /tmp/gateway.log");
     });
 
     it("rejects a symlinked gateway.log before preparing the log", () => {

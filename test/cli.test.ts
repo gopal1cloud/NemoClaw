@@ -94,7 +94,33 @@ function readRecordedArgs(markerFile: string): string[] {
   return fs.readFileSync(markerFile, "utf8").trim().split(/\s+/);
 }
 
-function writeSandboxRegistry(home: string, sandboxOverrides: Record<string, unknown> = {}): void {
+type SandboxEntry = {
+  name: string;
+  model: string;
+  provider: string;
+  gpuEnabled: boolean;
+  policies: string[];
+  agent?: string;
+};
+
+function writeRecordingCommand(
+  binDir: string,
+  command: string,
+  markerFile: string,
+  exitCode: number,
+): void {
+  fs.writeFileSync(
+    path.join(binDir, command),
+    [
+      "#!/usr/bin/env bash",
+      `printf '%s\\n' "$*" >> ${JSON.stringify(markerFile)}`,
+      `exit ${exitCode}`,
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+}
+
+function writeSandboxRegistry(home: string, sandboxOverrides: Partial<SandboxEntry> = {}): void {
   const registryDir = path.join(home, ".nemoclaw");
   fs.mkdirSync(registryDir, { recursive: true });
   fs.writeFileSync(
@@ -1609,6 +1635,7 @@ describe("CLI dispatch", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-help-"));
     const localBin = path.join(home, "bin");
     const markerFile = path.join(home, "openshell-calls");
+    const sshMarkerFile = path.join(home, "ssh-calls");
     fs.mkdirSync(localBin, { recursive: true });
     fs.writeFileSync(
       path.join(localBin, "openshell"),
@@ -1619,6 +1646,7 @@ describe("CLI dispatch", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
+    writeRecordingCommand(localBin, "ssh", sshMarkerFile, 98);
 
     const r = runWithEnv("alpha connect --help", {
       HOME: home,
@@ -1635,12 +1663,14 @@ describe("CLI dispatch", () => {
     expect(implicit.code).toBe(0);
     expect(implicit.out).toContain("Usage: nemoclaw alpha connect");
     expect(fs.existsSync(markerFile)).toBe(false);
+    expect(fs.existsSync(sshMarkerFile)).toBe(false);
   });
 
   it("rejects the removed skip-permissions connect flag", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-flags-"));
     const localBin = path.join(home, "bin");
     const markerFile = path.join(home, "openshell-calls");
+    const sshMarkerFile = path.join(home, "ssh-calls");
     fs.mkdirSync(localBin, { recursive: true });
     fs.writeFileSync(
       path.join(localBin, "openshell"),
@@ -1651,6 +1681,7 @@ describe("CLI dispatch", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
+    writeRecordingCommand(localBin, "ssh", sshMarkerFile, 98);
     writeSandboxRegistry(home);
 
     const r = runWithEnv("alpha connect --dangerously-skip-permissions", {
@@ -1661,12 +1692,14 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(1);
     expect(r.out).toContain("--dangerously-skip-permissions was removed");
     expect(fs.existsSync(markerFile)).toBe(false);
+    expect(fs.existsSync(sshMarkerFile)).toBe(false);
   });
 
   it("connect --probe-only recovers the gateway without opening SSH", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-"));
     const localBin = path.join(home, "bin");
     const markerFile = path.join(home, "openshell-calls");
+    const sshMarkerFile = path.join(home, "ssh-calls");
     const stateFile = path.join(home, "probe-state");
     fs.mkdirSync(localBin, { recursive: true });
     writeSandboxRegistry(home);
@@ -1707,6 +1740,7 @@ describe("CLI dispatch", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
+    writeRecordingCommand(localBin, "ssh", sshMarkerFile, 98);
 
     const r = runWithEnv("alpha connect --probe-only", {
       HOME: home,
@@ -1720,12 +1754,14 @@ describe("CLI dispatch", () => {
     expect(calls.some((call) => call.startsWith("sandbox exec --name alpha -- sh -c"))).toBe(true);
     expect(calls).not.toContain("sandbox ssh-config alpha");
     expect(calls).not.toContain("sandbox connect alpha");
+    expect(fs.existsSync(sshMarkerFile)).toBe(false);
   });
 
   it("treats leading --probe-only as an implicit connect probe", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-leading-"));
     const localBin = path.join(home, "bin");
     const markerFile = path.join(home, "openshell-calls");
+    const sshMarkerFile = path.join(home, "ssh-calls");
     fs.mkdirSync(localBin, { recursive: true });
     writeSandboxRegistry(home);
     fs.writeFileSync(
@@ -1752,6 +1788,7 @@ describe("CLI dispatch", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
+    writeRecordingCommand(localBin, "ssh", sshMarkerFile, 98);
 
     const r = runWithEnv("alpha --probe-only", {
       HOME: home,
@@ -1765,12 +1802,14 @@ describe("CLI dispatch", () => {
     expect(calls.some((call) => call.startsWith("sandbox exec --name alpha -- sh -c"))).toBe(true);
     expect(calls).not.toContain("sandbox ssh-config alpha");
     expect(calls).not.toContain("sandbox connect alpha");
+    expect(fs.existsSync(sshMarkerFile)).toBe(false);
   });
 
   it("connect --probe-only does not retry a failed sandbox exec recovery over SSH", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-no-ssh-"));
     const localBin = path.join(home, "bin");
     const markerFile = path.join(home, "openshell-calls");
+    const sshMarkerFile = path.join(home, "ssh-calls");
     fs.mkdirSync(localBin, { recursive: true });
     writeSandboxRegistry(home);
     fs.writeFileSync(
@@ -1801,6 +1840,7 @@ describe("CLI dispatch", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
+    writeRecordingCommand(localBin, "ssh", sshMarkerFile, 98);
 
     const r = runWithEnv("alpha connect --probe-only", {
       HOME: home,
@@ -1812,6 +1852,7 @@ describe("CLI dispatch", () => {
     expect(calls).toContain("sandbox get alpha");
     expect(calls.some((call) => call.startsWith("sandbox exec --name alpha -- sh -c"))).toBe(true);
     expect(calls).not.toContain("sandbox ssh-config alpha");
+    expect(fs.existsSync(sshMarkerFile)).toBe(false);
   });
 
   it("connect --probe-only falls back to SSH when sandbox exec never starts", () => {

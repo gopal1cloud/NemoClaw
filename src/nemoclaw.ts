@@ -1223,6 +1223,12 @@ type SandboxConnectOptions = {
   probeOnly?: boolean;
 };
 
+const SANDBOX_CONNECT_FLAGS = new Set(["--dangerously-skip-permissions", "--probe-only", "--help", "-h"]);
+
+function isSandboxConnectFlag(arg: string | undefined): boolean {
+  return typeof arg === "string" && SANDBOX_CONNECT_FLAGS.has(arg);
+}
+
 function printSandboxConnectHelp(sandboxName = "<name>") {
   console.log("");
   console.log(`  Usage: ${CLI_NAME} ${sandboxName} connect [--probe-only]`);
@@ -1238,6 +1244,11 @@ function printSandboxConnectHelp(sandboxName = "<name>") {
 function parseSandboxConnectArgs(sandboxName: string, actionArgs: string[]): SandboxConnectOptions {
   const options: SandboxConnectOptions = {};
   for (const arg of actionArgs) {
+    if (!isSandboxConnectFlag(arg)) {
+      console.error(`  Unknown flag for connect: ${arg}`);
+      printSandboxConnectHelp(sandboxName);
+      process.exit(1);
+    }
     switch (arg) {
       case "--dangerously-skip-permissions":
         console.error("  --dangerously-skip-permissions was removed; use shields commands instead.");
@@ -1251,13 +1262,34 @@ function parseSandboxConnectArgs(sandboxName: string, actionArgs: string[]): San
         printSandboxConnectHelp(sandboxName);
         process.exit(0);
         break;
-      default:
-        console.error(`  Unknown flag for connect: ${arg}`);
-        printSandboxConnectHelp(sandboxName);
-        process.exit(1);
     }
   }
   return options;
+}
+
+function runSandboxConnectProbe(sandboxName: string): void {
+  const processCheck = checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const agentName = agentRuntime.getAgentDisplayName(agent);
+  if (!processCheck.checked) {
+    console.error(
+      `  Probe failed: could not inspect the ${agentName} gateway inside sandbox '${sandboxName}'.`,
+    );
+    process.exit(1);
+  }
+  if (processCheck.wasRunning) {
+    console.log(`  Probe complete: ${agentName} gateway is running in '${sandboxName}'.`);
+    return;
+  }
+  if (processCheck.recovered) {
+    console.log(`  Probe complete: recovered ${agentName} gateway in '${sandboxName}'.`);
+    return;
+  }
+  console.error(
+    `  Probe failed: ${agentName} gateway is not running in '${sandboxName}' and automatic recovery failed.`,
+  );
+  console.error("  Check /tmp/gateway.log inside the sandbox for details.");
+  process.exit(1);
 }
 
 async function sandboxConnect(
@@ -1268,28 +1300,7 @@ async function sandboxConnect(
   await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
 
   if (probeOnly) {
-    const processCheck = checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
-    const agent = agentRuntime.getSessionAgent(sandboxName);
-    const agentName = agentRuntime.getAgentDisplayName(agent);
-    if (!processCheck.checked) {
-      console.error(
-        `  Probe failed: could not inspect the ${agentName} gateway inside sandbox '${sandboxName}'.`,
-      );
-      process.exit(1);
-    }
-    if (processCheck.wasRunning) {
-      console.log(`  Probe complete: ${agentName} gateway is running in '${sandboxName}'.`);
-      return;
-    }
-    if (processCheck.recovered) {
-      console.log(`  Probe complete: recovered ${agentName} gateway in '${sandboxName}'.`);
-      return;
-    }
-    console.error(
-      `  Probe failed: ${agentName} gateway is not running in '${sandboxName}' and automatic recovery failed.`,
-    );
-    console.error("  Check /tmp/gateway.log inside the sandbox for details.");
-    process.exit(1);
+    return runSandboxConnectProbe(sandboxName);
   }
 
   // Version staleness check — warn but don't block
@@ -4151,8 +4162,7 @@ const [cmd, ...args] = process.argv.slice(2);
 
   // Sandbox-scoped commands: nemoclaw <name> <action>
   const firstSandboxArg = args[0];
-  const implicitConnectArg =
-    firstSandboxArg === "--help" || firstSandboxArg === "-h" || firstSandboxArg === "--probe-only";
+  const implicitConnectArg = isSandboxConnectFlag(firstSandboxArg);
   const requestedSandboxAction =
     !firstSandboxArg || implicitConnectArg ? "connect" : firstSandboxArg;
   const requestedSandboxActionArgs = !firstSandboxArg || implicitConnectArg ? args : args.slice(1);
