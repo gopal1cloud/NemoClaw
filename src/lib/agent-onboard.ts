@@ -131,7 +131,8 @@ type AgentBinaryAvailability =
 
 const AGENT_BINARY_CHECK_PREFIX = "NEMOCLAW_AGENT_BINARY_CHECK:";
 
-function verifyAgentBinaryAvailable(
+// Exported for unit coverage of the sandbox-side guard without running onboarding.
+export function verifyAgentBinaryAvailable(
   sandboxName: string,
   agent: AgentDefinition,
   runCaptureOpenshell: OnboardContext["runCaptureOpenshell"],

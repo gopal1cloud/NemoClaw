@@ -156,16 +156,16 @@ pass "NemoClaw installed (sandbox: $SANDBOX_NAME)"
 # ══════════════════════════════════════════════════════════════════
 section "Phase 2: Config is writable (mutable default)"
 
-# Verify file permissions — fresh OpenClaw starts as 600 sandbox:sandbox in
-# the default mutable state.
+# Verify file permissions — OpenClaw mutable default is group-writable so the
+# gateway UID can write through the shared sandbox group.
 PERMS=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
   stat -c '%a %U:%G' "${CONFIG_PATH}" 2>/dev/null || true)
 info "Config perms (default): ${PERMS}"
 
-if [ "$(echo "$PERMS" | awk '{print $1}')" = "600" ]; then
-  pass "Config file mode is 600 (mutable default)"
+if [ "$(echo "$PERMS" | awk '{print $1}')" = "660" ]; then
+  pass "Config file mode is 660 (mutable default)"
 else
-  fail "Config file should start as mode 600: ${PERMS}"
+  fail "Config file should start as mode 660: ${PERMS}"
 fi
 
 if [ "$(echo "$PERMS" | awk '{print $2}')" = "sandbox:sandbox" ]; then
@@ -178,10 +178,16 @@ DIR_PERMS=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
   stat -c '%a %U:%G' "$(dirname "${CONFIG_PATH}")" 2>/dev/null || true)
 info "Config dir perms (default): ${DIR_PERMS}"
 
-if [ "$(echo "$DIR_PERMS" | awk '{print $1}')" = "2700" ]; then
-  pass "Config directory mode is 2700 (mutable default)"
+if [ "$(echo "$DIR_PERMS" | awk '{print $1}')" = "2770" ]; then
+  pass "Config directory mode is 2770 (mutable default)"
 else
-  fail "Config directory should be mode 2700: ${DIR_PERMS}"
+  fail "Config directory should be mode 2770: ${DIR_PERMS}"
+fi
+
+if [ "$(echo "$DIR_PERMS" | awk '{print $2}')" = "sandbox:sandbox" ]; then
+  pass "Config directory owned by sandbox:sandbox (mutable default)"
+else
+  fail "Config directory should be owned by sandbox:sandbox: ${DIR_PERMS}"
 fi
 
 STATUS_DEFAULT=$(nemoclaw "${SANDBOX_NAME}" shields status 2>&1)

@@ -258,17 +258,16 @@ const HIGH_RISK_STATE_DIRS = [
 
 function applyStateDirLockMode(sandboxName: string, configDir: string, owner: string): void {
   // Locking (shields-up) strips group + world write. Unlocking (shields-down)
-  // re-adds group write and strips world write, plus setgid so the gateway
-  // UID — now in the sandbox group via Dockerfile.base — can write to
-  // OpenClaw's mutable config tree (#2681).
+  // restores the same group-readable/writable + o-rwx mutable-default contract
+  // as startup, plus setgid so the gateway UID — now in the sandbox group via
+  // Dockerfile.base — can write to OpenClaw's mutable config tree (#2681).
   //
-  // The unlock variant uses `g+w,o-w` (not `o-w` alone) because a prior
-  // lock already stripped g+w from descendants via `chmod -R go-w`. Without
-  // re-adding g+w explicitly, shields-down would leave nested files at
-  // 644 — group-write gone, contract broken.
+  // The unlock variant uses `g+rwX,o-rwx` because a prior lock can strip group
+  // access from descendants. Without re-adding group read/write explicitly,
+  // shields-down would leave nested files readable/writable only by owner.
   const isLocking = owner === "root:root";
-  const writeStrip = isLocking ? "go-w" : "g+w,o-w";
-  const dirMode = isLocking ? "755" : "2775";
+  const recursiveMode = isLocking ? "go-w" : "g+rwX,o-rwx";
+  const dirMode = isLocking ? "755" : "2770";
 
   for (const dirName of HIGH_RISK_STATE_DIRS) {
     const dirPath = `${configDir}/${dirName}`;
@@ -279,7 +278,18 @@ function applyStateDirLockMode(sandboxName: string, configDir: string, owner: st
     }
     try {
       kubectlExec(sandboxName, ["chmod", dirMode, dirPath]);
-      kubectlExec(sandboxName, ["chmod", "-R", writeStrip, dirPath]);
+    } catch {
+      // Silently skip
+    }
+    if (isLocking) {
+      try {
+        kubectlExec(sandboxName, ["chmod", "g-s", dirPath]);
+      } catch {
+        // Best effort; do not skip recursive write stripping.
+      }
+    }
+    try {
+      kubectlExec(sandboxName, ["chmod", "-R", recursiveMode, dirPath]);
     } catch {
       // Silently skip
     }
@@ -287,6 +297,7 @@ function applyStateDirLockMode(sandboxName: string, configDir: string, owner: st
 
   // Multi-agent OpenClaw workspaces are named workspace-<agent>. They are
   // discovered dynamically because they are configured by openclaw.json.
+  const clearSetgid = isLocking ? "1" : "0";
   try {
     kubectlExec(sandboxName, [
       "sh",
@@ -295,20 +306,23 @@ function applyStateDirLockMode(sandboxName: string, configDir: string, owner: st
 set -u
 config_dir="$1"
 owner="$2"
-write_strip="$3"
+recursive_mode="$3"
 dir_mode="$4"
+clear_setgid="$5"
 for dir in "$config_dir"/workspace-*; do
   [ -d "$dir" ] || continue
   chown -R "$owner" "$dir" 2>/dev/null || true
   chmod "$dir_mode" "$dir" 2>/dev/null || true
-  chmod -R "$write_strip" "$dir" 2>/dev/null || true
+  [ "$clear_setgid" = "1" ] && chmod g-s "$dir" 2>/dev/null || true
+  chmod -R "$recursive_mode" "$dir" 2>/dev/null || true
 done
 `,
       "sh",
       configDir,
       owner,
-      writeStrip,
+      recursiveMode,
       dirMode,
+      clearSetgid,
     ]);
   } catch {
     // Best effort; verification below catches the primary config lock.

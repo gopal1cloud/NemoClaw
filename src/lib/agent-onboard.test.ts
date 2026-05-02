@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vites
 import fs from "node:fs";
 import path from "node:path";
 // Import from compiled dist/ so coverage is attributed correctly.
-import { printDashboardUi } from "../../dist/lib/agent-onboard";
+import { printDashboardUi, verifyAgentBinaryAvailable } from "../../dist/lib/agent-onboard";
 import type { AgentDefinition } from "./agent-defs";
 
 function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
@@ -149,5 +149,36 @@ describe("handleAgentSetup guards", () => {
     expect(source).toContain("JSON.parse(body)");
     expect(source).toContain('parsed.status === "ok"');
     expect(source).not.toContain('.includes("ok")');
+  });
+
+  it("accepts an executable configured binary path when PATH lookup is empty", () => {
+    let script = "";
+    const result = verifyAgentBinaryAvailable(
+      "alpha",
+      makeAgent({ name: "hermes", binary_path: "/usr/local/bin/hermes" }),
+      (args) => {
+        script = String(args[7] || "");
+        return "openshell noise\nNEMOCLAW_AGENT_BINARY_CHECK:ok";
+      },
+    );
+
+    expect(result).toEqual({ available: true });
+    expect(script).toContain("if [ -x '/usr/local/bin/hermes' ]; then");
+    expect(script).toContain("NEMOCLAW_AGENT_BINARY_CHECK:ok");
+  });
+
+  it("does not reject a configured binary when PATH resolves the symlink target", () => {
+    let script = "";
+    const result = verifyAgentBinaryAvailable(
+      "alpha",
+      makeAgent({ name: "hermes", binary_path: "/usr/local/bin/hermes" }),
+      (args) => {
+        script = String(args[7] || "");
+        return "openshell noise\nNEMOCLAW_AGENT_BINARY_CHECK:ok";
+      },
+    );
+
+    expect(result).toEqual({ available: true });
+    expect(script).toContain("NEMOCLAW_AGENT_BINARY_CHECK:ok");
   });
 });
