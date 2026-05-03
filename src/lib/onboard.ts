@@ -268,6 +268,7 @@ const {
   resolveProviderCredential,
   saveCredential,
 } = credentials;
+const { hashCredential }: typeof import("./credential-hash") = require("./credential-hash");
 const registry: typeof import("./registry") = require("./registry");
 const nim: typeof import("./nim") = require("./nim");
 const onboardSession: typeof import("./onboard-session") = require("./onboard-session");
@@ -1237,18 +1238,6 @@ function upsertMessagingProviders(tokenDefs: MessagingTokenDef[]) {
 }
 function providerExistsInGateway(name: string) {
   return onboardProviders.providerExistsInGateway(name, runOpenshell);
-}
-
-/**
- * Compute a SHA-256 hash of a credential value for change detection.
- * Stored in the sandbox registry so we can detect rotation on reuse
- * without needing to read the credential back from OpenShell.
- * @param {string} value - Credential value to hash.
- * @returns {string|null} Hex-encoded SHA-256 hash, or null if value is falsy.
- */
-function hashCredential(value: string | null | undefined): string | null {
-  if (!value) return null;
-  return crypto.createHash("sha256").update(String(value).trim()).digest("hex");
 }
 
 /**
@@ -4025,29 +4014,42 @@ async function createSandbox(
   // skipped the token prompt for. Only channels with a real token will have a
   // provider attached, so the conflict check must filter out the skipped ones
   // (otherwise we warn about phantom channels that will never poll).
-  const conflictCheckChannels: string[] = Array.isArray(enabledChannels)
-    ? enabledChannels.filter((name) => {
+  const conflictCheckChannels = Array.isArray(enabledChannels)
+    ? enabledChannels.flatMap((name) => {
         const def = MESSAGING_CHANNELS.find((c) => c.name === name);
-        return def ? !!getMessagingToken(def.envKey) : false;
+        if (!def || !getMessagingToken(def.envKey)) return [];
+        const tokenEnvKeys = def.appTokenEnvKey ? [def.envKey, def.appTokenEnvKey] : [def.envKey];
+        const credentialHashes: Record<string, string> = {};
+        for (const envKey of tokenEnvKeys) {
+          const hash = hashCredential(getMessagingToken(envKey));
+          if (hash) credentialHashes[envKey] = hash;
+        }
+        if (Object.keys(credentialHashes).length === 0) return [];
+        return [{ channel: name, credentialHashes }];
       })
     : [];
 
   // Messaging channels like Telegram (getUpdates), Discord (gateway), and Slack
-  // (Socket Mode) enforce one consumer per bot token. Two sandboxes sharing
-  // a token silently break both bridges (see #1953). Warn before we commit.
+  // (Socket Mode) enforce one consumer per channel credential. Two sandboxes
+  // sharing a credential silently break both bridges (see #1953). Warn before
+  // we commit.
   if (conflictCheckChannels.length > 0) {
     const { backfillMessagingChannels, findChannelConflicts } = require("./messaging-conflict");
     backfillMessagingChannels(registry, makeConflictProbe());
     const conflicts = findChannelConflicts(sandboxName, conflictCheckChannels, registry);
     if (conflicts.length > 0) {
-      for (const { channel, sandbox } of conflicts) {
+      for (const { channel, sandbox, reason } of conflicts) {
+        const detail =
+          reason === "matching-token"
+            ? `uses the same ${channel} credential`
+            : `already has ${channel} enabled, but its credential hash is unavailable`;
         console.log(
-          `  ⚠ Sandbox '${sandbox}' already has ${channel} enabled. Bot tokens only allow one sandbox to poll — continuing will break both bridges.`,
+          `  ⚠ Sandbox '${sandbox}' ${detail}. Shared channel credentials only allow one sandbox to poll/connect — continuing may break both bridges.`,
         );
       }
       if (isNonInteractive()) {
         console.error(
-          `  Aborting: resolve the messaging channel conflict above or run \`${cliName()} <sandbox> destroy\` on the other sandbox.`,
+          `  Aborting: resolve the messaging channel conflict above or run \`${cliName()} <sandbox> channels stop <channel>\` / \`${cliName()} <sandbox> channels remove <channel>\` on the other sandbox.`,
         );
         process.exit(1);
       }

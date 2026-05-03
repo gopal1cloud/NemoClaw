@@ -380,7 +380,9 @@ describe("inventory commands", () => {
     const lines: string[] = [];
     const backfillAndFindOverlaps = vi
       .fn()
-      .mockReturnValue([{ channel: "telegram", sandboxes: ["alice", "bob"] }]);
+      .mockReturnValue([
+        { channel: "telegram", sandboxes: ["alice", "bob"], reason: "matching-token" },
+      ]);
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
@@ -396,9 +398,11 @@ describe("inventory commands", () => {
     });
 
     expect(backfillAndFindOverlaps).toHaveBeenCalled();
-    expect(lines.some((l) => l.includes("telegram is enabled on both 'alice' and 'bob'"))).toBe(
-      true,
-    );
+    expect(
+      lines.some((l) =>
+        l.includes("'alice' and 'bob' share the same telegram credential"),
+      ),
+    ).toBe(true);
   });
 
   it("surfaces Hermes gateway log when messaging is degraded", () => {
