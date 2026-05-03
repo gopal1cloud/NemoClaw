@@ -46,7 +46,7 @@ describe("resolveSandboxOclifDispatch", () => {
   it("routes policy-add missing-value errors through the strict oclif adapter", () => {
     expect(resolveSandboxOclifDispatch("alpha", "policy-add", ["--from-file"])).toEqual({
       kind: "oclif",
-      commandId: "sandbox:policy-add",
+      commandId: "sandbox:policy:add",
       args: ["alpha", "--from-file"],
     });
   });
