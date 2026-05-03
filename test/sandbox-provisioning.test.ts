@@ -49,6 +49,10 @@ function dockerRunCommandBetween(
       break;
     }
   }
+  const lastLine = runLines[runLines.length - 1]?.trimEnd() ?? "";
+  if (lastLine.endsWith("\\")) {
+    throw new Error(`Expected complete RUN instruction before ${endMarker}`);
+  }
   return runLines
     .join("\n")
     .trim()
