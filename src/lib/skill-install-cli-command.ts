@@ -19,6 +19,19 @@ function getRuntimeBridge() {
   return runtimeBridgeFactory();
 }
 
+export class SkillCliCommand extends Command {
+  static id = "sandbox:skill";
+  static strict = false;
+  static summary = "Show skill command usage";
+  static description = "Show skill install usage or report unknown skill subcommands.";
+  static usage = ["<name> skill install <path>"];
+
+  public async run(): Promise<void> {
+    const [sandboxName, ...actionArgs] = this.argv;
+    await getRuntimeBridge().sandboxSkillInstall(sandboxName, actionArgs);
+  }
+}
+
 export default class SkillInstallCliCommand extends Command {
   static id = "sandbox:skill:install";
   static strict = true;

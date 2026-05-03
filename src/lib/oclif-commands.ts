@@ -29,7 +29,11 @@ import {
   GarbageCollectImagesCommand,
   UpgradeSandboxesCommand,
 } from "./maintenance-cli-commands";
-import { PolicyAddCommand, PolicyRemoveCommand } from "./policy-mutate-cli-commands";
+import {
+  PolicyAddCommand,
+  PolicyAddRawCommand,
+  PolicyRemoveCommand,
+} from "./policy-mutate-cli-commands";
 import RebuildCliCommand from "./rebuild-cli-command";
 import SandboxDoctorCliCommand from "./sandbox-doctor-cli-command";
 import {
@@ -45,8 +49,9 @@ import {
   ShieldsUpCommand,
 } from "./shields-cli-commands";
 import ShareCommand from "./share-command";
-import SkillInstallCliCommand from "./skill-install-cli-command";
+import SkillInstallCliCommand, { SkillCliCommand } from "./skill-install-cli-command";
 import {
+  SnapshotCommand,
   SnapshotCreateCommand,
   SnapshotListCommand,
   SnapshotRestoreCommand,
@@ -82,13 +87,16 @@ export default {
   "sandbox:doctor": SandboxDoctorCliCommand,
   "sandbox:logs": SandboxLogsCommand,
   "sandbox:policy-add": PolicyAddCommand,
+  "sandbox:policy-add:raw": PolicyAddRawCommand,
   "sandbox:policy-list": SandboxPolicyListCommand,
   "sandbox:policy-remove": PolicyRemoveCommand,
   "sandbox:rebuild": RebuildCliCommand,
   "sandbox:shields:down": ShieldsDownCommand,
   "sandbox:shields:status": ShieldsStatusCommand,
   "sandbox:shields:up": ShieldsUpCommand,
+  "sandbox:skill": SkillCliCommand,
   "sandbox:skill:install": SkillInstallCliCommand,
+  "sandbox:snapshot": SnapshotCommand,
   "sandbox:snapshot:create": SnapshotCreateCommand,
   "sandbox:snapshot:list": SnapshotListCommand,
   "sandbox:snapshot:restore": SnapshotRestoreCommand,
