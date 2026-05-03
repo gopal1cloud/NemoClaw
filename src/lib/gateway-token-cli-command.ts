@@ -1,15 +1,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- thin oclif adapter covered through CLI integration tests. */
-
 import { Args, Command, Flags } from "@oclif/core";
 
 import { runGatewayTokenCommand } from "./gateway-token-command";
 
-const { fetchGatewayAuthTokenFromSandbox } = require("./onboard") as {
+type GatewayTokenRuntimeBridge = {
   fetchGatewayAuthTokenFromSandbox: (sandboxName: string) => string | null;
 };
+
+let runtimeBridgeFactory = (): GatewayTokenRuntimeBridge => {
+  const onboard = require("./onboard") as GatewayTokenRuntimeBridge;
+  return { fetchGatewayAuthTokenFromSandbox: onboard.fetchGatewayAuthTokenFromSandbox };
+};
+
+export function setGatewayTokenRuntimeBridgeFactoryForTest(
+  factory: () => GatewayTokenRuntimeBridge,
+): void {
+  runtimeBridgeFactory = factory;
+}
+
+function getRuntimeBridge(): GatewayTokenRuntimeBridge {
+  return runtimeBridgeFactory();
+}
 
 export default class GatewayTokenCliCommand extends Command {
   static id = "sandbox:gateway:token";
@@ -41,10 +54,11 @@ export default class GatewayTokenCliCommand extends Command {
       if (err.code === "EPIPE") process.exit(0);
     });
 
+    const runtime = getRuntimeBridge();
     const exitCode = runGatewayTokenCommand(
       args.sandboxName,
       { quiet: flags.quiet === true },
-      { fetchToken: fetchGatewayAuthTokenFromSandbox },
+      { fetchToken: runtime.fetchGatewayAuthTokenFromSandbox },
     );
     if (exitCode !== 0) this.exit(exitCode);
   }
