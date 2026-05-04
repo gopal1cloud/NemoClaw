@@ -395,9 +395,40 @@ function ensureSandboxPortForward(sandboxName: string): void {
 }
 
 /**
+ * Probe `openshell forward list` for the sandbox's dashboard forward.
+ * Returns true when an entry exists for the expected sandbox+port pair
+ * with STATUS=running, false when the entry is missing or non-running,
+ * and null when openshell is unreachable.
+ *
+ * #2042: callers must treat a healthy in-sandbox gateway and a healthy
+ * host-side forward as independent dimensions. The forward can die
+ * (e.g. host SSH session dropped, openshell forward list shows STATUS=dead)
+ * while the in-sandbox gateway keeps listening on 127.0.0.1:<port>.
+ */
+function isSandboxForwardHealthy(sandboxName: string): boolean | null {
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const port = agent ? String(agent.forwardPort) : DASHBOARD_FORWARD_PORT;
+  const result = captureOpenshell(["forward", "list"], {
+    ignoreError: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
+  if (!result || isCommandTimeout(result) || result.status !== 0) return null;
+  for (const line of (result.output ?? "").split("\n")) {
+    const cols = line.trim().split(/\s+/);
+    // openshell forward list columns: SANDBOX BIND PORT PID STATUS
+    if (cols[2] !== port) continue;
+    if (cols[0] !== sandboxName) return false;
+    return (cols[4] ?? "").toLowerCase() === "running";
+  }
+  return false;
+}
+
+/**
  * Detect and recover from a sandbox that survived a gateway restart but
- * whose OpenClaw processes are not running. Returns an object describing
- * the outcome: { checked, wasRunning, recovered }.
+ * whose OpenClaw processes are not running. Also re-establishes the
+ * host-side dashboard port-forward when it has gone dead independently
+ * of the gateway (#2042). Returns an object describing the outcome:
+ * `{ checked, wasRunning, recovered, forwardRecovered }`.
  */
 function checkAndRecoverSandboxProcesses(
   sandboxName: string,
@@ -405,14 +436,32 @@ function checkAndRecoverSandboxProcesses(
 ) {
   const running = isSandboxGatewayRunning(sandboxName);
   if (running === null) {
-    return { checked: false, wasRunning: null, recovered: false };
+    return { checked: false, wasRunning: null, recovered: false, forwardRecovered: false };
   }
+  const _recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
   if (running) {
-    return { checked: true, wasRunning: true, recovered: false };
+    // Gateway is alive but the host-side forward can still be dead or
+    // owned by another sandbox (#2042). Probe and re-establish only when
+    // necessary so the live-and-healthy path stays a no-op.
+    const forwardHealthy = isSandboxForwardHealthy(sandboxName);
+    if (forwardHealthy === false) {
+      if (!quiet) {
+        console.log("");
+        console.log(
+          `  Dashboard port forward to '${sandboxName}' is missing or dead.`,
+        );
+        console.log("  Re-establishing...");
+      }
+      ensureSandboxPortForward(sandboxName);
+      if (!quiet) {
+        console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
+      }
+      return { checked: true, wasRunning: true, recovered: false, forwardRecovered: true };
+    }
+    return { checked: true, wasRunning: true, recovered: false, forwardRecovered: false };
   }
 
   // Gateway not running — attempt recovery
-  const _recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
   if (!quiet) {
     console.log("");
     console.log(
@@ -430,7 +479,7 @@ function checkAndRecoverSandboxProcesses(
         console.error("  Gateway process started but is not responding.");
         console.error("  Check /tmp/gateway.log inside the sandbox for details.");
       }
-      return { checked: true, wasRunning: false, recovered: false };
+      return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
     }
     ensureSandboxPortForward(sandboxName);
     if (!quiet) {
@@ -447,7 +496,7 @@ function checkAndRecoverSandboxProcesses(
     console.error(`    ${agentRuntime.getGatewayCommand(_recoveryAgent)}`);
   }
 
-  return { checked: true, wasRunning: false, recovered };
+  return { checked: true, wasRunning: false, recovered, forwardRecovered: recovered };
 }
 
 exports.runtimeBridge = {
@@ -976,7 +1025,13 @@ function runSandboxConnectProbe(sandboxName: string): void {
     process.exit(1);
   }
   if (processCheck.wasRunning) {
-    console.log(`  Probe complete: ${agentName} gateway is running in '${sandboxName}'.`);
+    if (processCheck.forwardRecovered) {
+      console.log(
+        `  Probe complete: ${agentName} gateway is running in '${sandboxName}'; restored dashboard port forward.`,
+      );
+    } else {
+      console.log(`  Probe complete: ${agentName} gateway is running in '${sandboxName}'.`);
+    }
     return;
   }
   if (processCheck.recovered) {
