@@ -448,7 +448,7 @@ Follow these steps to reconnect.
 
 > **If the sandbox does not recover:** If the sandbox remains missing after restarting the gateway, run `nemoclaw onboard` to recreate it.
 > The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox. Workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
-> Back up your workspace first by following the instructions at Back Up and Restore (use the `nemoclaw-user-workspace` skill).
+> Back up your workspace first by following the instructions at Back Up and Restore (use the `nemoclaw-user-manage-sandboxes` skill).
 
 ### Sandbox is running an outdated agent version
 
@@ -567,6 +567,9 @@ $ nemoclaw onboard
 If you previously set `NEMOCLAW_PREFERRED_API=openai-responses` to force the
 Responses API, unset it before re-running onboard.
 
+When you enable Telegram messaging with an OpenAI-compatible endpoint, onboarding also checks `inference.local` from inside the sandbox.
+If that smoke check fails, fix the compatible-endpoint base URL, credentials, model, or network route before testing the Telegram bot again.
+
 Do not rely on `NEMOCLAW_INFERENCE_API_OVERRIDE` alone — it patches the config
 at container startup but does not update the Dockerfile ARG baked into the
 image.
@@ -605,7 +608,7 @@ This is expected.
 The sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) is baked into the container image at build time.
 NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw config set` and `openclaw config unset` and prints an actionable error, because changes made inside the running sandbox do not persist across rebuilds.
 
-To change your configuration, exit the sandbox and rerun onboarding:
+For most configuration changes, exit the sandbox and rerun onboarding:
 
 ```console
 $ nemoclaw onboard
@@ -613,6 +616,14 @@ $ nemoclaw onboard
 
 If NemoClaw reports a resumable failed onboarding session, run `nemoclaw onboard --resume` instead.
 This rebuilds the sandbox with your updated settings.
+
+For advanced live edits, use the host-side config command instead of running `openclaw config set` inside the sandbox:
+
+```console
+$ nemoclaw <sandbox> config set --key <dotpath> --value '<json-or-string>' --restart
+```
+
+Host-side `config set` validates any HTTP or HTTPS URLs in the new value, including URLs nested inside JSON objects or arrays. NemoClaw rejects loopback, private, reserved, and internal hosts; DNS names must resolve successfully and must not resolve to private/internal addresses. HTTP URLs are written with the validated IP address pinned to reduce DNS-rebinding risk. Avoid putting credentials in config values; rotate provider credentials with `nemoclaw <sandbox> config rotate-token` instead.
 
 ### `openclaw doctor --fix` cannot repair Discord channel config inside the sandbox
 
@@ -663,7 +674,7 @@ Bot tokens for Telegram (`getUpdates`), Discord (gateway), and Slack (Socket Mod
 To diagnose, open a shell in the sandbox and inspect the gateway log:
 
 ```console
-$ openshell term <sandbox-name>
+$ nemoclaw <sandbox-name> connect
 $ tail -f /tmp/gateway.log
 ```
 
