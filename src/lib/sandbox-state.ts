@@ -52,6 +52,8 @@ export interface RebuildManifest {
   agentVersion: string | null;
   expectedVersion: string | null;
   stateDirs: string[];
+  /** Directories verified as safe to restore. Absent on older manifests. */
+  backedUpDirs?: string[];
   stateFiles?: StateFileSpec[];
   /** Single config/state directory */
   dir: string;
@@ -162,6 +164,7 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
     (value.agentVersion === null || typeof value.agentVersion === "string") &&
     (value.expectedVersion === null || typeof value.expectedVersion === "string") &&
     isStringArray(value.stateDirs) &&
+    (value.backedUpDirs === undefined || isStringArray(value.backedUpDirs)) &&
     (typeof value.dir === "string" || typeof value.writableDir === "string") &&
     typeof value.backupPath === "string" &&
     (value.stateFiles === undefined ||
@@ -606,6 +609,27 @@ function stateFileRemotePath(dir: string, filePath: string): string {
   return `${dir.replace(/\/+$/, "")}/${filePath}`;
 }
 
+function failedDirsFromTarStderr(stderr: string, existingDirs: string[]): Set<string> {
+  const failed = new Set<string>();
+  const dirs = [...existingDirs].sort((a, b) => b.length - a.length);
+  for (const rawLine of stderr.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line.startsWith("tar: ")) continue;
+    const message = line.slice("tar: ".length);
+    for (const dirName of dirs) {
+      if (
+        message === dirName ||
+        message.startsWith(`${dirName}:`) ||
+        message.startsWith(`${dirName}/`)
+      ) {
+        failed.add(dirName);
+        break;
+      }
+    }
+  }
+  return failed;
+}
+
 const SQLITE_BACKUP_PY = [
   "import sqlite3, sys",
   "src, dst = sys.argv[1], sys.argv[2]",
@@ -988,7 +1012,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         // GNU tar exit codes: 0 = success, 1 = files changed during archive,
         // 2 = errors (e.g. permission denied) but archive still written to stdout.
         // Accept exit 0, 1, or 2 when stdout has data — extract what tar produced
-        // and determine per-dir success by checking what actually landed on disk.
+        // and determine per-dir success from tar's reported read errors.
         const tarExitedWithData =
           result.stdout && result.stdout.length > 0 && (result.status === 0 || result.status === 1 || result.status === 2);
 
@@ -1002,23 +1026,27 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
           // SECURITY: Validate tar entries, extract safely, audit symlinks
           const extractResult = safeTarExtract(result.stdout, backupPath);
           if (extractResult.success) {
-            // Determine per-dir success: a dir is backed up only if it actually
-            // contains files in the extracted backup.  tar may create an empty
-            // directory header even when every file inside was permission-denied,
-            // so existsSync alone is insufficient.
-            for (const d of existingDirs) {
-              const dirPath = path.join(backupPath, d);
-              let hasContent = false;
-              try {
-                hasContent = readdirSync(dirPath).length > 0;
-              } catch {
-                /* dir doesn't exist at all */
-              }
-              if (hasContent) {
-                backedUpDirs.push(d);
+            if (result.status === 0) {
+              backedUpDirs.push(...existingDirs);
+            } else {
+              const tarFailedDirs = failedDirsFromTarStderr(
+                result.stderr?.toString() || "",
+                existingDirs,
+              );
+              if (tarFailedDirs.size === 0) {
+                _log(
+                  `tar exited ${result.status} without attributable failed dirs — marking all dirs failed`,
+                );
+                failedDirs.push(...existingDirs);
               } else {
-                _log(`Dir ${d} empty or missing from backup after extraction — marking failed`);
-                failedDirs.push(d);
+                for (const d of existingDirs) {
+                  if (tarFailedDirs.has(d)) {
+                    _log(`Dir ${d} had tar read errors — marking failed`);
+                    failedDirs.push(d);
+                  } else {
+                    backedUpDirs.push(d);
+                  }
+                }
               }
             }
           } else {
@@ -1064,6 +1092,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       `Manifest stateDirs extended with multi-agent workspaces: [${discoveredWorkspaces.join(",")}]`,
     );
   }
+  manifest.backedUpDirs = backedUpDirs;
 
   writeManifest(backupPath, manifest);
   manifest.backupPath = backupPath;
@@ -1113,8 +1142,11 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
   const restoredFiles: string[] = [];
   const failedFiles: string[] = [];
 
-  // Find which backed-up directories actually exist locally
-  const localDirs = manifest.stateDirs.filter((d) => existsSync(path.join(backupPath, d)));
+  // Find which verified backed-up directories actually exist locally.
+  // Older manifests do not have backedUpDirs, so keep restoring stateDirs for
+  // backward compatibility.
+  const restorableStateDirs = manifest.backedUpDirs ?? manifest.stateDirs;
+  const localDirs = restorableStateDirs.filter((d) => existsSync(path.join(backupPath, d)));
   const stateFiles = normalizeStateFileSpecs(manifest.stateFiles ?? []);
   const localFiles = stateFiles.filter((f) => existsSync(path.join(backupPath, f.path)));
   _log(
