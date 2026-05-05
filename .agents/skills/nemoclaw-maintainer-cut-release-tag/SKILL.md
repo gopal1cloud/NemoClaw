@@ -127,6 +127,20 @@ git ls-remote --tags origin | grep -E '(<new-version>|latest)'
 
 Confirm both tags point to the same commit on the remote.
 
+## Step 7: Sweep Stale-Issue Verification Labels
+
+Strip `fixed-on-latest` and `verify-inconclusive` from all open issues so the next `nemoclaw-maintainer-verify-stale` run re-evaluates against the new release. Without this sweep, "latest" drifts and verifications go silently stale.
+
+```bash
+for label in fixed-on-latest verify-inconclusive; do
+  gh issue list --repo NVIDIA/NemoClaw --state open --label "$label" \
+    --json number -q '.[].number' \
+  | xargs -I{} gh issue edit {} --repo NVIDIA/NemoClaw --remove-label "$label"
+done
+```
+
+The verification record itself stays in each issue's comment history — only the labels are reset.
+
 ## Important Notes
 
 - NEVER tag without explicit user confirmation of the version.
