@@ -210,6 +210,9 @@ process.exit(0);
   return { tmpDir, nemoclawDir, sandboxName };
 }
 
+/**
+ * Run the real rebuild CLI against a fixture with fake runtime binaries.
+ */
 function runRebuild(fixture: ReturnType<typeof createFixture>) {
   return spawnSync(
     process.execPath,
@@ -231,11 +234,17 @@ function runRebuild(fixture: ReturnType<typeof createFixture>) {
 
 type SessionFixture = { agent?: string | null };
 
+/**
+ * Read the fixture's persisted onboarding session.
+ */
 function readSession(fixture: ReturnType<typeof createFixture>): SessionFixture {
   const p = path.join(fixture.nemoclawDir, "onboard-session.json");
   return JSON.parse(fs.readFileSync(p, "utf-8"));
 }
 
+/**
+ * Read only the agent recorded in the fixture onboarding session.
+ */
 function readSessionAgent(fixture: ReturnType<typeof createFixture>): string | null | undefined {
   return readSession(fixture).agent;
 }

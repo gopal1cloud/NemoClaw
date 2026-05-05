@@ -135,14 +135,23 @@ export function getAgentPermissivePolicyPath(agent: AgentDefinition): string | n
   return agent.policyPermissivePath || null;
 }
 
+/**
+ * Sleep for the requested number of seconds using the shared wait helper.
+ */
 function sleep(seconds: number): void {
   sleepSeconds(seconds);
 }
 
+/**
+ * Resolve the CLI command name used for agent-specific recovery guidance.
+ */
 function agentCliName(agent: AgentDefinition): string {
   return getAgentBranding(agent.name).cli;
 }
 
+/**
+ * Resolve the executable name expected inside the agent sandbox.
+ */
 function agentExecutableName(agent: AgentDefinition): string {
   const configuredPath = typeof agent.binary_path === "string" ? agent.binary_path.trim() : "";
   return path.basename(configuredPath || agent.name);
@@ -216,6 +225,9 @@ export function verifyAgentBinaryAvailable(
   return { available: false, reason: "not_found", binaryPath: binaryPath || undefined };
 }
 
+/**
+ * Format a user-facing explanation for an agent binary availability failure.
+ */
 function describeAgentBinaryFailure(
   sandboxName: string,
   agent: AgentDefinition,
@@ -231,6 +243,9 @@ function describeAgentBinaryFailure(
   return `${agent.displayName} binary '${executable}' is missing inside sandbox '${sandboxName}'`;
 }
 
+/**
+ * Record and print an agent setup failure before exiting the onboarding flow.
+ */
 function failAgentSetup(sandboxName: string, agent: AgentDefinition, message: string): never {
   onboardSession.markStepFailed("agent_setup", message);
   console.error(`  \u2717 ${message}`);
@@ -238,6 +253,9 @@ function failAgentSetup(sandboxName: string, agent: AgentDefinition, message: st
   process.exit(1);
 }
 
+/**
+ * Interpret an agent health-probe response as healthy or unhealthy.
+ */
 function isHealthProbeOk(result: string | null | undefined): boolean {
   const body = (result ?? "").trim();
   if (body === "ok") {
@@ -371,6 +389,9 @@ export function getAgentDashboardInfo(agent: AgentDefinition): {
   };
 }
 
+/**
+ * Redact browser token fragments before printing dashboard URLs.
+ */
 function dashboardUrlForDisplay(url: string): string {
   return redact(url.replace(/#token=[^\s'"]*$/i, ""));
 }
