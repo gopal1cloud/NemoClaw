@@ -430,7 +430,7 @@ fi
 
 section "Phase 6: Discord placeholder egress"
 
-dc_api=$(sandbox_exec 'node -e "
+dc_api=$(sandbox_exec 'node --no-warnings -e "
 const fs = require(\"fs\");
 const https = require(\"https\");
 const env = fs.readFileSync(\"/sandbox/.hermes/.env\", \"utf8\");
