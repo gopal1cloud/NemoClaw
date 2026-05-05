@@ -659,7 +659,14 @@ function loadPresetFromFile(filePath: string): { presetName: string; content: st
       return null;
     }
     try {
-      content = fs.readFileSync(fd, "utf-8");
+      const buffer = Buffer.allocUnsafe(stat.size);
+      let offset = 0;
+      while (offset < buffer.length) {
+        const bytesRead = fs.readSync(fd, buffer, offset, buffer.length - offset, null);
+        if (bytesRead === 0) break;
+        offset += bytesRead;
+      }
+      content = buffer.toString("utf-8", 0, offset);
       parsed = YAML.parse(content);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
