@@ -16,6 +16,8 @@ const { loadAgent } = require("./agent-defs");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
+const MAX_PRESET_FILE_BYTES = 1 * 1024 * 1024;
+
 type PresetInfo = {
   file: string;
   name: string;
@@ -617,8 +619,27 @@ function applyPreset(
  */
 function loadPresetFromFile(filePath: string): { presetName: string; content: string } | null {
   const abs = path.resolve(filePath);
-  if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+  let stat: { isSymbolicLink: () => boolean; isFile: () => boolean; size: number };
+  try {
+    stat = fs.lstatSync(abs);
+  } catch {
     console.error(`  Preset file not found: ${filePath}`);
+    return null;
+  }
+  if (stat.isSymbolicLink()) {
+    console.error(
+      `  Preset file must not be a symbolic link: ${filePath} (resolve with 'realpath' and pass the target path).`,
+    );
+    return null;
+  }
+  if (!stat.isFile()) {
+    console.error(`  Preset file not found: ${filePath}`);
+    return null;
+  }
+  if (stat.size > MAX_PRESET_FILE_BYTES) {
+    console.error(
+      `  Preset file too large: ${filePath} (${stat.size} bytes; max ${MAX_PRESET_FILE_BYTES} bytes).`,
+    );
     return null;
   }
   if (!/\.ya?ml$/i.test(abs)) {
