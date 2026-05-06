@@ -9818,7 +9818,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     const resumedSandboxGpuFlag: SandboxGpuFlag = resumeHasResolvedGpuIntent
       ? session?.gpuPassthrough === true
         ? "enable"
-        : "disable"
+        : null
       : null;
     const effectiveSandboxGpuFlag = explicitSandboxGpuFlag ?? resumedSandboxGpuFlag;
     let gpu;
@@ -9940,6 +9940,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
     if (resumeGateway) {
       skippedStepMessage("gateway", "running");
+      if (isLinuxDockerDriverGatewayEnabled()) {
+        registerDockerDriverGatewayEndpoint();
+      }
     } else if (!resume && canReuseHealthyGateway) {
       skippedStepMessage("gateway", "running", "reuse");
       note("  Reusing healthy NemoClaw gateway.");
@@ -10160,16 +10163,19 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           if (sandboxName) {
             registry.removeSandbox(sandboxName);
           }
+          RECREATE_SANDBOX = true;
         } else if (telegramConfigChanged) {
           note("  [resume] TELEGRAM_REQUIRE_MENTION changed; recreating sandbox.");
           if (sandboxName) {
             registry.removeSandbox(sandboxName);
           }
+          RECREATE_SANDBOX = true;
         } else if (sandboxGpuConfigChanged) {
           note("  [resume] Sandbox GPU settings changed; recreating sandbox.");
           if (sandboxName) {
             registry.removeSandbox(sandboxName);
           }
+          RECREATE_SANDBOX = true;
         } else if (sandboxReuseState === "not_ready") {
           note(
             `  [resume] Recorded sandbox '${sandboxName}' exists but is not ready; recreating it.`,
@@ -10180,6 +10186,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           if (sandboxName) {
             registry.removeSandbox(sandboxName);
           }
+          RECREATE_SANDBOX = true;
         }
       }
       let nextWebSearchConfig = webSearchConfig;
