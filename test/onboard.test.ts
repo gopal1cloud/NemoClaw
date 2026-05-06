@@ -227,12 +227,26 @@ describe("onboard helpers", () => {
       expect(getSandboxPromptDefault(hermes)).toBe("hermes");
 
       process.env.NEMOCLAW_SANDBOX_NAME = "custom-hermes";
-      expect(getSandboxPromptDefault(hermes)).toBe("hermes");
+      expect(getSandboxPromptDefault(hermes)).toBe("custom-hermes");
     } finally {
       if (previousSandboxName === undefined) {
         delete process.env.NEMOCLAW_SANDBOX_NAME;
       } else {
         process.env.NEMOCLAW_SANDBOX_NAME = previousSandboxName;
+      }
+    }
+  });
+
+  it("uses NEMOCLAW_SANDBOX_NAME as the interactive prompt default", () => {
+    const previous = process.env.NEMOCLAW_SANDBOX_NAME;
+    try {
+      process.env.NEMOCLAW_SANDBOX_NAME = "mythos";
+      expect(getSandboxPromptDefault(null)).toBe("mythos");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NEMOCLAW_SANDBOX_NAME;
+      } else {
+        process.env.NEMOCLAW_SANDBOX_NAME = previous;
       }
     }
   });
