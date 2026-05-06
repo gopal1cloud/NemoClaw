@@ -167,6 +167,7 @@ function sshEnv(
     `export NEMOCLAW_NON_INTERACTIVE=1`,
     `export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`,
     `export NEMOCLAW_SANDBOX_NAME=e2e-test`,
+    `export NEMOCLAW_TRACE_DIR='${shellEscape(process.env.NEMOCLAW_TRACE_DIR || "/tmp/nemoclaw-traces/e2e-branch-validation")}'`,
   ];
   // Forward optional messaging tokens for the messaging-providers test
   for (const key of [
@@ -519,6 +520,7 @@ function pollForSandboxReady(elapsed: () => string): void {
       [
         `source ~/.nvm/nvm.sh 2>/dev/null || true`,
         `cd ${remoteDir}`,
+        `mkdir -p "$NEMOCLAW_TRACE_DIR"`,
         `nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 & disown`,
         `sleep 2`,
         `echo "onboard launched"`,

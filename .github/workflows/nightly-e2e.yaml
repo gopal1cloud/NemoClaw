@@ -68,6 +68,9 @@ on:
 permissions:
   contents: read
 
+env:
+  NEMOCLAW_TRACE_DIR: /tmp/nemoclaw-traces
+
 concurrency:
   group: nightly-e2e-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && github.ref || 'schedule' }}
   cancel-in-progress: true
@@ -94,6 +97,13 @@ jobs:
           NEMOCLAW_RECREATE_SANDBOX: "1"
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-full-e2e.sh
+
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
 
       - name: Upload install log on failure
         if: failure()
@@ -132,6 +142,13 @@ jobs:
           NEMOCLAW_INSTALL_REF: ${{ github.ref_name }}
         run: bash test/e2e/test-cloud-onboard-e2e.sh
 
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
+
       - name: Upload install log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -164,6 +181,13 @@ jobs:
           NEMOCLAW_SANDBOX_NAME: "e2e-cloud-inference"
         run: bash test/e2e/test-cloud-inference-e2e.sh
 
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
+
       - name: Upload install log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -195,6 +219,13 @@ jobs:
           NEMOCLAW_RECREATE_SANDBOX: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-skill-agent"
         run: bash test/e2e/test-skill-agent-e2e.sh
+
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
 
       - name: Upload install log on failure
         if: failure()
@@ -268,6 +299,13 @@ jobs:
           SLACK_APP_TOKEN: "xapp-fake-slack-app-token-e2e"
         run: bash test/e2e/test-messaging-providers.sh
 
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
+
       - name: Upload install log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -301,6 +339,13 @@ jobs:
           TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-e2e"
           TELEGRAM_ALLOWED_IDS: "123456789"
         run: bash test/e2e/test-messaging-compatible-endpoint.sh
+
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
 
       - name: Upload install log on failure
         if: failure()
@@ -345,6 +390,13 @@ jobs:
           SLACK_APP_TOKEN_B: "xapp-fake-B-rotation-e2e"
         run: bash test/e2e/test-token-rotation.sh
 
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
+
       - name: Upload install log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -374,6 +426,13 @@ jobs:
           NEMOCLAW_SANDBOX_NAME: "e2e-survival"
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-sandbox-survival.sh
+
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
 
       - name: Upload install log on failure
         if: failure()
@@ -407,6 +466,13 @@ jobs:
           NEMOCLAW_SANDBOX_NAME: "e2e-2478"
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-issue-2478-crash-loop-recovery.sh
+
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
 
       - name: Upload install log on failure
         if: failure()
@@ -442,6 +508,13 @@ jobs:
           NEMOCLAW_AGENT: "hermes"
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-hermes-e2e.sh
+
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
 
       - name: Upload install log on failure
         if: failure()
@@ -482,6 +555,13 @@ jobs:
           DISCORD_ALLOWED_IDS: "1005536447329222676"
           DISCORD_REQUIRE_MENTION: "0"
         run: bash test/e2e/test-hermes-discord-e2e.sh
+
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
 
       - name: Upload install log on failure
         if: failure()
@@ -721,6 +801,13 @@ jobs:
           ls -la docker-logs/ 2>&1 | head -20 || true
           du -sh docker-logs/ 2>&1 || true
 
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
+
       - name: Upload sandbox gateway logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -761,6 +848,13 @@ jobs:
           NEMOCLAW_POLICY_TIER: "open"
         run: bash test/e2e/test-inference-routing.sh
 
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
+
       - name: Upload test log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -792,6 +886,13 @@ jobs:
           NEMOCLAW_POLICY_TIER: "restricted"
           NEMOCLAW_RECREATE_SANDBOX: "1"
         run: bash test/e2e/test-network-policy.sh
+
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
 
       - name: Upload test log on failure
         if: failure()
@@ -825,6 +926,13 @@ jobs:
           NEMOCLAW_SANDBOX_NAME: "e2e-deploy-svc"
         run: bash test/e2e/test-deployment-services.sh
 
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
+
       - name: Upload test log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -856,6 +964,13 @@ jobs:
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_RECREATE_SANDBOX: "1"
         run: bash test/e2e/test-diagnostics.sh
+
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
 
       - name: Upload test log on failure
         if: failure()
@@ -893,6 +1008,13 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-credential-migration.sh
 
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
+
       - name: Upload install log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -924,6 +1046,13 @@ jobs:
           NEMOCLAW_SANDBOX_NAME: "e2e-snapshot"
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-snapshot-commands.sh
+
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
 
       - name: Upload install log on failure
         if: failure()
@@ -957,6 +1086,13 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-shields-config.sh
 
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
+
       - name: Upload install log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -988,6 +1124,13 @@ jobs:
           NEMOCLAW_SANDBOX_NAME: "e2e-rebuild-oc"
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-rebuild-openclaw.sh
+
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
 
       - name: Upload install log on failure
         if: failure()
@@ -1022,6 +1165,13 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-upgrade-stale-sandbox.sh
 
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
+
       - name: Upload install logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -1055,6 +1205,13 @@ jobs:
           NEMOCLAW_AGENT: "hermes"
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-rebuild-hermes.sh
+
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
 
       - name: Upload install log on failure
         if: failure()
@@ -1093,6 +1250,13 @@ jobs:
           [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
           [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
           bash test/e2e/test-double-onboard.sh
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
+
       - name: Upload test log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -1130,6 +1294,13 @@ jobs:
           [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
           [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
           bash test/e2e/test-onboard-repair.sh
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
+
       - name: Upload test log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -1167,6 +1338,13 @@ jobs:
           [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
           [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
           bash test/e2e/test-onboard-resume.sh
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
+
       - name: Upload test log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -1204,6 +1382,13 @@ jobs:
           [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
           [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
           bash test/e2e/test-runtime-overrides.sh
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
+
       - name: Upload test log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -1245,6 +1430,13 @@ jobs:
           [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
           [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
           bash test/e2e/test-credential-sanitization.sh
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
+
       - name: Upload test log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -1286,6 +1478,13 @@ jobs:
           [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
           [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
           bash test/e2e/test-telegram-injection.sh
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
+
       - name: Upload test log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -1319,6 +1518,13 @@ jobs:
           NEMOCLAW_SANDBOX_NAME: "e2e-overlayfs"
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-overlayfs-autofix.sh
+
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
 
       - name: Upload onboard logs on failure
         if: failure()
@@ -1359,6 +1565,13 @@ jobs:
           SKIP_DOCKER_PULL: "1"
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-launchable-smoke.sh
+
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
 
       - name: Upload install log on failure
         if: failure()
@@ -1420,6 +1633,13 @@ jobs:
       - name: Run GPU E2E test (Ollama local inference)
         run: bash test/e2e/test-gpu-e2e.sh
 
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
+
       - name: Upload install log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -1472,6 +1692,13 @@ jobs:
 
       - name: Run GPU double-onboard E2E test
         run: bash test/e2e/test-gpu-double-onboard.sh
+
+      - name: Upload NemoClaw profiling traces
+        if: always()
+        uses: ./.github/actions/upload-nemoclaw-traces
+        with:
+          name: nemoclaw-traces-${{ github.job }}
+          path: /tmp/nemoclaw-traces
 
       - name: Upload install log on failure
         if: failure()

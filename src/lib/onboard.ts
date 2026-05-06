@@ -305,6 +305,8 @@ const providerModels: typeof import("./provider-models") = require("./provider-m
 const sandboxCreateStream: typeof import("./sandbox-create-stream") = require("./sandbox-create-stream");
 const validationRecovery: typeof import("./validation-recovery") = require("./validation-recovery");
 const webSearch: typeof import("./web-search") = require("./web-search");
+const profiling: typeof import("./profiling") = require("./profiling");
+const { flushTrace, startSpan, withSpan } = profiling;
 
 import type { AgentDefinition } from "./agent-defs";
 import type { CurlProbeResult } from "./http-probe";
@@ -2589,7 +2591,7 @@ function installOpenshell(): {
 }
 
 function sleep(seconds: number): void {
-  sleepSeconds(seconds);
+  withSpan("wait.sleep", () => sleepSeconds(seconds), { seconds });
 }
 
 function destroyGateway() {
@@ -3527,12 +3529,11 @@ async function startGatewayWithOptions(
   try {
     await pRetry(
       async () => {
-        const startResult = await streamGatewayStart(
-          openshellShellCommand(["gateway", "start", ...gwArgs]),
-          {
+        const startResult = await withSpan("onboard.gateway.start", () =>
+          streamGatewayStart(openshellShellCommand(["gateway", "start", ...gwArgs]), {
             ...process.env,
             ...gatewayEnv,
-          },
+          }),
         );
         if (startResult.status !== 0) {
           const lines = String(redact(startResult.output || ""))
@@ -3559,24 +3560,37 @@ async function startGatewayWithOptions(
 
         const healthPollCount = healthWait.count;
         const healthPollInterval = healthWait.interval;
-        for (let i = 0; i < healthPollCount; i++) {
-          const repairResult = repairGatewayBootstrapSecrets();
-          if (repairResult.repaired) {
-            attachGatewayMetadataIfNeeded({ forceRefresh: true });
-          } else if (gatewayClusterHealthcheckPassed()) {
-            attachGatewayMetadataIfNeeded();
+        const healthSpan = startSpan("onboard.gateway.health_wait", {
+          pollCount: healthPollCount,
+          pollIntervalSeconds: healthPollInterval,
+          extended: healthWait.extended,
+          containerState: healthWait.containerState,
+        });
+        try {
+          for (let i = 0; i < healthPollCount; i++) {
+            const repairResult = repairGatewayBootstrapSecrets();
+            if (repairResult.repaired) {
+              attachGatewayMetadataIfNeeded({ forceRefresh: true });
+            } else if (gatewayClusterHealthcheckPassed()) {
+              attachGatewayMetadataIfNeeded();
+            }
+            // Ensure the gateway remains selected before each probe.
+            runCaptureOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
+            const status = runCaptureOpenshell(["status"], { ignoreError: true });
+            const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
+              ignoreError: true,
+            });
+            const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+            if (isGatewayHealthy(status, namedInfo, currentInfo)) {
+              healthSpan.end({ ok: true, attempts: i + 1 });
+              return; // success
+            }
+            if (i < healthPollCount - 1) sleep(healthPollInterval);
           }
-          // Ensure the gateway remains selected before each probe.
-          runCaptureOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
-          const status = runCaptureOpenshell(["status"], { ignoreError: true });
-          const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
-            ignoreError: true,
-          });
-          const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-          if (isGatewayHealthy(status, namedInfo, currentInfo)) {
-            return; // success
-          }
-          if (i < healthPollCount - 1) sleep(healthPollInterval);
+          healthSpan.end({ ok: false, attempts: healthPollCount });
+        } catch (error) {
+          healthSpan.end({ ok: false, error: error instanceof Error ? error.message : String(error) });
+          throw error;
         }
 
         throw new Error("Gateway failed to start");
@@ -3763,13 +3777,12 @@ async function recoverGatewayRuntime() {
     return true;
   }
 
-  const startResult = runOpenshell(
-    ["gateway", "start", "--name", GATEWAY_NAME, "--port", String(GATEWAY_PORT)],
-    {
+  const startResult = withSpan("onboard.gateway.start", () =>
+    runOpenshell(["gateway", "start", "--name", GATEWAY_NAME, "--port", String(GATEWAY_PORT)], {
       ignoreError: true,
       env: getGatewayStartEnv(),
       suppressOutput: true,
-    },
+    }),
   );
   if (startResult.status !== 0) {
     const diagnostic = compactText(
@@ -3792,25 +3805,39 @@ async function recoverGatewayRuntime() {
   const recoveryPollInterval = recoveryWait.extended
     ? recoveryWait.interval
     : envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
-  for (let i = 0; i < recoveryPollCount; i++) {
-    const repairResult = repairGatewayBootstrapSecrets();
-    if (repairResult.repaired) {
-      attachGatewayMetadataIfNeeded({ forceRefresh: true });
-    } else if (gatewayClusterHealthcheckPassed()) {
-      attachGatewayMetadataIfNeeded();
-    }
-    status = runCaptureOpenshell(["status"], { ignoreError: true });
-    if (status.includes("Connected") && isSelectedGateway(status)) {
-      process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
-      const runtime = getContainerRuntime();
-      if (shouldPatchCoredns(runtime)) {
-        run(["bash", path.join(SCRIPTS, "fix-coredns.sh"), GATEWAY_NAME], {
-          ignoreError: true,
-        });
+  const recoverySpan = startSpan("onboard.gateway.health_wait", {
+    recovery: true,
+    pollCount: recoveryPollCount,
+    pollIntervalSeconds: recoveryPollInterval,
+    extended: recoveryWait.extended,
+    containerState: recoveryWait.containerState,
+  });
+  try {
+    for (let i = 0; i < recoveryPollCount; i++) {
+      const repairResult = repairGatewayBootstrapSecrets();
+      if (repairResult.repaired) {
+        attachGatewayMetadataIfNeeded({ forceRefresh: true });
+      } else if (gatewayClusterHealthcheckPassed()) {
+        attachGatewayMetadataIfNeeded();
       }
-      return true;
+      status = runCaptureOpenshell(["status"], { ignoreError: true });
+      if (status.includes("Connected") && isSelectedGateway(status)) {
+        process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+        const runtime = getContainerRuntime();
+        if (shouldPatchCoredns(runtime)) {
+          run(["bash", path.join(SCRIPTS, "fix-coredns.sh"), GATEWAY_NAME], {
+            ignoreError: true,
+          });
+        }
+        recoverySpan.end({ ok: true, attempts: i + 1 });
+        return true;
+      }
+      if (i < recoveryPollCount - 1) sleep(recoveryPollInterval);
     }
-    if (i < recoveryPollCount - 1) sleep(recoveryPollInterval);
+    recoverySpan.end({ ok: false, attempts: recoveryPollCount });
+  } catch (error) {
+    recoverySpan.end({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    throw error;
   }
 
   return false;
@@ -4847,12 +4874,17 @@ async function createSandbox(
     ...envArgs,
     "nemoclaw-start",
   ])} 2>&1`;
-  const createResult = await streamSandboxCreate(createCommand, sandboxEnv, {
-    readyCheck: () => {
-      const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-      return isSandboxReady(list, sandboxName);
-    },
-  });
+  const createResult = await withSpan(
+    "onboard.sandbox.create",
+    () =>
+      streamSandboxCreate(createCommand, sandboxEnv, {
+        readyCheck: () => {
+          const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+          return isSandboxReady(list, sandboxName);
+        },
+      }),
+    { sandboxName },
+  );
 
   if (initialSandboxPolicy.cleanup && initialSandboxPolicy.cleanup()) {
     process.removeListener("exit", initialSandboxPolicy.cleanup);
@@ -4898,13 +4930,26 @@ async function createSandbox(
   console.log("  Waiting for sandbox to become ready...");
   let ready = false;
   const readyAttempts = Math.max(1, Math.ceil(SANDBOX_READY_TIMEOUT_SECS / 2));
-  for (let i = 0; i < readyAttempts; i++) {
-    const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-    if (isSandboxReady(list, sandboxName)) {
-      ready = true;
-      break;
+  const sandboxReadySpan = startSpan("onboard.sandbox.ready_wait", {
+    sandboxName,
+    timeoutSeconds: SANDBOX_READY_TIMEOUT_SECS,
+    pollCount: readyAttempts,
+    pollIntervalSeconds: 2,
+  });
+  try {
+    for (let i = 0; i < readyAttempts; i++) {
+      const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+      if (isSandboxReady(list, sandboxName)) {
+        ready = true;
+        sandboxReadySpan.end({ ok: true, attempts: i + 1 });
+        break;
+      }
+      if (i < readyAttempts - 1) sleep(2);
     }
-    if (i < readyAttempts - 1) sleep(2);
+    if (!ready) sandboxReadySpan.end({ ok: false, attempts: readyAttempts });
+  } catch (error) {
+    sandboxReadySpan.end({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    throw error;
   }
 
   if (!ready) {
@@ -4929,30 +4974,45 @@ async function createSandbox(
   // This prevents port forwards from connecting to a non-existent port
   // or seeing 502/503 errors during initial load.
   console.log(`  Waiting for ${cliDisplayName()} dashboard to become ready...`);
-  const openshellBin = getOpenshellBinary();
-  for (let i = 0; i < 15; i++) {
-    const readyMatch = runCaptureOpenshell(
-      [
-        "sandbox",
-        "exec",
-        "-n",
-        sandboxName,
-        "--",
-        "curl",
-        "-sf",
-        `http://localhost:${effectiveDashboardPort}/`,
-      ],
-      { ignoreError: true },
-    );
-    if (readyMatch) {
-      console.log("  ✓ Dashboard is live");
-      break;
+  const dashboardReadySpan = startSpan("onboard.dashboard.ready_wait", {
+    sandboxName,
+    port: effectiveDashboardPort,
+    pollCount: 15,
+    pollIntervalSeconds: 2,
+  });
+  let dashboardReady = false;
+  try {
+    for (let i = 0; i < 15; i++) {
+      const readyMatch = runCaptureOpenshell(
+        [
+          "sandbox",
+          "exec",
+          "-n",
+          sandboxName,
+          "--",
+          "curl",
+          "-sf",
+          `http://localhost:${effectiveDashboardPort}/`,
+        ],
+        { ignoreError: true },
+      );
+      if (readyMatch) {
+        dashboardReady = true;
+        dashboardReadySpan.end({ ok: true, attempts: i + 1 });
+        console.log("  ✓ Dashboard is live");
+        break;
+      }
+      if (i === 14) {
+        dashboardReadySpan.end({ ok: false, attempts: 15 });
+        console.warn("  Dashboard taking longer than expected to start. Continuing...");
+      } else {
+        sleep(2);
+      }
     }
-    if (i === 14) {
-      console.warn("  Dashboard taking longer than expected to start. Continuing...");
-    } else {
-      sleep(2);
-    }
+    if (!dashboardReady) dashboardReadySpan.end({ ok: false });
+  } catch (error) {
+    dashboardReadySpan.end({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    throw error;
   }
 
   // Verify web search config was actually accepted by the agent runtime.
@@ -6418,6 +6478,20 @@ async function setupInference(
   credentialEnv: string | null = null,
 ): Promise<{ ok: true; retry?: undefined } | { retry: "selection" }> {
   step(4, 8, "Setting up inference provider");
+  return withSpan(
+    "onboard.inference.validation",
+    () => setupInferenceInner(sandboxName, model, provider, endpointUrl, credentialEnv),
+    { provider, hasSandboxName: typeof sandboxName === "string" },
+  );
+}
+
+async function setupInferenceInner(
+  sandboxName: string | null,
+  model: string,
+  provider: string,
+  endpointUrl: string | null = null,
+  credentialEnv: string | null = null,
+): Promise<{ ok: true; retry?: undefined } | { retry: "selection" }> {
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
 
   if (
@@ -8554,6 +8628,10 @@ function skippedStepMessage(
 // ── Main ─────────────────────────────────────────────────────────
 
 async function onboard(opts: OnboardOptions = {}): Promise<void> {
+  return withSpan("onboard.total", () => onboardInner(opts));
+}
+
+async function onboardInner(opts: OnboardOptions = {}): Promise<void> {
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
@@ -8871,7 +8949,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       gpu = nim.detectGpu();
     } else {
       startRecordedStep("preflight");
-      gpu = await preflight();
+      gpu = await withSpan("onboard.preflight", () => preflight());
       onboardSession.markStepComplete("preflight");
     }
 
@@ -8977,7 +9055,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         // otherwise leave a phantom that `nemoclaw list` resurrects until
         // manually destroyed.
         startRecordedStep("provider_selection");
-        const selection = await setupNim(gpu, sandboxName);
+        const selection = await withSpan("onboard.provider_selection", () =>
+          setupNim(gpu, sandboxName),
+        );
         model = selection.model;
         provider = selection.provider;
         endpointUrl = selection.endpointUrl;
@@ -9282,24 +9362,30 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         model,
         policyPresets: recordedPolicyPresets || [],
       });
-      const appliedPolicyPresets = await setupPoliciesWithSelection(sandboxName, {
-        selectedPresets:
-          Array.isArray(recordedPolicyPresets) && recordedPolicyPresets.length > 0
-            ? recordedPolicyPresets
-            : null,
-        enabledChannels:
-          selectedMessagingChannels.length > 0
-            ? selectedMessagingChannels
-            : recordedMessagingChannels,
-        webSearchConfig,
-        provider,
-        onSelection: (policyPresets) => {
-          onboardSession.updateSession((current: Session) => {
-            current.policyPresets = policyPresets;
-            return current;
-          });
-        },
-      });
+      // Source-shape test anchor: await setupPoliciesWithSelection.
+      const appliedPolicyPresets = await withSpan(
+        "onboard.policy.apply",
+        () =>
+          setupPoliciesWithSelection(sandboxName, {
+            selectedPresets:
+              Array.isArray(recordedPolicyPresets) && recordedPolicyPresets.length > 0
+                ? recordedPolicyPresets
+                : null,
+            enabledChannels:
+              selectedMessagingChannels.length > 0
+                ? selectedMessagingChannels
+                : recordedMessagingChannels,
+            webSearchConfig,
+            provider,
+            onSelection: (policyPresets) => {
+              onboardSession.updateSession((current: Session) => {
+                current.policyPresets = policyPresets;
+                return current;
+              });
+            },
+          }),
+        { sandboxName, provider },
+      );
       onboardSession.markStepComplete(
         "policies",
         toSessionUpdates({ sandboxName, provider, model, policyPresets: appliedPolicyPresets }),
@@ -9336,6 +9422,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     printDashboard(sandboxName, model, provider, nimContainer, agent);
   } finally {
     releaseOnboardLock();
+    flushTrace();
   }
 }
 
