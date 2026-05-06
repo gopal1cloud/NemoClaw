@@ -544,8 +544,11 @@ The Hermes wizard does not ask for Brave Web Search because Hermes does not use 
 <p>After provider and policy selection, review the summary and confirm the build.
 NemoClaw writes Hermes configuration into <code class="docutils literal notranslate"><span class="pre">/sandbox/.hermes</span></code>, routes model traffic through <code class="docutils literal notranslate"><span class="pre">inference.local</span></code>, and starts the Hermes gateway inside the sandbox.
 The Hermes image includes runtime dependencies for the supported NemoClaw messaging integrations, API service, and health endpoint.
-The base image does not include unsupported Hermes integrations.
-Hermes uses an agent-specific baseline policy that allows the Hermes binary and Python runtime to reach the required Nous Research service endpoints, PyPI, NVIDIA inference endpoints, and selected messaging APIs.</p>
+The base image does not include unsupported Hermes integrations.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Hermes uses an agent-specific baseline policy that allows the Hermes binary and Python runtime to reach the required Nous Research service endpoints, PyPI, NVIDIA inference endpoints, and selected messaging APIs.</p>
+</div>
 </section>
 <section id="use-non-interactive-setup">
 <h2>Use Non-Interactive Setup<a class="headerlink" href="#use-non-interactive-setup" title="Link to this heading">#</a></h2>
