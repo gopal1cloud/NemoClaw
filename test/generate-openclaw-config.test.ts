@@ -303,6 +303,23 @@ describe("generate-openclaw-config.py: config generation", () => {
     ]);
   });
 
+  it("adds registry compat when the incoming compat blob is null", () => {
+    const config = runConfigScript({
+      NEMOCLAW_MODEL: "moonshotai/kimi-k2.6",
+      NEMOCLAW_PROVIDER_KEY: "inference",
+      NEMOCLAW_PRIMARY_MODEL_REF: "inference/moonshotai/kimi-k2.6",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from("null").toString("base64"),
+    });
+
+    expect(config.models.providers.inference.models[0].compat).toEqual({
+      requiresStringContent: true,
+      maxTokensField: "max_tokens",
+      requiresToolResultName: true,
+    });
+  });
+
   it("does not activate the OpenClaw Kimi setup for non-matching routes", () => {
     const cases = [
       { NEMOCLAW_MODEL: "deepseek-ai/DeepSeek-V4-Flash" },
@@ -420,6 +437,81 @@ describe("generate-openclaw-config.py: config generation", () => {
 
     expect(missingPluginResult.status).not.toBe(0);
     expect(missingPluginResult.stderr).toContain("path does not exist");
+  });
+
+  it("rejects conflicting OpenClaw compat effects and duplicate plugin ids", () => {
+    const blueprintDir = path.join(tmpDir, "fixture-blueprint");
+    fs.mkdirSync(path.join(blueprintDir, "openclaw-plugins", "fixture"), { recursive: true });
+    const registryDir = writeRegistryManifest(
+      blueprintDir,
+      "openclaw/conflicting-compat.json",
+      {
+        id: "conflicting-compat",
+        agent: "openclaw",
+        description: "Conflicting compat",
+        match: {},
+        effects: {
+          openclawCompat: {
+            supportsStore: true,
+          },
+        },
+      },
+    );
+
+    const conflictResult = runConfigScriptRaw({
+      NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir,
+      NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from(
+        JSON.stringify({ supportsStore: false }),
+      ).toString("base64"),
+    });
+
+    expect(conflictResult.status).not.toBe(0);
+    expect(conflictResult.stderr).toContain(
+      "model-specific setup 'conflicting-compat' conflicts with inference compat key 'supportsStore'",
+    );
+
+    fs.rmSync(
+      path.join(blueprintDir, "model-specific-setup", "openclaw", "conflicting-compat.json"),
+    );
+    writeRegistryManifest(blueprintDir, "openclaw/plugin-a.json", {
+      id: "plugin-a",
+      agent: "openclaw",
+      description: "First plugin",
+      match: {},
+      effects: {
+        openclawPlugins: [
+          {
+            id: "fixture-plugin",
+            path: "openclaw-plugins/fixture",
+            loadPath: "/usr/local/share/nemoclaw/openclaw-plugins/fixture",
+          },
+        ],
+      },
+    });
+    writeRegistryManifest(blueprintDir, "openclaw/plugin-b.json", {
+      id: "plugin-b",
+      agent: "openclaw",
+      description: "Duplicate plugin",
+      match: {},
+      effects: {
+        openclawPlugins: [
+          {
+            id: "fixture-plugin",
+            path: "openclaw-plugins/fixture",
+            loadPath: "/usr/local/share/nemoclaw/openclaw-plugins/fixture",
+          },
+        ],
+      },
+    });
+
+    const duplicateResult = runConfigScriptRaw({
+      NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir,
+    });
+
+    expect(duplicateResult.status).not.toBe(0);
+    expect(duplicateResult.stderr).toContain(
+      "model-specific setup 'plugin-b' declares duplicate OpenClaw plugin 'fixture-plugin'",
+    );
   });
 
   it("sets gateway auth token to empty string", () => {

@@ -201,6 +201,7 @@ function findRegistryRoot(): string | null {
     process.env.NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR,
     "/opt/nemoclaw-blueprint/model-specific-setup",
     "/sandbox/.nemoclaw/blueprints/0.1.0/model-specific-setup",
+    join(import.meta.dirname, "..", "..", "nemoclaw-blueprint", "model-specific-setup"),
     join(process.cwd(), "nemoclaw-blueprint", "model-specific-setup"),
   ].filter((entry): entry is string => Boolean(entry));
 

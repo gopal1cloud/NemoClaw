@@ -30,16 +30,7 @@ function runConfigScript(envOverrides: Record<string, string> = {}): {
   envFile: string;
 } {
   fs.mkdirSync(path.join(tmpDir, ".hermes"), { recursive: true });
-  const result = spawnSync(process.execPath, ["--experimental-strip-types", SCRIPT_PATH], {
-    encoding: "utf-8",
-    env: {
-      PATH: process.env.PATH || "/usr/bin:/bin",
-      ...BASE_ENV,
-      ...envOverrides,
-      HOME: tmpDir,
-    },
-    timeout: 10_000,
-  });
+  const result = runConfigScriptRaw(envOverrides);
 
   if (result.status !== 0) {
     throw new Error(
@@ -54,10 +45,14 @@ function runConfigScript(envOverrides: Record<string, string> = {}): {
   };
 }
 
-function runConfigScriptRaw(envOverrides: Record<string, string> = {}) {
+function runConfigScriptRaw(
+  envOverrides: Record<string, string> = {},
+  opts: { cwd?: string } = {},
+) {
   fs.mkdirSync(path.join(tmpDir, ".hermes"), { recursive: true });
   return spawnSync(process.execPath, ["--experimental-strip-types", SCRIPT_PATH], {
     encoding: "utf-8",
+    cwd: opts.cwd,
     env: {
       PATH: process.env.PATH || "/usr/bin:/bin",
       ...BASE_ENV,
@@ -228,6 +223,54 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.model.default).toBe("fixture/hermes-model");
     expect(config.hermesCompat).toBeUndefined();
     expect(JSON.stringify(config)).not.toContain("future");
+  });
+
+  it("discovers the bundled registry from the script path when cwd differs", () => {
+    const registryDir = path.join(
+      import.meta.dirname,
+      "..",
+      "nemoclaw-blueprint",
+      "model-specific-setup",
+    );
+    const manifestPath = path.join(
+      registryDir,
+      "hermes",
+      `fixture-invalid-${String(process.pid)}-${String(Date.now())}.json`,
+    );
+
+    try {
+      fs.writeFileSync(
+        manifestPath,
+        JSON.stringify(
+          {
+            id: "fixture-invalid-hermes",
+            agent: "hermes",
+            description: "Invalid Hermes setup",
+            match: {
+              modelIds: ["fixture/script-relative-hermes-model"],
+            },
+            effects: {
+              openclawCompat: {},
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runConfigScriptRaw(
+        {
+          NEMOCLAW_MODEL: "fixture/script-relative-hermes-model",
+          NEMOCLAW_PROVIDER_KEY: "custom",
+        },
+        { cwd: tmpDir },
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("unknown effects for agent 'hermes': openclawCompat");
+    } finally {
+      fs.rmSync(manifestPath, { force: true });
+    }
   });
 
   it("rejects unknown Hermes model-specific effect keys", () => {

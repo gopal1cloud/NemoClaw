@@ -248,6 +248,37 @@ def _matching_model_specific_setups(agent: str, context: dict, env: dict) -> lis
     return manifests
 
 
+def _coerce_compat_dict(value: object) -> dict:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    raise ValueError("NEMOCLAW_INFERENCE_COMPAT_B64 must decode to a JSON object or null")
+
+
+def _apply_openclaw_setup_effects(
+    setup: dict, inference_compat: dict, openclaw_plugins: list[dict], plugin_ids: set[str]
+) -> None:
+    effects = setup["effects"]
+    for key, value in effects.get("openclawCompat", {}).items():
+        if key in inference_compat and inference_compat[key] != value:
+            raise ValueError(
+                "model-specific setup "
+                f"'{setup['id']}' conflicts with inference compat key '{key}'"
+            )
+        inference_compat[key] = value
+
+    for plugin in effects.get("openclawPlugins", []):
+        plugin_id = plugin["id"]
+        if plugin_id in plugin_ids:
+            raise ValueError(
+                "model-specific setup "
+                f"'{setup['id']}' declares duplicate OpenClaw plugin '{plugin_id}'"
+            )
+        plugin_ids.add(plugin_id)
+        openclaw_plugins.append(plugin)
+
+
 def build_config(env: dict | None = None) -> dict:
     """Build the complete openclaw config dict from environment variables.
 
@@ -298,17 +329,17 @@ def build_config(env: dict | None = None) -> dict:
         env,
     )
 
-    inference_compat = json.loads(
-        base64.b64decode(env["NEMOCLAW_INFERENCE_COMPAT_B64"]).decode("utf-8")
+    inference_compat = _coerce_compat_dict(
+        json.loads(
+            base64.b64decode(env["NEMOCLAW_INFERENCE_COMPAT_B64"]).decode("utf-8")
+        )
     )
     openclaw_plugins: list[dict] = []
+    openclaw_plugin_ids: set[str] = set()
     for setup in model_specific_setups:
-        effects = setup["effects"]
-        inference_compat = {
-            **inference_compat,
-            **effects.get("openclawCompat", {}),
-        }
-        openclaw_plugins.extend(effects.get("openclawPlugins", []))
+        _apply_openclaw_setup_effects(
+            setup, inference_compat, openclaw_plugins, openclaw_plugin_ids
+        )
 
     msg_channels = json.loads(
         base64.b64decode(
