@@ -426,8 +426,14 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   // completes (#987); hosted providers also occasionally drop connections for
   // tens of seconds during incidents (#3033).
   const isTimeoutOrConnFailure = (cs) => cs === 28 || cs === 6 || cs === 7;
+  const isRetriableProbeResult = (result) =>
+    isTimeoutOrConnFailure(result.curlStatus) ||
+    RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus);
+  // Look across every failure entry rather than only failures[0] so a probe
+  // ordering like /responses (HTTP error) followed by /chat/completions
+  // (curl 28) still triggers the chat-completions retry path.
   let retriedAfterTimeout = false;
-  if (failures.length > 0 && isTimeoutOrConnFailure(failures[0].curlStatus)) {
+  if (failures.some((failure) => isTimeoutOrConnFailure(failure.curlStatus))) {
     retriedAfterTimeout = true;
     const baseArgs = getValidationProbeCurlArgs();
     const doubledArgs = baseArgs.map((arg) => (/^\d+$/.test(arg) ? String(Number(arg) * 2) : arg));
@@ -446,9 +452,12 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
       return { ok: true, api: "openai-completions", label: "Chat Completions API" };
     }
     for (const delayMs of HTTP_PROBE_RETRY_DELAYS_MS) {
-      if (!isTimeoutOrConnFailure(retryResult.curlStatus)) break;
+      if (!isRetriableProbeResult(retryResult)) break;
+      const reason = isTimeoutOrConnFailure(retryResult.curlStatus)
+        ? "timed out"
+        : `returned HTTP ${retryResult.httpStatus}`;
       console.log(
-        `  Chat Completions API validation timed out; retrying in ${Math.round(delayMs / 1000)}s...`,
+        `  Chat Completions API validation ${reason}; retrying in ${Math.round(delayMs / 1000)}s...`,
       );
       sleepSync(delayMs);
       retryResult = runCurlProbe(buildRetryArgs());
