@@ -119,7 +119,10 @@ const HTTP_PROBE_RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
 
 function sleepSync(ms) {
   if (ms <= 0) return;
-  if (process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
+  // Skip real waits under vitest so retry-loop coverage doesn't burn 50s of
+  // wall-clock per test. process.env.VITEST is set automatically by the
+  // test runner.
+  if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
