@@ -12,6 +12,7 @@ import { execTimeout, testTimeout, testTimeoutOptions } from "./helpers/timeouts
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
 const HERMES_CLI = path.join(import.meta.dirname, "..", "bin", "nemohermes.js");
+const PARSER_EXIT_CODE = 2;
 
 type CliRunResult = {
   code: number;
@@ -360,6 +361,14 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Sandbox Management")).toBeTruthy();
     expect(r.out.includes("Policy Presets")).toBeTruthy();
     expect(r.out.includes("Compatibility Commands")).toBeTruthy();
+    expect(r.out).toContain("nemoclaw upgrade-sandboxes");
+    expect(r.out).toContain("(--check, --auto, --yes|-y)");
+    expect(r.out).toContain("nemoclaw gc");
+    expect(r.out).toContain("(--yes|-y|--force, --dry-run)");
+    expect(r.out).toContain("nemoclaw onboard");
+    expect(r.out).toContain("Configure inference endpoint and credentials");
+    expect(r.out).toContain("nemoclaw onboard --from");
+    expect(r.out).toContain("Use a custom Dockerfile for the sandbox image");
   });
 
   it("--help exits 0", () => {
@@ -748,12 +757,12 @@ describe("CLI dispatch", () => {
 
     const upgrade = run("upgrade-sandboxes --help");
     expect(upgrade.code).toBe(0);
-    expect(upgrade.out).toContain("upgrade-sandboxes [--check] [--auto] [--yes]");
+    expect(upgrade.out).toContain("upgrade-sandboxes [--check] [--auto] [--yes|-y]");
     expect(upgrade.out).toContain("Detect and rebuild stale sandboxes");
 
     const gc = run("gc --help");
     expect(gc.code).toBe(0);
-    expect(gc.out).toContain("gc [--dry-run] [--yes|--force]");
+    expect(gc.out).toContain("gc [--dry-run] [--yes|-y|--force]");
     expect(gc.out).toContain("Remove orphaned sandbox Docker images");
   });
 
@@ -792,6 +801,16 @@ describe("CLI dispatch", () => {
     expect(r.out).not.toContain("sandbox:skill:install");
     expect(r.out).not.toContain("--help");
     expect(r.out).not.toContain("No SKILL.md found");
+  });
+
+  it("requires a skill install path before action dispatch", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-skill-missing-path-"));
+    writeSandboxRegistry(home);
+
+    const r = runWithEnv("alpha skill install 2>&1", { HOME: home });
+
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("path");
   });
 
   it("points plugin-shaped directories away from skill install", () => {
@@ -888,26 +907,27 @@ describe("CLI dispatch", () => {
   it("onboard --help exits 0 and shows usage", () => {
     const r = run("onboard --help");
     expect(r.code).toBe(0);
-    expect(r.out.includes("Usage: nemoclaw onboard")).toBeTruthy();
-    expect(r.out.includes("--from <Dockerfile>")).toBeTruthy();
+    expect(r.out).toContain("USAGE");
+    expect(r.out).toContain("nemoclaw onboard");
+    expect(r.out).toContain("--from <Dockerfile>");
   });
 
   it("unknown onboard option exits 1", () => {
     const r = run("onboard --non-interactiv");
-    expect(r.code).toBe(1);
-    expect(r.out.includes("Unknown onboard option")).toBeTruthy();
+    expect(r.code).toBe(PARSER_EXIT_CODE);
+    expect(r.out).toContain("Nonexistent flag: --non-interactiv");
   });
 
   it("accepts onboard --resume in CLI parsing", () => {
     const r = run("onboard --resume --non-interactiv");
-    expect(r.code).toBe(1);
-    expect(r.out.includes("Unknown onboard option(s): --non-interactiv")).toBeTruthy();
+    expect(r.code).toBe(PARSER_EXIT_CODE);
+    expect(r.out).toContain("Nonexistent flag: --non-interactiv");
   });
 
   it("accepts the third-party software flag in onboard CLI parsing", () => {
     const r = run("onboard --yes-i-accept-third-party-software --non-interactiv");
-    expect(r.code).toBe(1);
-    expect(r.out.includes("Unknown onboard option(s): --non-interactiv")).toBeTruthy();
+    expect(r.code).toBe(PARSER_EXIT_CODE);
+    expect(r.out).toContain("Nonexistent flag: --non-interactiv");
   });
 
   it("setup --help exits 0 and shows onboard usage", () => {
@@ -920,9 +940,8 @@ describe("CLI dispatch", () => {
 
   it("setup forwards unknown options into onboard parsing", () => {
     const r = run("setup --non-interactiv");
-    expect(r.code).toBe(1);
-    expect(r.out.includes("deprecated")).toBeTruthy();
-    expect(r.out.includes("Unknown onboard option(s): --non-interactiv")).toBeTruthy();
+    expect(r.code).toBe(PARSER_EXIT_CODE);
+    expect(r.out).toContain("Nonexistent flag: --non-interactiv");
   });
 
   it("setup forwards --resume into onboard parsing", () => {
@@ -941,6 +960,154 @@ describe("CLI dispatch", () => {
       r.out.includes("To change configuration on an existing sandbox, rebuild it"),
     ).toBeTruthy();
     expect(r.out.includes("nemoclaw onboard")).toBeTruthy();
+  });
+
+  it("#2753: refuses non-interactive --resume when sandbox step never completed and no name is provided", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-resume-no-name-"));
+    const localBin = path.join(home, "bin");
+    const nemoclawDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(nemoclawDir, { recursive: true });
+    // Fake openshell so preflight passes and we reach the resume sandbox-name
+    // init where the new guard lives.
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "--version" ]; then echo "openshell 0.0.36"; exit 0; fi',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    // Simulates a pre-fix on-disk session that recorded only provider/model
+    // (with #2753's onboard fix, sandboxName is no longer written here either).
+    fs.writeFileSync(
+      path.join(nemoclawDir, "onboard-session.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          sessionId: "session-1",
+          resumable: true,
+          status: "in_progress",
+          mode: "interactive",
+          startedAt: "2026-05-03T00:00:00.000Z",
+          updatedAt: "2026-05-03T00:00:00.000Z",
+          lastStepStarted: "inference",
+          lastCompletedStep: "inference",
+          failure: null,
+          sandboxName: null,
+          provider: "nvidia-prod",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          endpointUrl: null,
+          credentialEnv: null,
+          preferredInferenceApi: null,
+          nimContainer: null,
+          policyPresets: null,
+          metadata: { gatewayName: "nemoclaw" },
+          steps: {
+            preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
+            gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
+            provider_selection: {
+              status: "complete",
+              startedAt: null,
+              completedAt: null,
+              error: null,
+            },
+            inference: { status: "complete", startedAt: null, completedAt: null, error: null },
+            sandbox: { status: "pending", startedAt: null, completedAt: null, error: null },
+          },
+        },
+        null,
+        2,
+      ),
+      { mode: 0o600 },
+    );
+
+    const r = runWithEnv(
+      "onboard --resume --non-interactive --yes-i-accept-third-party-software",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_SANDBOX_NAME: "",
+      },
+    );
+
+    expect(r.code).toBe(1);
+    expect(r.out.includes("Cannot resume non-interactive onboard")).toBeTruthy();
+    expect(r.out.includes("--name <sandbox>")).toBeTruthy();
+  });
+
+  it("#2753: whitespace-only NEMOCLAW_SANDBOX_NAME does not satisfy the resume guard", () => {
+    // The env-var ingest pipeline trims and rejects whitespace-only values
+    // before populating requestedSandboxName, so the guard sees no recovered
+    // name and fires correctly.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-resume-ws-name-"));
+    const localBin = path.join(home, "bin");
+    const nemoclawDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(nemoclawDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "--version" ]; then echo "openshell 0.0.36"; exit 0; fi',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(nemoclawDir, "onboard-session.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          sessionId: "session-1",
+          resumable: true,
+          status: "in_progress",
+          mode: "interactive",
+          startedAt: "2026-05-03T00:00:00.000Z",
+          updatedAt: "2026-05-03T00:00:00.000Z",
+          lastStepStarted: "inference",
+          lastCompletedStep: "inference",
+          failure: null,
+          sandboxName: null,
+          provider: "nvidia-prod",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          endpointUrl: null,
+          credentialEnv: null,
+          preferredInferenceApi: null,
+          nimContainer: null,
+          policyPresets: null,
+          metadata: { gatewayName: "nemoclaw" },
+          steps: {
+            preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
+            gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
+            provider_selection: {
+              status: "complete",
+              startedAt: null,
+              completedAt: null,
+              error: null,
+            },
+            inference: { status: "complete", startedAt: null, completedAt: null, error: null },
+            sandbox: { status: "pending", startedAt: null, completedAt: null, error: null },
+          },
+        },
+        null,
+        2,
+      ),
+      { mode: 0o600 },
+    );
+
+    const r = runWithEnv(
+      "onboard --resume --non-interactive --yes-i-accept-third-party-software",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_SANDBOX_NAME: "   ",
+      },
+    );
+
+    expect(r.code).toBe(1);
+    expect(r.out.includes("Cannot resume non-interactive onboard")).toBeTruthy();
   });
 
   it("setup-spark --help exits 0 and shows onboard usage", () => {
@@ -990,8 +1157,14 @@ describe("CLI dispatch", () => {
 
   it("debug exits 1 on unknown option", () => {
     const r = run("debug --quik");
-    expect(r.code).toBe(1);
-    expect(r.out.includes("Unknown option")).toBeTruthy();
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("Nonexistent flag: --quik");
+  });
+
+  it("debug --output without a path is rejected by oclif", () => {
+    const r = run("debug --output");
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("Flag --output expects a value");
   });
 
   it("help mentions debug command", () => {
@@ -1014,6 +1187,7 @@ describe("CLI dispatch", () => {
   it("debug --sandbox without a name exits 1", () => {
     const r = run("debug --sandbox");
     expect(r.code).not.toBe(0);
+    expect(r.out).toContain("--sandbox");
   });
 
   it("debug warns when default sandbox is stale", testTimeoutOptions(), () => {
@@ -1041,7 +1215,8 @@ describe("CLI dispatch", () => {
     );
     const r = runWithEnv("debug --quick --sandbox mybox 2>&1", { HOME: home });
     expect(r.code).toBe(0);
-    expect(r.out).not.toContain("Warning");
+    expect(r.out).not.toContain("default sandbox 'ghost'");
+    expect(r.out).not.toContain("--sandbox NAME");
     expect(r.out).toContain("Collecting diagnostics for sandbox 'mybox'");
   });
 
@@ -1052,8 +1227,8 @@ describe("CLI dispatch", () => {
     const r = runWithEnv("alpha gateway-token --help", { HOME: home });
 
     expect(r.code).toBe(0);
-    expect(r.out).toContain("Usage: nemoclaw <name> gateway-token [--quiet|-q]");
-    expect(r.out).not.toContain("sandbox:gateway-token");
+    expect(r.out).toContain("$ nemoclaw <name> gateway-token [--quiet|-q]");
+    expect(r.out).not.toContain("sandbox:gateway");
   });
 
   it("doctor fails a present sandbox that is not Ready", () => {
@@ -1202,6 +1377,11 @@ describe("CLI dispatch", () => {
     expect(status.out).toContain("<name> status");
     expect(status.out).not.toContain("sandbox:status");
 
+    const doctor = runWithEnv("alpha doctor --help", { HOME: home });
+    expect(doctor.code).toBe(0);
+    expect(doctor.out).toContain("<name> doctor [--json]");
+    expect(doctor.out).not.toContain("sandbox:doctor");
+
     const logs = runWithEnv("alpha logs --help", { HOME: home });
     expect(logs.code).toBe(0);
     expect(logs.out).toContain("<name> logs");
@@ -1212,12 +1392,12 @@ describe("CLI dispatch", () => {
 
     const destroy = runWithEnv("alpha destroy --help", { HOME: home });
     expect(destroy.code).toBe(0);
-    expect(destroy.out).toContain("<name> destroy [--yes|--force]");
+    expect(destroy.out).toContain("<name> destroy [--yes|-y|--force]");
     expect(destroy.out).not.toContain("sandbox:destroy");
 
     const rebuild = runWithEnv("alpha rebuild --help", { HOME: home });
     expect(rebuild.code).toBe(0);
-    expect(rebuild.out).toContain("<name> rebuild [--yes|--force] [--verbose|-v]");
+    expect(rebuild.out).toContain("<name> rebuild [--yes|-y|--force] [--verbose|-v]");
     expect(rebuild.out).not.toContain("sandbox:rebuild");
 
     for (const action of ["policy-add", "policy-remove", "policy-list"]) {
@@ -1242,6 +1422,7 @@ describe("CLI dispatch", () => {
     const config = runWithEnv("alpha config get --help", { HOME: home });
     expect(config.code).toBe(0);
     expect(config.out).toContain("<name> config get");
+    expect(config.out).toContain("--format json|yaml");
     expect(config.out).not.toContain("sandbox:config:get");
   });
 
@@ -1284,6 +1465,34 @@ describe("CLI dispatch", () => {
     expect(start.out).toContain("Channel 'telegram' is already enabled for 'alpha'. Nothing to do.");
   });
 
+  it("policy and channel mutations reject missing parser-owned values before dispatch", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-mutation-missing-values-"));
+    writeSandboxRegistry(home);
+
+    const missingPolicyFile = runWithEnv("alpha policy-add --from-file 2>&1", { HOME: home });
+    expect(missingPolicyFile.code).not.toBe(0);
+    expect(missingPolicyFile.out).toContain("--from-file");
+
+    const missingChannel = runWithEnv("alpha channels add 2>&1", { HOME: home });
+    expect(missingChannel.code).not.toBe(0);
+    expect(missingChannel.out).toContain("channel");
+  });
+
+  it("diagnostic commands reject invalid parser-owned flags before dispatch", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-diagnostics-invalid-flags-"));
+    writeSandboxRegistry(home);
+
+    const badConfigFormat = runWithEnv("alpha config get --format xml 2>&1", { HOME: home });
+    expect(badConfigFormat.code).not.toBe(0);
+    expect(badConfigFormat.out).toContain("--format");
+    expect(badConfigFormat.out).toContain("json");
+    expect(badConfigFormat.out).toContain("yaml");
+
+    const badDoctorFlag = runWithEnv("alpha doctor --bogus 2>&1", { HOME: home });
+    expect(badDoctorFlag.code).not.toBe(0);
+    expect(badDoctorFlag.out).toContain("Nonexistent flag: --bogus");
+  });
+
   it("shields help keeps public sandbox-scoped usage", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-shields-help-"));
     writeSandboxRegistry(home);
@@ -1308,6 +1517,12 @@ describe("CLI dispatch", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-snapshot-help-"));
     writeSandboxRegistry(home);
 
+    const parent = runWithEnv("alpha snapshot --help", { HOME: home });
+    expect(parent.code).toBe(0);
+    expect(parent.out).toContain("nemoclaw alpha snapshot create");
+    expect(parent.out).toContain("nemoclaw alpha snapshot list");
+    expect(parent.out).not.toContain("sandbox:snapshot");
+
     const list = runWithEnv("alpha snapshot list --help", { HOME: home });
     expect(list.code).toBe(0);
     expect(list.out).toContain("<name> snapshot list");
@@ -1331,6 +1546,15 @@ describe("CLI dispatch", () => {
     const r = runWithEnv("alpha snapshot list", { HOME: home });
     expect(r.code).toBe(0);
     expect(r.out).toContain("No snapshots found for 'alpha'.");
+  });
+
+  it("unknown snapshot subcommands fail before action dispatch", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-snapshot-unknown-"));
+    writeSandboxRegistry(home);
+
+    const r = runWithEnv("alpha snapshot bogus 2>&1", { HOME: home });
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("Unexpected argument: bogus");
   });
 
   it("routes logs to OpenClaw and OpenShell log sources", () => {
@@ -1806,7 +2030,7 @@ describe("CLI dispatch", () => {
       { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha destroy --yes", {
+    const r = runWithEnv("alpha destroy -y", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
@@ -4737,6 +4961,27 @@ describe("list shows live gateway inference", () => {
     expect(r.out).toContain("status");
   });
 
+  it("share help keeps public sandbox-scoped usage", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-help-"));
+    writeSandboxRegistry(home);
+
+    const parent = runWithEnv("alpha share --help", { HOME: home });
+    expect(parent.code).toBe(0);
+    expect(parent.out).toContain("Usage: nemoclaw <name> share <mount|unmount|status>");
+    expect(parent.out).not.toContain("sandbox:share");
+
+    for (const [subcommand, usage] of [
+      ["mount", "share mount [sandbox-path] [local-mount-point]"],
+      ["unmount", "share unmount [local-mount-point]"],
+      ["status", "share status [local-mount-point]"],
+    ]) {
+      const result = runWithEnv(`alpha share ${subcommand} --help`, { HOME: home });
+      expect(result.code).toBe(0);
+      expect(result.out).toContain(`$ nemoclaw <name> ${usage}`);
+      expect(result.out).not.toContain("sandbox:share");
+    }
+  });
+
   it("share is recognized as a valid sandbox action (not 'Unknown action')", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-action-"));
     writeSandboxRegistry(home);
@@ -4746,5 +4991,15 @@ describe("list shows live gateway inference", () => {
     // Will fail because sshfs/sandbox isn't running, but should NOT say "Unknown action"
     expect(r.code).not.toBe(0);
     expect(r.out).not.toContain("Unknown action");
+  });
+
+  it("unknown share subcommands fail before action dispatch", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-unknown-"));
+    writeSandboxRegistry(home);
+
+    const r = runWithEnv("alpha share bogus 2>&1", { HOME: home });
+
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("Unexpected argument: bogus");
   });
 });

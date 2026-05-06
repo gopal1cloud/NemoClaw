@@ -230,14 +230,16 @@ COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 COPY nemoclaw-blueprint/scripts/ws-proxy-fix.js /usr/local/lib/nemoclaw/ws-proxy-fix.js
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.py /usr/local/lib/nemoclaw/generate-openclaw-config.py
-RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp /usr/local/lib/nemoclaw/sandbox-init.sh \
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
+        /usr/local/lib/nemoclaw/sandbox-init.sh \
+        /usr/local/lib/nemoclaw/generate-openclaw-config.py \
     && chmod 644 /usr/local/lib/nemoclaw/ws-proxy-fix.js
 
 # Build args for config that varies per deployment.
 # nemoclaw onboard passes these at image build time.
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
-ARG NEMOCLAW_PROVIDER_KEY=nvidia
-ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b
+ARG NEMOCLAW_PROVIDER_KEY=inference
+ARG NEMOCLAW_PRIMARY_MODEL_REF=inference/nvidia/nemotron-3-super-120b-a12b
 # Default dashboard port 18789 — override at runtime via NEMOCLAW_DASHBOARD_PORT.
 ARG CHAT_UI_URL=http://127.0.0.1:18789
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
@@ -268,8 +270,8 @@ ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
 # Used to enable guild-channel responses for native Discord. Default: empty map.
 ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
 # Base64-encoded JSON Telegram config (e.g. {"requireMention":true}).
-# When requireMention is true, Telegram groups get groupPolicy: mentions;
-# otherwise groupPolicy: open (existing default). See #1737. Default: empty map.
+# When requireMention is true, Telegram groups get groups: {"*": {"requireMention": true}}
+# with groupPolicy: open. See #1737, #3022. Default: empty map.
 ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
 # Set to "1" to force-disable device-pairing auth. Also auto-disabled when
 # CHAT_UI_URL is a non-loopback address (Brev Launchable, remote deployments)

@@ -126,7 +126,7 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
         dockerRunCommandBetween(
           dockerfile,
           "# Pre-create shell init files for the sandbox user.",
-          "# Install OpenClaw CLI + PyYAML",
+          "# System-wide proxy hooks.",
         ),
         sandboxRoot,
       );
@@ -239,6 +239,52 @@ describe("sandbox provisioning: procps debug tools (#2343)", () => {
       expect(calls).toContain("apt-get update");
       expect(calls).toContain("apt-get install -y --no-install-recommends procps=2:4.0.2-3");
       expect(result.stdout).toContain("procps test version");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () => {
+  it("normalizes the config generator mode after Docker COPY preserves a restrictive source mode", () => {
+    const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-helper-mode-"));
+    const localBin = path.join(tmp, "usr", "local", "bin");
+    const localLib = path.join(tmp, "usr", "local", "lib", "nemoclaw");
+    const files = [
+      path.join(localBin, "nemoclaw-start"),
+      path.join(localBin, "nemoclaw-codex-acp"),
+      path.join(localLib, "sandbox-init.sh"),
+      path.join(localLib, "generate-openclaw-config.py"),
+      path.join(localLib, "ws-proxy-fix.js"),
+    ];
+
+    try {
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(localLib, { recursive: true });
+      for (const file of files) {
+        fs.writeFileSync(file, "# fixture\n", { mode: 0o600 });
+        fs.chmodSync(file, 0o600);
+      }
+
+      const command = dockerRunCommandBetween(
+        dockerfile,
+        "# Copy startup script and shared sandbox initialisation library",
+        "# Build args for config that varies per deployment.",
+      )
+        .replaceAll("/usr/local/bin", localBin)
+        .replaceAll("/usr/local/lib/nemoclaw", localLib);
+      const { result } = runLoggedDockerShell(command, tmp);
+
+      expect(result.status, result.stderr).toBe(0);
+      const generatorMode = (
+        fs.statSync(path.join(localLib, "generate-openclaw-config.py")).mode & 0o777
+      ).toString(8);
+      const wsProxyMode = (fs.statSync(path.join(localLib, "ws-proxy-fix.js")).mode & 0o777).toString(
+        8,
+      );
+      expect(generatorMode).toBe("755");
+      expect(wsProxyMode).toBe("644");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -384,9 +430,12 @@ describe("Hermes sandbox provisioning", () => {
         expect(run.result.status).toBe(0);
         const hermesDir = path.join(run.sandboxRoot, ".hermes");
         expect((fs.statSync(hermesDir).mode & 0o777).toString(8)).toBe("750");
-        for (const dir of ["runtime", "logs", "cache"]) {
+        for (const dir of ["logs", "cache"]) {
           expect((fs.statSync(path.join(hermesDir, dir)).mode & 0o777).toString(8)).toBe("770");
         }
+        expect((fs.statSync(path.join(hermesDir, "runtime")).mode & 0o7777).toString(8)).toBe(
+          "2770",
+        );
         expect(fs.readlinkSync(path.join(hermesDir, "gateway_state.json"))).toBe(
           "runtime/gateway_state.json",
         );
