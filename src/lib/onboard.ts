@@ -4759,9 +4759,14 @@ function getSandboxRuntimeRegistryFields(
 function hasSandboxGpuDrift(sandboxName: string, config: SandboxGpuConfig): boolean {
   const existingEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
   if (!existingEntry) return false;
+  // Compare the effective GPU-enabled outcome rather than the raw mode string.
+  // During resume the saved gpuPassthrough=false is restored as flag="disable"
+  // which resolveSandboxGpuConfig converts to mode="0", while the first onboard
+  // stored mode="auto" (no GPU detected, no explicit flag).  Both resolve to
+  // sandboxGpuEnabled=false, so they are semantically identical — comparing mode
+  // strings would produce a false-positive drift.
   return (
     (existingEntry.sandboxGpuEnabled === true) !== config.sandboxGpuEnabled ||
-    (existingEntry.sandboxGpuMode || "auto") !== config.mode ||
     (existingEntry.sandboxGpuDevice || null) !== config.sandboxGpuDevice
   );
 }
@@ -10152,19 +10157,13 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       if (resume && session?.steps?.sandbox?.status === "complete") {
         if (webSearchConfigChanged) {
           note("  [resume] Web Search configuration changed; recreating sandbox.");
-          if (sandboxName) {
-            registry.removeSandbox(sandboxName);
-          }
+          repairRecordedSandbox(sandboxName);
         } else if (telegramConfigChanged) {
           note("  [resume] TELEGRAM_REQUIRE_MENTION changed; recreating sandbox.");
-          if (sandboxName) {
-            registry.removeSandbox(sandboxName);
-          }
+          repairRecordedSandbox(sandboxName);
         } else if (sandboxGpuConfigChanged) {
           note("  [resume] Sandbox GPU settings changed; recreating sandbox.");
-          if (sandboxName) {
-            registry.removeSandbox(sandboxName);
-          }
+          repairRecordedSandbox(sandboxName);
         } else if (sandboxReuseState === "not_ready") {
           note(
             `  [resume] Recorded sandbox '${sandboxName}' exists but is not ready; recreating it.`,
