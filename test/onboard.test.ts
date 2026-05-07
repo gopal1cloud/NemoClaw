@@ -4143,7 +4143,9 @@ const { createSandbox } = require(${onboardPath});
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
       const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
       const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      );
       const yamlPath = JSON.stringify(path.join(repoRoot, "node_modules", "yaml"));
       const customDockerfileArg = JSON.stringify(customDockerfilePath);
 
