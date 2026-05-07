@@ -218,7 +218,10 @@ for label in "${EXPECTED_LABELS[@]}"; do
 done
 
 # Install URL reachable — fails fast instead of mid-Brev-run if the host is down or the URL changed.
-INSTALL_URL=${NEMOCLAW_INSTALL_URL:-https://nemoclaw.nvidia.com/install.sh}
+# The default is the public Akamai-hosted entry (301-redirects to the actual installer). The
+# `nemoclaw.nvidia.com` host that earlier drafts pointed to is NVIDIA-internal and does not
+# resolve from Brev; surfaced during the #2007 e2e run.
+INSTALL_URL=${NEMOCLAW_INSTALL_URL:-https://www.nvidia.com/nemoclaw.sh}
 curl -fsI "$INSTALL_URL" >/dev/null 2>&1 || {
   echo "ERROR: install URL not reachable: $INSTALL_URL"
   echo "Set NEMOCLAW_INSTALL_URL or check https://nemoclaw.nvidia.com is up."
@@ -303,11 +306,23 @@ else
     # (>=20GB VRAM, >=500GB disk, compute >=8.0). Override with --type if needed.
     brev create "$INSTANCE_NAME"
   else
-    # CPU case: pick the cheapest stoppable Linux SKU at runtime so the skill
-    # doesn't rot when SKUs change. Override by exporting VERIFY_STALE_CPU_TYPE.
+    # CPU case: pick the cheapest stoppable Linux SKU at runtime so the skill doesn't rot when
+    # SKUs change. Bias the floor by reproducer-implied memory needs — the cheapest 2 GB SKU
+    # cannot load a 4.8 GiB Ollama probe, and onboard fails at provider validation before any
+    # sandbox-creation code runs. Surfaced during the #2007 e2e run (wasted ~25 min on a 2 GB
+    # box that couldn't load `nemotron-3-nano:4b`).
+    #
+    # Memory floor heuristic:
+    #   - Reproducer references Ollama or vLLM or names a model tag (e.g. `nemotron-3-nano:4b`,
+    #     `llama3:8b`)        -> floor 16 GB (covers ~5 GB model + sandbox + gateway overhead).
+    #   - Reproducer touches sandbox onboarding without a local model server   -> floor 8 GB.
+    #   - Pure CLI-surface bug (no sandbox, no model)                          -> floor 4 GB.
+    # Override the auto-pick by exporting VERIFY_STALE_CPU_TYPE if the team has hard preferences.
+    CPU_RAM_FLOOR=${CPU_RAM_FLOOR:-8}
     CPU_TYPE=${VERIFY_STALE_CPU_TYPE:-$(brev search cpu --sort price --json \
-      | jq -r '[.[] | select(.stoppable == true)] | .[0].type')}
-    [ -n "$CPU_TYPE" ] || { echo "ERROR: no stoppable CPU SKU available"; exit 1; }
+      | jq -r --argjson floor "$CPU_RAM_FLOOR" \
+          '[.[] | select(.stoppable == true and .ram_gb >= $floor)] | .[0].type')}
+    [ -n "$CPU_TYPE" ] || { echo "ERROR: no stoppable CPU SKU with >= ${CPU_RAM_FLOOR} GB RAM"; exit 1; }
     brev create "$INSTANCE_NAME" --type "$CPU_TYPE"
   fi
 
@@ -417,6 +432,29 @@ Bootstrap **once before Step 8b's baseline run** and reuse for Step 8d's latest 
 
 **If bootstrap fails** (network issue pulling the model, service won't start, etc.), this is an infra failure — abort to Step 11. Do not silently substitute; the user opted into faithfulness for a reason.
 
+### Step 8a.5b: Brev exec environment quirks
+
+Two non-obvious gotchas surfaced during the #2007 e2e run that every subsequent `brev exec` call has to handle. Encode them once here so reproducer scripts don't have to relearn each time.
+
+**PATH does not include `~/.local/bin` in non-login shells.** `nemoclaw`'s installer drops a shim at `~/.local/bin/nemoclaw` and updates PATH via `~/.bashrc` / `~/.profile`. `brev exec` spawns non-login, non-interactive shells that don't source those files, so a bare `brev exec "$INSTANCE" "nemoclaw --version"` returns `command not found` on a freshly-installed box. Fix: every reproducer script must explicitly export PATH at the top, OR every `brev exec` call must wrap with `bash -lc '...'`.
+
+```bash
+# Reproducer scripts: prepend this line.
+export PATH="$HOME/.local/bin:$PATH"
+
+# Or equivalently when calling brev exec ad-hoc:
+brev exec "$INSTANCE" "bash -lc 'nemoclaw --version'"
+```
+
+**Docker group requires `sg docker -c '...'` after `usermod -aG`.** Adding the user to the `docker` group (`sudo usermod -aG docker ubuntu`) takes effect for new login sessions, but `brev exec` calls in the same Brev session keep the old gid. The reproducer's `nemoclaw onboard` will fail with `permission denied while connecting to /var/run/docker.sock` unless the call runs in a subshell with the docker group active.
+
+```bash
+# Reproducer execution: wrap with sg docker.
+brev exec "$INSTANCE" "sg docker -c 'bash ~/reproducer.sh'"
+```
+
+Both patterns appear in the canonical setup script committed alongside the skill (or are encoded in your reproducer wrapper). Don't rely on the user discovering them mid-run.
+
 ---
 
 ### Step 8b: Run reproducer on baseline, compare to issue symptom
@@ -483,6 +521,48 @@ For interactive debugging when something looks off:
 ```bash
 brev shell "$INSTANCE_NAME"
 ```
+
+---
+
+## Step 8d.5: Architectural-Drift Check
+
+Cross-version verification compares two moving targets: the reproducer assumes `$REPORTED_VERSION`'s tooling surface, and `$LATEST` may have rewritten the surface entirely. If the *tool* the reproducer relies on (CLI subcommand, output table, log file location) was reworked between the two tags, an "empty / clean output on latest" can mean either "bug fixed" OR "we're looking at a deprecated tracking surface." Without this check, the latter silently registers as the former — a class of false positive.
+
+**Detection** — pickaxe the diff between tags for the reproducer's tool name and watch for the CLI itself being touched, not just its consumers:
+
+```bash
+# Extract the primary verification command from the reproducer (e.g. "openshell forward list").
+TOOL=$(grep -oE '\b(openshell|nemoclaw)[[:space:]]+[a-z-]+' reproducer.sh | sort -u)
+
+# Pickaxe each tool name across the version range.
+for t in $TOOL; do
+  echo "=== drift check: $t ==="
+  git log "$REPORTED_VERSION".."$LATEST" -S"$t" --oneline -- src/ bin/ nemoclaw/src/ 2>&1 | head -5
+done
+```
+
+If a tool is touched, drift is suspected.
+
+**Multi-axis verification** — when drift is suspected, do not rely on the reproducer's expected output alone. Pick OS-level surfaces that would show the buggy state regardless of which CLI tracks it. For port-forwarding bugs (the #2007 case), the canonical five-axis pattern:
+
+| # | Surface | Command |
+|---|---|---|
+| 1 | Reproducer's stated check | as written in the issue body |
+| 2 | Host TCP listeners | `sudo ss -tlnp` |
+| 3 | iptables NAT redirects | `sudo iptables -t nat -L -n` |
+| 4 | Docker port mappings | `docker ps --format '{{.Names}} {{.Ports}}'` |
+| 5 | Active SSH tunnels | `ps -ef \| grep 'ssh.*-L'` |
+
+Adapt the axes to the bug class. For filesystem bugs: `find`, `lsattr`, `stat`. For network policy bugs: `iptables -L`, container netns, gateway logs. The principle is the same — pick at least three independent surfaces that would each independently show the buggy state if it were present.
+
+**Action when drift is suspected:**
+
+- Run the multi-axis pattern after Step 8d's reproducer.
+- The verdict requires **every relevant axis to be clean** — not just the reproducer's surface — before claiming `fixed-on-latest`.
+- Quote the multi-axis evidence in the Step 10 comment as a table; this is exactly what makes "fixed" defensible when the original tooling no longer reflects the underlying behavior.
+- If any axis still shows the buggy state, the bug is NOT fixed even if the reproducer's surface is clean. Escalate to "still reproduces" (Step 9 special case).
+
+**When drift is NOT suspected** (the reproducer's tool is unchanged in the version range): the reproducer's expected output is sufficient, no multi-axis verification needed.
 
 ---
 
@@ -703,7 +783,7 @@ Apply +25 if either query returns at least one PR with `mergedAt` strictly after
 
 If neither query returns anything, **skip the +25 signal**.
 
-**Baseline-validation gating.** The +50 weight assumes the reproducer was *validated* — i.e., it produced the bug symptom on baseline (Step 8b/8c match). If `BASELINE_INSTALL_FAILED=1` (Step 8a fall-through, baseline pass skipped), the +50 still applies but **cap the total at 84** unless commits-touched-area or merged-PR-mention also fires. Without baseline AND without corroborating evidence, the cleanest landing is the 60–84 band where the reporter is asked to confirm — we don't have enough on our own to claim ≥85.
+**Baseline-validation gating.** The +50 weight assumes the reproducer was *validated* — i.e., it produced the bug symptom on baseline (Step 8b/8c match). If `BASELINE_INSTALL_FAILED=1` (Step 8a fall-through, baseline pass skipped — including the sandbox-build-rot case from Step 11), the +50 still applies but **cap the total at 84**. Corroboration signals (commits-touched-area, PR-mention) still raise the score within the cap but cannot lift it above 84. Without runtime baseline confirmation we don't have enough on our own to claim ≥85 — the cap forces the verdict into the 60–84 band where the reporter is asked to confirm. The previous draft of this rule had an "unless commits-touched OR PR-mention also fires" escape hatch that let inferred fix evidence bypass the cap entirely; that produced a misleading 100/100 on the #2007 e2e run despite zero baseline confirmation, and was tightened here.
 
 **Action (when latest run was clean — bug not reproduced):**
 
@@ -765,6 +845,8 @@ Transcripts and synth-repro scripts are already plain text and skip the pre-pass
 **File paths under the reporter's home directory** (`/Users/<name>/`, `/home/<name>/`) → replace with `~/`. Run last; catches incidental username PII.
 
 **Length target.** Default rendered comment to **400–500 words**. The evidence table (or by-design "What's structurally fixed" + "Vestigial references" sections) is the hero. Strip architectural prose "for QA reference," PR-attribution caveats beyond one sentence, and closing reopen-instructions boilerplate. If a comment runs past 500 words, cut everything that doesn't directly support the verdict — every section needs to either change a reader's mind about the verdict or be deleted.
+
+**Mandatory cap caveat.** When the score is capped (Step 9 baseline-validation gating, or any Step 11 degraded-mode path), the rendered Verdict section must include a one-line caveat naming the cap and the reason. Example: `Capped at 84 because Step 9's baseline-validation gate did not run (sandbox-build rot on v0.0.18: Dockerfile symlink layer removed by #2227).` Don't make readers reverse-engineer why the score didn't go higher — name it.
 
 **Mandatory closing block — reporter @-mention with confirmation language.** Every template below ends with an explicit @-mention of the original reporter using this exact shape:
 
@@ -887,10 +969,19 @@ The next weekly run retries naturally.
 **Baseline-install failure** (Step 8a, reported version won't install on a modern image): not a hard failure — degraded mode.
 
 - Set `BASELINE_INSTALL_FAILED=1`, skip 8b/8c, jump to 8d.
-- Step 9 applies the score cap (max 84) unless corroborating evidence fires.
+- Step 9 applies the score cap (max 84) — corroboration signals raise the score within the cap but cannot lift past it.
 - Note "baseline-install-skipped" in the final comment so a reviewer knows the verification ran without the script-validation gate.
 
-This degradation is expected — old releases rot. We still want to extract whatever signal we can from the latest run plus PR/commit evidence, just at a more conservative confidence ceiling.
+**Baseline-build failure** (Step 8a binary install succeeded, but the in-image `Dockerfile` build during sandbox creation failed on a layer that was structurally removed in a later release): also degraded mode, distinct from binary install rot. Surfaced during the #2007 e2e run on v0.0.18 (`/sandbox/.openclaw-data/workspace/media` symlink layer, removed entirely by #2227).
+
+- Set `BASELINE_INSTALL_FAILED=1` (same flag — Step 9's cap-at-84 rule keys off it regardless of which phase rotted).
+- Skip 8b/8c, jump to 8d.
+- Note "baseline-build-skipped" in the final comment with the specific failing layer/file so a reviewer can see *why* the v0.0.X image no longer builds (the why is usually a follow-on PR that removed the rotted layer).
+- Do not retry the build with a patched Dockerfile — that breaks faithfulness. We're claiming "couldn't independently re-trigger the original symptom on baseline," not "we made the old version work somehow."
+
+Both baseline-rot variants share the same downstream effect: Step 9 cap, Step 10 caveat, @-mention reporter to confirm. Distinguishing them in the comment helps a reviewer understand the failure mode without re-running.
+
+This degradation is expected — old releases rot at multiple phases (binary installer URL drift, base-image dependencies vanish, in-image Dockerfile layers get removed by structural refactors). We still want to extract whatever signal we can from the latest run plus PR/commit evidence, just at a more conservative confidence ceiling.
 
 **Keep-box-on-inconclusive.** When `verify-inconclusive` lands (Step 8c gave up, or Step 9 score < 60), **skip the cleanup trap** for this run if the box was provisioned by this run — set `PROVISIONED_NEW=0` before the trap fires so the EXIT handler is a no-op. Print the `brev shell "$INSTANCE_NAME"` command and an explicit `brev delete "$INSTANCE_NAME"` reminder in the run output so the maintainer can triage and clean up manually. Reused boxes stay regardless. Ship-failed verifications are the exact case where having an inspectable artifact pays for itself; an unbounded sleep-and-delete in the background isn't reliable across session ends, so we leave deletion explicit.
 
