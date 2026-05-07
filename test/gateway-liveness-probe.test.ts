@@ -30,10 +30,11 @@ describe("gateway liveness probe (#2020)", () => {
   it("preflight probes the container when gatewayReuseState is 'healthy'", () => {
     // The preflight section must call the probe before entering the port loop.
     // Scope to preflight so the regex can't accidentally match the main onboard block.
-    const preflightSection = content.slice(
-      content.indexOf("async function preflight("),
-      content.indexOf("async function startGatewayWithOptions("),
-    );
+    const preflightStart = content.indexOf("async function preflight(");
+    const preflightEnd = content.indexOf("async function startGatewayWithOptions(");
+    expect(preflightStart).toBeGreaterThanOrEqual(0);
+    expect(preflightEnd).toBeGreaterThan(preflightStart);
+    const preflightSection = content.slice(preflightStart, preflightEnd);
     const preflightProbe = preflightSection.match(
       /let gatewayReuseState = gatewaySnapshot\.gatewayReuseState[\s\S]*?verifyGatewayContainerRunning\(\)[\s\S]*?gatewayReuseState = "missing"/,
     );

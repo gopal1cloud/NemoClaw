@@ -205,6 +205,13 @@ run_nemoclaw() {
   "${NEMOCLAW_CMD[@]}" "$@"
 }
 
+stop_forward_if_set() {
+  local port="${1:-}"
+  if [ -n "$port" ]; then
+    openshell forward stop "$port" 2>/dev/null || true
+  fi
+}
+
 dashboard_port_from_list() {
   local sandbox_name="$1"
 
@@ -660,6 +667,8 @@ run_nemoclaw "$SANDBOX_A" destroy --yes 2>/dev/null || true
 run_nemoclaw "$SANDBOX_B" destroy --yes 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_A" 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_B" 2>/dev/null || true
+stop_forward_if_set "${port_a:-}"
+stop_forward_if_set "${port_b:-}"
 openshell forward stop 18789 2>/dev/null || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 openshell gateway destroy -g "$ALT_GATEWAY_NAME" 2>/dev/null || true

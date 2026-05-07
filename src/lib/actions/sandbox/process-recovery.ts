@@ -36,6 +36,14 @@ type SandboxPortDeps = {
   getSessionAgent?: typeof agentRuntime.getSessionAgent;
 };
 
+export type SandboxForwardListEntry = {
+  sandboxName: string;
+  port: string;
+  status: string;
+};
+
+export type SandboxForwardHealth = boolean | "occupied" | null;
+
 const SANDBOX_EXEC_STARTED_MARKER = "__NEMOCLAW_SANDBOX_EXEC_STARTED__";
 
 function isValidPort(value: unknown): value is number {
@@ -53,8 +61,8 @@ export function resolveSandboxDashboardPort(
 ): number {
   const getSessionAgent = deps.getSessionAgent ?? agentRuntime.getSessionAgent;
   const agent = getSessionAgent(sandboxName);
-  if (agent) {
-    return agent.forwardPort ?? DASHBOARD_PORT;
+  if (agent && isValidPort(agent.forwardPort)) {
+    return agent.forwardPort;
   }
 
   const getSandbox = deps.getSandbox ?? registry.getSandbox;
@@ -281,6 +289,10 @@ function waitForRecoveredSandboxGateway(sandboxName: string): boolean {
  * confirms the new entry is running, false otherwise.
  */
 function ensureSandboxPortForward(sandboxName: string): boolean {
+  const forwardHealth = isSandboxForwardHealthy(sandboxName);
+  if (forwardHealth === true) return true;
+  if (forwardHealth === "occupied") return false;
+
   const port = String(resolveSandboxDashboardPort(sandboxName));
   runOpenshell(["forward", "stop", port], { ignoreError: true });
   const startResult = runOpenshell(["forward", "start", "--background", port, sandboxName], {
@@ -294,27 +306,32 @@ function ensureSandboxPortForward(sandboxName: string): boolean {
  * Probe `openshell forward list` for the sandbox's dashboard forward.
  * Returns true when an entry exists for the expected sandbox+port pair
  * with STATUS=running, false when the entry is missing or non-running,
- * and null when openshell is unreachable.
+ * "occupied" when another sandbox already owns the expected port, and
+ * null when openshell is unreachable.
  *
  * The in-sandbox gateway and the host-side forward are independent
  * dimensions: the forward can die (host SSH session dropped, list shows
  * STATUS=dead) while the gateway keeps listening on 127.0.0.1:<port>.
  */
-function isSandboxForwardHealthy(sandboxName: string): boolean | null {
+function isSandboxForwardHealthy(sandboxName: string): SandboxForwardHealth {
   const port = String(resolveSandboxDashboardPort(sandboxName));
   const result = captureOpenshell(["forward", "list"], {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   if (!result || isCommandTimeout(result) || result.status !== 0) return null;
-  const entries = parseForwardList(result.output) as Array<{
-    sandboxName: string;
-    port: string;
-    status: string;
-  }>;
+  const entries = parseForwardList(result.output) as SandboxForwardListEntry[];
+  return classifySandboxForwardHealth(entries, sandboxName, port);
+}
+
+export function classifySandboxForwardHealth(
+  entries: SandboxForwardListEntry[],
+  sandboxName: string,
+  port: string,
+): Exclude<SandboxForwardHealth, null> {
   const match = entries.find((entry) => entry.port === port);
   if (!match) return false;
-  if (match.sandboxName !== sandboxName) return false;
+  if (match.sandboxName !== sandboxName) return "occupied";
   return match.status === "running";
 }
 
@@ -358,6 +375,14 @@ export function checkAndRecoverSandboxProcesses(
         }
       }
       return { checked: true, wasRunning: true, recovered: false, forwardRecovered };
+    }
+    if (forwardHealthy === "occupied") {
+      if (!quiet) {
+        console.log("");
+        console.error(`  Dashboard port forward for '${sandboxName}' is owned by another sandbox.`);
+        console.error("  Leaving the existing port forward unchanged.");
+      }
+      return { checked: true, wasRunning: true, recovered: false, forwardRecovered: false };
     }
     return { checked: true, wasRunning: true, recovered: false, forwardRecovered: false };
   }
