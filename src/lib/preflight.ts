@@ -14,7 +14,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { DASHBOARD_PORT } from "./ports";
+import { DASHBOARD_PORT } from "./core/ports";
 
 // runner.ts still uses CommonJS-style exports — use require here.
 const { runCapture } = require("./runner");

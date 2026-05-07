@@ -5,7 +5,7 @@
 // Supports non-interactive mode via --non-interactive flag or
 // NEMOCLAW_NON_INTERACTIVE=1 env var for CI/CD pipelines.
 
-const { getAgentBranding } = require("./branding");
+const { getAgentBranding } = require("./cli/branding");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -31,7 +31,7 @@ function setOnboardBrandingAgent(agentName: string | null | undefined): void {
   onboardBrandingAgent = agentName || null;
 }
 
-function onboardBranding(): import("./branding").AgentBranding {
+function onboardBranding(): import("./cli/branding").AgentBranding {
   return getAgentBranding(onboardBrandingAgent || process.env.NEMOCLAW_AGENT || null);
 }
 
@@ -70,7 +70,7 @@ const {
   dockerRmi,
   dockerStop,
 } = docker;
-const errnoUtils: typeof import("./errno") = require("./errno");
+const errnoUtils: typeof import("./core/errno") = require("./core/errno");
 const { isErrnoException } = errnoUtils;
 
 type RunnerOptions = {
@@ -105,7 +105,7 @@ const {
   OLLAMA_PROXY_PORT,
   DASHBOARD_PORT_RANGE_START,
   DASHBOARD_PORT_RANGE_END,
-} = require("./ports");
+} = require("./core/ports");
 const localInference: typeof import("./local-inference") = require("./local-inference");
 const {
   findReachableOllamaHost,
@@ -256,11 +256,11 @@ const {
     inferenceCompat: LooseObject | null;
   };
 };
-const { sleepSeconds } = require("./wait");
+const { sleepSeconds } = require("./core/wait");
 const platformUtils: typeof import("./platform") = require("./platform");
 const { inferContainerRuntime, isWsl, shouldPatchCoredns } = platformUtils;
 const { resolveOpenshell } = require("./adapters/openshell/resolve");
-const credentials: typeof import("./credentials") = require("./credentials");
+const credentials: typeof import("./credentials/store") = require("./credentials/store");
 const {
   prompt,
   ensureApiKey,
@@ -271,7 +271,7 @@ const {
   resolveProviderCredential,
   saveCredential,
 } = credentials;
-const { hashCredential }: typeof import("./credential-hash") = require("./credential-hash");
+const { hashCredential }: typeof import("./security/credential-hash") = require("./security/credential-hash");
 const registry: typeof import("./state/registry") = require("./state/registry");
 const nim: typeof import("./nim") = require("./nim");
 const onboardSession: typeof import("./onboard-session") = require("./onboard-session");
@@ -296,7 +296,7 @@ const agentDefs = require("./agent/defs");
 const gatewayState: typeof import("./state/gateway") = require("./state/gateway");
 const sandboxState: typeof import("./state/sandbox") = require("./state/sandbox");
 const validation: typeof import("./validation") = require("./validation");
-const urlUtils: typeof import("./url-utils") = require("./url-utils");
+const urlUtils: typeof import("./core/url-utils") = require("./core/url-utils");
 const buildContext = require("./build-context");
 const dashboardContract: typeof import("./dashboard/contract") = require("./dashboard/contract");
 const httpProbe: typeof import("./http-probe") = require("./http-probe");
@@ -401,12 +401,12 @@ const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.
 const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
 
 // Re-export shared JSON types under the names used throughout this module.
-// See src/lib/json-types.ts for the canonical definitions.
+// See src/lib/core/json-types.ts for the canonical definitions.
 import type {
   JsonObject as LooseObject,
   JsonScalar as LooseScalar,
   JsonValue as LooseValue,
-} from "./json-types";
+} from "./core/json-types";
 
 type OnboardOptions = {
   nonInteractive?: boolean;
@@ -1129,7 +1129,7 @@ function runCaptureOpenshell(
   return runCapture(openshellArgv(args, opts), opts);
 }
 
-// URL/string utilities — delegated to src/lib/url-utils.ts
+// URL/string utilities — delegated to src/lib/core/url-utils.ts
 const {
   compactText,
   normalizeProviderBaseUrl,
@@ -3650,7 +3650,7 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
 
   // Required ports — gateway, plus the dashboard port when an explicit one
   // is requested. envVar is the override env var documented in
-  // src/lib/ports.ts; surfacing it in the preflight error gives users a clear
+  // src/lib/core/ports.ts; surfacing it in the preflight error gives users a clear
   // escape hatch when an unrelated process is holding the default port
   // (closes #2497). When --control-ui-port is set, check that port instead
   // of the default. When auto-allocation is possible (no explicit port),
