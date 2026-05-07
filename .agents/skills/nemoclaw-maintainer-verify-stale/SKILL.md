@@ -321,9 +321,9 @@ echo ">>> Brev instance: $INSTANCE_NAME (provisioned_new=$PROVISIONED_NEW; manua
 trap '[ "$PROVISIONED_NEW" = "1" ] && brev delete "$INSTANCE_NAME" >/dev/null 2>&1 || true' EXIT
 ```
 
-Wallclock cap per verification: **25 minutes** to accommodate two installs (reported version baseline + latest). If a provisioned box isn't ready in time, abort and treat as an infra failure (Step 11).
+Wallclock cap per verification: **60 minutes** default. The cap accommodates two full install passes (baseline + latest), comprehensive resets between them, and any reproducer dependency bootstrapping (Step 8a.5) — most of which run sequentially against a single Brev box. Bugs that genuinely require more than an hour to manifest fall out of v1 scope; if a provisioned box isn't ready in time, abort and treat as an infra failure (Step 11).
 
-**Extended budget for time-sensitive bugs.** If the issue body contains keywords suggesting the bug only manifests over time (`after N minutes`, `after N requests`, `eventually`, `over time`, `memory leak`, `long-running`, `idle for`), bump the cap to **60 minutes**. Detection is simple keyword match. Hard ceiling at 60 min — bugs that genuinely require hours fall out of v1 scope.
+The previous design had a 25-min default with a 60-min extension for time-sensitive bugs (`memory leak`, `over time`, etc.). That split optimised for the wrong constraint — most issues fit comfortably under 60 min, and the keyword-based extension forced re-runs whenever a real install or bootstrap took longer than the optimistic 25-min budget. Single 60-min cap removes that paper cut.
 
 ---
 
@@ -378,6 +378,46 @@ brev exec "$INSTANCE_NAME" "nemoclaw --version"
 ```
 
 If install fails (old releases rot — installer URLs, deps, OS images all drift over time), set `BASELINE_INSTALL_FAILED=1` and **skip 8b/8c**, going straight to 8d. Note "baseline-install-skipped" in the final comment. Step 9's scoring rule handles the degraded mode.
+
+### Step 8a.5: Bootstrap reproducer dependencies
+
+Brev's stock CPU images ship with NemoClaw installable but not the broader ecosystem the reproducer may need — local model servers (Ollama, vLLM), inference providers, third-party CLIs. **Default to maximum faithfulness: install the actual dependency the reporter used rather than substituting a stub.** Substituting trades faithfulness for speed; that trade is rarely worth it on a 60-min budget, and it almost always introduces a confound that makes the verdict less trustworthy.
+
+**When to bootstrap (not substitute):**
+
+- The reproducer references a specific model/server runtime (`NEMOCLAW_PROVIDER=ollama`, `NEMOCLAW_PROVIDER=vllm`, etc.).
+- The reproducer references a specific model name with a tag (`nemotron-3-nano:4b`, `llama3:8b`, etc.).
+- The reporter's environment in the issue body shows a configured provider (e.g., `OpenShell CLI: 0.0.26` plus an Ollama running on host).
+
+**When to substitute (with -30 penalty):**
+
+- Provider requires an API key the skill cannot safely supply (NIM, OpenAI, Anthropic, etc.). Stubbing a key won't pass validation faithfully and a real key shouldn't sit in a verify-stale run. Apply the -30 penalty (treat as synth-repro per Step 8b) and document the substitution in the comment.
+- The bug is *provably* independent of the dependency (e.g., a CLI argument-parsing bug that errors before any provider runs). Note this explicitly in the comment.
+
+**Canonical bootstraps:**
+
+```bash
+# Ollama + a specific model.
+# The Ollama installer registers a systemd service (`ollama.service`) so the
+# daemon survives between brev exec calls.
+brev exec "$INSTANCE_NAME" "curl -fsSL https://ollama.com/install.sh | sh"
+brev exec "$INSTANCE_NAME" "sudo systemctl start ollama && sleep 3"
+brev exec "$INSTANCE_NAME" "ollama pull <model>"
+brev exec "$INSTANCE_NAME" "ollama list"   # confirm before continuing
+```
+
+```bash
+# vLLM + a model (HuggingFace-hosted).
+brev exec "$INSTANCE_NAME" "pip install --quiet vllm"
+brev exec "$INSTANCE_NAME" "nohup python -m vllm.entrypoints.openai.api_server --model <model> --host 127.0.0.1 --port 8000 >/var/log/vllm.log 2>&1 &"
+brev exec "$INSTANCE_NAME" "sleep 30 && curl -fsS http://127.0.0.1:8000/v1/models"
+```
+
+Bootstrap **once before Step 8b's baseline run** and reuse for Step 8d's latest run. Don't reset Ollama/vLLM state between baseline and latest in the comprehensive reset — model downloads are expensive and unrelated to the NemoClaw install. Adjust the reset script to skip these external services explicitly if needed.
+
+**If bootstrap fails** (network issue pulling the model, service won't start, etc.), this is an infra failure — abort to Step 11. Do not silently substitute; the user opted into faithfulness for a reason.
+
+---
 
 ### Step 8b: Run reproducer on baseline, compare to issue symptom
 
