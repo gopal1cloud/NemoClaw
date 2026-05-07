@@ -56,6 +56,31 @@ function cleanupGatewayAfterLastSandbox(): void {
     ignoreError: true,
     stdio: ["ignore", "ignore", "ignore"],
   });
+
+  if (process.platform === "linux") {
+    // Docker-driver mode: the openshell CLI does not have `gateway destroy`.
+    // Stop the gateway process via its PID file instead.
+    const { isLinuxDockerDriverGatewayEnabled } = require("../../onboard") as {
+      isLinuxDockerDriverGatewayEnabled: () => boolean;
+    };
+    if (isLinuxDockerDriverGatewayEnabled()) {
+      const path = require("node:path");
+      const stateDir =
+        process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR ||
+        path.join(require("node:os").homedir(), ".local", "state", "nemoclaw", "openshell-docker-gateway");
+      const pidFile = path.join(stateDir, "openshell-gateway.pid");
+      try {
+        const raw = fs.readFileSync(pidFile, "utf-8").trim();
+        const pid = Number.parseInt(raw, 10);
+        if (Number.isInteger(pid) && pid > 0) {
+          try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ }
+        }
+      } catch { /* PID file absent — nothing to kill */ }
+      try { fs.rmSync(pidFile, { force: true }); } catch { /* best effort */ }
+      return;
+    }
+  }
+
   runOpenshell(["gateway", "destroy", "-g", NEMOCLAW_GATEWAY_NAME], { ignoreError: true });
   dockerRemoveVolumesByPrefix(`openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`, {
     ignoreError: true,

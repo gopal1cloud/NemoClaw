@@ -3260,6 +3260,27 @@ function sleep(seconds: number): void {
 }
 
 function destroyGateway() {
+  if (isLinuxDockerDriverGatewayEnabled()) {
+    // Docker-driver mode: the openshell CLI does not have a `gateway destroy`
+    // subcommand.  Stop the running gateway process directly and clean up its
+    // PID file so the next `startDockerDriverGateway()` starts fresh.
+    const pid = getDockerDriverGatewayPid();
+    if (pid !== null && isPidAlive(pid)) {
+      try {
+        process.kill(pid, "SIGTERM");
+        sleep(2);
+        if (isPidAlive(pid)) {
+          process.kill(pid, "SIGKILL");
+          sleep(1);
+        }
+      } catch {
+        /* already gone — expected on cleanup paths */
+      }
+    }
+    fs.rmSync(getDockerDriverGatewayPidFile(), { force: true });
+    registry.clearAll();
+    return;
+  }
   const destroyResult = runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], {
     ignoreError: true,
   });
@@ -4290,14 +4311,7 @@ async function preflight(
   if (gatewayReuseState === "stale" || gatewayReuseState === "active-unnamed") {
     console.log(`  Cleaning up previous ${cliDisplayName()} session...`);
     runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
-    const destroyResult = runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], {
-      ignoreError: true,
-    });
-    // Sandboxes under the destroyed gateway no longer exist in OpenShell —
-    // clear the local registry so `nemoclaw list` stays consistent. (#532)
-    if (destroyResult.status === 0) {
-      registry.clearAll();
-    }
+    destroyGateway();
     console.log("  ✓ Previous session cleaned up");
   }
 
