@@ -29,6 +29,9 @@ const {
 const {
   prepareInitialSandboxCreatePolicy,
 }: typeof import("./onboard/initial-policy") = require("./onboard/initial-policy");
+const {
+  getSelectionDrift,
+}: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -326,6 +329,7 @@ import type { TierDefinition, TierPreset } from "./policy/tiers";
 import type { SandboxCreateFailure, ValidationClassification } from "./validation";
 import type { ProbeRecovery } from "./validation-recovery";
 import type { WebSearchConfig } from "./inference/web-search";
+import type { SelectionDrift } from "./onboard/selection-drift";
 
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 const USE_COLOR = !process.env.NO_COLOR && !!process.stdout.isTTY;
@@ -1713,15 +1717,6 @@ type EndpointValidationResult =
   | { ok: true; api: string | null; retry?: undefined }
   | { ok: false; retry: "credential" | "selection" | "retry" | "model"; api?: undefined };
 
-type SelectionDrift = {
-  changed: boolean;
-  providerChanged: boolean;
-  modelChanged: boolean;
-  existingProvider: string | null;
-  existingModel: string | null;
-  unknown: boolean;
-};
-
 function upsertMessagingProviders(tokenDefs: MessagingTokenDef[]) {
   const upserted = onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell);
   // upsertMessagingProviders process.exits on failure, so reaching this
@@ -1950,102 +1945,6 @@ function pruneStaleSandboxEntry(sandboxName: string): boolean {
     registry.removeSandbox(sandboxName);
   }
   return liveExists;
-}
-
-function findSelectionConfigPath(dir: string): string | null {
-  if (!dir || !fs.existsSync(dir)) return null;
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      const found = findSelectionConfigPath(fullPath);
-      if (found) return found;
-      continue;
-    }
-    if (entry.name === "config.json") {
-      return fullPath;
-    }
-  }
-  return null;
-}
-
-function readSandboxSelectionConfig(sandboxName: string): ProviderSelectionConfig | null {
-  if (!sandboxName) return null;
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-selection-"));
-  try {
-    const result = runOpenshell(
-      [
-        "sandbox",
-        "download",
-        sandboxName,
-        "/sandbox/.nemoclaw/config.json",
-        `${tmpDir}${path.sep}`,
-      ],
-      { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] },
-    );
-    if (result.status !== 0) return null;
-    const configPath = findSelectionConfigPath(tmpDir);
-    if (!configPath) return null;
-    try {
-      const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-      return parsed && typeof parsed === "object" ? parsed : null;
-    } catch {
-      return null;
-    }
-  } catch {
-    return null;
-  } finally {
-    try {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch {
-      // ignore cleanup errors
-    }
-  }
-}
-
-function getSelectionDrift(
-  sandboxName: string,
-  requestedProvider: string | null,
-  requestedModel: string | null,
-): SelectionDrift {
-  const existing = readSandboxSelectionConfig(sandboxName);
-  if (!existing) {
-    return {
-      changed: true,
-      providerChanged: false,
-      modelChanged: false,
-      existingProvider: null,
-      existingModel: null,
-      unknown: true,
-    };
-  }
-
-  const existingProvider = typeof existing.provider === "string" ? existing.provider : null;
-  const existingModel = typeof existing.model === "string" ? existing.model : null;
-  if (!existingProvider || !existingModel) {
-    return {
-      changed: true,
-      providerChanged: false,
-      modelChanged: false,
-      existingProvider,
-      existingModel,
-      unknown: true,
-    };
-  }
-
-  const providerChanged = Boolean(
-    existingProvider && requestedProvider && existingProvider !== requestedProvider,
-  );
-  const modelChanged = Boolean(existingModel && requestedModel && existingModel !== requestedModel);
-
-  return {
-    changed: providerChanged || modelChanged,
-    providerChanged,
-    modelChanged,
-    existingProvider,
-    existingModel,
-    unknown: false,
-  };
 }
 
 async function confirmRecreateForSelectionDrift(
@@ -4760,7 +4659,7 @@ async function createSandbox(
     const needsProviderMigration =
       hasMessagingTokens &&
       messagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
-    const selectionDrift = getSelectionDrift(sandboxName, provider, model);
+    const selectionDrift = getSelectionDrift(sandboxName, provider, model, { runOpenshell });
     const confirmedSelectionDrift = selectionDrift.changed && !selectionDrift.unknown;
 
     // Detect whether any messaging credential has been rotated since the
