@@ -182,9 +182,13 @@ function saveShieldsState(
   patch: ShieldsState,
 ): ShieldsState {
   const current = loadShieldsState(sandboxName);
-  // Strip the internal _hasStateFile flag before persisting — it is a
-  // runtime-only marker and must not leak into the JSON state file.
-  const { _hasStateFile: _, ...currentClean } = current;
+  // Strip runtime-only markers before persisting.
+  const {
+    _hasStateFile: _hasStateFile,
+    _isCorrupt: _isCorrupt,
+    _corruptError: _corruptError,
+    ...currentClean
+  } = current;
   const updated: ShieldsState = {
     ...currentClean,
     ...patch,
