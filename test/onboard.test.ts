@@ -52,6 +52,10 @@ type OnboardTestInternals = {
   classifySandboxCreateFailure: (output?: string) => { kind: string; uploadedToGateway: boolean };
   compactText: (value?: string) => string;
   computeSetupPresetSuggestions: ShimFn<string[]>;
+  filterPolicyPresetsForAgent: <T extends { name: string }>(
+    presets: T[],
+    agentName?: string | null,
+  ) => T[];
   formatEnvAssignment: (name: string, value: string) => string;
   findDashboardForwardOwner: (
     forwardListOutput: string | null | undefined,
@@ -176,6 +180,7 @@ const {
   classifySandboxCreateFailure,
   compactText,
   computeSetupPresetSuggestions,
+  filterPolicyPresetsForAgent,
   formatEnvAssignment,
   getNavigationChoice,
   getGatewayReuseState,
@@ -469,6 +474,24 @@ describe("onboard helpers", () => {
         knownPresetNames: known,
       });
       expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "brave"]);
+    });
+
+    it("filters tier defaults to known presets for agent-specific onboarding", () => {
+      const suggestions = computeSetupPresetSuggestions("balanced", {
+        enabledChannels: [],
+        knownPresetNames: known.filter((name) => name !== "brave"),
+      });
+      expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew"]);
+    });
+
+    it("omits Brave from Hermes onboarding presets", () => {
+      const allPresets = known.map((name) => ({ name }));
+      const hermesPresets = filterPolicyPresetsForAgent(allPresets, "hermes").map((p) => p.name);
+      const openclawPresets = filterPolicyPresetsForAgent(allPresets, "openclaw").map(
+        (p) => p.name,
+      );
+      expect(hermesPresets).not.toContain("brave");
+      expect(openclawPresets).toContain("brave");
     });
 
     it("forwards enabled messaging channels into the balanced tier suggestions", () => {

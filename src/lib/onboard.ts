@@ -8537,7 +8537,10 @@ function computeSetupPresetSuggestions(
 ): string[] {
   const { enabledChannels = null, webSearchConfig = null, provider = null } = options;
   const known = Array.isArray(options.knownPresetNames) ? new Set(options.knownPresetNames) : null;
-  const suggestions = tiers.resolveTierPresets(tierName).map((p) => p.name);
+  const suggestions = tiers
+    .resolveTierPresets(tierName)
+    .map((p) => p.name)
+    .filter((name) => !known || known.has(name));
   const add = (name: string) => {
     if (suggestions.includes(name)) return;
     if (known && !known.has(name)) return;
@@ -8551,6 +8554,32 @@ function computeSetupPresetSuggestions(
   return suggestions;
 }
 
+const AGENT_POLICY_PRESET_EXCLUSIONS: Record<string, readonly string[]> = {
+  hermes: ["brave"],
+};
+
+function filterPolicyPresetsForAgent<T extends { name: string }>(
+  presets: T[],
+  agentName: string | null | undefined,
+): T[] {
+  const excluded = AGENT_POLICY_PRESET_EXCLUSIONS[normalizeSandboxAgentName(agentName)];
+  if (!excluded || excluded.length === 0) return presets;
+  const excludedSet = new Set(excluded);
+  return presets.filter((preset) => !excludedSet.has(preset.name));
+}
+
+function resolvePolicyPresetAgentName(
+  sandboxName: string,
+  explicitAgentName: string | null | undefined,
+): string {
+  if (explicitAgentName) return normalizeSandboxAgentName(explicitAgentName);
+  try {
+    return normalizeSandboxAgentName(registry.getSandbox(sandboxName)?.agent);
+  } catch {
+    return "openclaw";
+  }
+}
+
 async function setupPoliciesWithSelection(
   sandboxName: string,
   options: {
@@ -8560,6 +8589,7 @@ async function setupPoliciesWithSelection(
     enabledChannels?: string[] | null;
     provider?: string | null;
     knownPresetNames?: string[];
+    agentName?: string | null;
   } = {},
 ) {
   const selectedPresets = Array.isArray(options.selectedPresets) ? options.selectedPresets : null;
@@ -8570,7 +8600,8 @@ async function setupPoliciesWithSelection(
 
   step(8, 8, "Policy presets");
 
-  const allPresets = policies.listPresets();
+  const policyPresetAgentName = resolvePolicyPresetAgentName(sandboxName, options.agentName);
+  const allPresets = filterPolicyPresetsForAgent(policies.listPresets(), policyPresetAgentName);
   const applied = policies.getAppliedPresets(sandboxName);
   let chosen = selectedPresets;
 
@@ -10278,6 +10309,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             : recordedMessagingChannels,
         webSearchConfig,
         provider,
+        agentName: agent?.name ?? null,
         onSelection: (policyPresets) => {
           onboardSession.updateSession((current: Session) => {
             current.policyPresets = policyPresets;
@@ -10448,6 +10480,7 @@ module.exports = {
   arePolicyPresetsApplied,
   getSuggestedPolicyPresets,
   computeSetupPresetSuggestions,
+  filterPolicyPresetsForAgent,
   LOCAL_INFERENCE_PROVIDERS,
   presetsCheckboxSelector,
   selectPolicyTier,
