@@ -135,7 +135,7 @@ Strip `fixed-on-latest` and `verify-inconclusive` from all open issues so the ne
 for label in fixed-on-latest verify-inconclusive; do
   gh issue list --repo NVIDIA/NemoClaw --state open --label "$label" \
     --json number -q '.[].number' \
-  | xargs -I{} gh issue edit {} --repo NVIDIA/NemoClaw --remove-label "$label"
+  | xargs -r -I{} gh issue edit {} --repo NVIDIA/NemoClaw --remove-label "$label"
 done
 ```
 
