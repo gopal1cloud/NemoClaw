@@ -305,21 +305,40 @@ Choose 1, 2, or 3:
 
 This prompt blocks before Step 7 provisions a box. Don't burn cost on a verification path the maintainer hasn't agreed to.
 
-**API-key propagation pattern (for option 1).** Surfaced during the #2604 e2e run: passing the key as `NVIDIA_API_KEY=<value> brev exec ...` puts the literal value in the brev exec process's argv, which is visible in `ps -ef` on both the maintainer's laptop and the Brev box for the entire duration of the run. That violates the "never logged" promise. The correct pattern is file-based:
+**API-key propagation pattern (for option 1).** Argv exposure is a two-layer problem and the file-based pattern must extend to both layers.
+
+**Layer 1 — local → Brev (surfaced #2604).** Passing the key as `NVIDIA_API_KEY=<value> brev exec ...` puts the literal value in the brev exec process's argv on the maintainer's laptop *and* on the Brev box (since brev exec serializes argv to the remote shell). Visible in `ps -ef` on both ends for the duration of the run. Use file-based copy:
 
 ```bash
 # After Step 6.5 preconditions, copy the local key file to the Brev box.
 [ -f ~/.nvidia-api-key ] && brev copy ~/.nvidia-api-key "$INSTANCE_NAME":~/.nvidia-api-key
 brev exec "$INSTANCE_NAME" "chmod 600 ~/.nvidia-api-key 2>/dev/null || true"
-
-# In setup / reproducer scripts running on the Brev box, source the key from the file.
-if [ -f ~/.nvidia-api-key ]; then
-  export NVIDIA_API_KEY=$(cat ~/.nvidia-api-key)
-fi
-NEMOCLAW_PROVIDER=build NEMOCLAW_MODEL=<model> nemoclaw onboard ...
 ```
 
-Cleanup: when the trap fires `brev delete`, the box (and the key file on it) goes away. On the maintainer's laptop, the file persists until they `rm ~/.nvidia-api-key` — Step 12's session log should remind them. **If the key was previously propagated via cmdline (pre-fix), treat it as exposed and rotate.**
+**Layer 2 — on-box subshell (surfaced #2611).** Inside scripts running on the Brev box, the outer shell reads the key from `~/.nvidia-api-key` cleanly, but a *naive* inner subshell call leaks it back into argv:
+
+```bash
+# WRONG — the double-quoted outer heredoc interpolates $NVIDIA_API_KEY at
+# script-eval time, so the literal nvapi- value lands in `sg docker -c "..."`'s
+# argv and shows up in `ps -ef` on the box for the whole onboard window.
+NVIDIA_API_KEY=$(cat ~/.nvidia-api-key)
+sg docker -c "
+  export NVIDIA_API_KEY='$NVIDIA_API_KEY'   # ← argv leak
+  nemoclaw onboard ...
+"
+
+# RIGHT — escape the $ so the outer shell does not interpolate, and let the
+# inner subshell read the file itself. Argv contains the command string
+# `cat ~/.nvidia-api-key`, not the value.
+sg docker -c "
+  export NVIDIA_API_KEY=\$(cat ~/.nvidia-api-key)
+  nemoclaw onboard ...
+"
+```
+
+The same rule applies to any `bash -c "..."`, `bash -lc "..."`, `su -c "..."`, `ssh host "..."`, or other invocation that takes a command string as a single argv element: **never interpolate the key into the string at the outer shell's eval time**. Read the file inside the inner shell so the value lives in env-vars, never in argv.
+
+Cleanup: when the trap fires `brev delete`, the box (and the key file on it) goes away. On the maintainer's laptop, the file persists until they `rm ~/.nvidia-api-key` — Step 12's session log should remind them. **If the key was previously propagated via cmdline (pre-fix at either layer), treat it as exposed and rotate.**
 
 **Pure-CLI / pure-sandbox-build bugs are exempt** — those don't actually exercise inference, so the provider doesn't matter even if the issue body mentions one. Heuristic: if Step 6.7's local-first predicate would have fired (no sandbox state, no model server interaction), skip the prompt.
 
