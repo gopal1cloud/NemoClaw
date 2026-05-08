@@ -106,7 +106,7 @@ Run this check for every candidate that survived the label-based filters above; 
 **Unanswered-maintainer-question handling.** Find the most recent maintainer (`MEMBER`, `OWNER`, `COLLABORATOR`) comment that the reporter has not replied to since. The age of that comment determines whether the skill skips or proceeds, with a different comment shape if it proceeds:
 
 - **Within 7 days:** **skip the issue** — the discussion is active, the skill running on top would conflict with the maintainer's framing or confuse the reporter. Surfaced during pre-flight on #2757; running verify-stale on top of a fresh "let me clarify what you observed" question from @cjagwani would have stomped on that conversation.
-- **Older than 7 days:** **proceed with verification, but use the unanswered-question comment variant.** After 7 days the maintainer's question has either been forgotten or the reporter has dropped the ball; an independent skill verdict becomes the *unsticking voice* rather than a clueless interruption. The comment leads with "[@&lt;maint&gt;'s question from N days ago](url) is still unanswered" and @-mentions BOTH the maintainer and the reporter, not just the reporter.
+- **Older than 7 days:** **proceed with verification, but use the unanswered-question comment variant.** After 7 days the maintainer's question has either been forgotten or the reporter has dropped the ball; an independent skill verdict becomes the *unsticking voice* rather than a clueless interruption. The comment leads with a markdown link to the maintainer's unanswered comment (shape shown in the Step 10 template below) and @-mentions BOTH the maintainer and the reporter, not just the reporter.
 
 Reuse the `$SEVEN_DAYS_AGO` cutoff from the marker-TTL check above for portability — no cross-platform date math beyond what's already in scope.
 
@@ -154,11 +154,7 @@ if [ -n "$UNANSWERED_MAINT" ] && [ "$UNANSWERED_MAINT" != "null" ]; then
 fi
 ```
 
-When the unanswered-question variant fires (`UNANSWERED_MAINT_LOGIN` set), Step 10's comment template prepends a lead paragraph:
-
-> [@&lt;maint&gt;'s comment](url) from YYYY-MM-DD is still unanswered. Independent verification below.
-
-…and the closing @-mention block names BOTH the maintainer (acknowledging their question) and the reporter (asking for confirmation per the standard pattern), instead of just the reporter.
+When the unanswered-question variant fires (`UNANSWERED_MAINT_LOGIN` set), Step 10's comment template prepends a lead paragraph (exact shape lives with the templates in Step 10), and the closing @-mention block names BOTH the maintainer (acknowledging their question) and the reporter (asking for confirmation per the standard pattern), instead of just the reporter.
 
 **Candidate rule:** keep the issue if **either**:
 
@@ -1279,9 +1275,13 @@ The skill cannot independently confirm a closed-as-fixed verdict — only the re
 
 **Mandatory unanswered-question prefix and dual @-mention.** When Step 3 sets `UNANSWERED_MAINT_LOGIN` (a maintainer's question is older than 7 days and the reporter never replied), the verdict comment changes shape in two places:
 
-1. **Prepend a lead paragraph** as the very first line of the body, before the `## Stale-issue verification` heading:
+1. **Prepend a lead paragraph** as the very first line of the body, before the `## Stale-issue verification` heading. The lead paragraph is a single line:
 
-   > [@\<UNANSWERED_MAINT_LOGIN\>'s comment](\<UNANSWERED_MAINT_URL\>) from \<UNANSWERED_MAINT_DATE\> is still unanswered. Posting independent verification below to unstick the thread.
+   ```text
+   [@UNANSWERED_MAINT_LOGIN's comment](UNANSWERED_MAINT_URL) from UNANSWERED_MAINT_DATE is still unanswered. Posting independent verification below to unstick the thread.
+   ```
+
+   …with the bracketed variables expanded from the values exported by Step 3.
 
 2. **Replace the closing reporter-only @-mention with a dual @-mention** that names BOTH the maintainer (acknowledging the open question) and the reporter (per the standard confirmation pattern):
 
