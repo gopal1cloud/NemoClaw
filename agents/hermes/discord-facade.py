@@ -26,6 +26,7 @@ import shlex
 import shutil
 import signal
 import sys
+import time
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qsl, urlencode
@@ -43,6 +44,8 @@ DEFAULT_TOKEN_PLACEHOLDER = "openshell:resolve:env:DISCORD_BOT_TOKEN"
 DEFAULT_LISTEN_HOST = "127.0.0.1"
 DEFAULT_LISTEN_PORT = 3130
 DISCORD_API_ORIGIN = "https://discord.com"
+INTERACTION_TOKEN_TTL_SECONDS = 15 * 60
+MAX_INTERACTION_TOKENS = 1024
 APPLICATION_COMMANDS_RE = re.compile(r"^/api/v\d+/applications/(\d+)/commands/?$")
 APPLICATION_COMMAND_RE = re.compile(r"^/api/v\d+/applications/(\d+)/commands/(\d+)/?$")
 INTERACTION_CALLBACK_RE = re.compile(r"^/api/v\d+/interactions/(\d+)/([^/]+)/callback/?$")
@@ -133,7 +136,7 @@ class DiscordFacade:
             "313700000000000003",
         )
         self._peers: set[GatewayPeer] = set()
-        self._interaction_tokens: dict[str, str] = {}
+        self._interaction_tokens: dict[str, tuple[str, float]] = {}
         self._session: ClientSession | None = None
         self._poll_task: asyncio.Task[None] | None = None
         self._poll_interval = _env_float("NEMOCLAW_DISCORD_POLL_INTERVAL_SECONDS", 10)
@@ -640,7 +643,7 @@ class DiscordFacade:
         interaction_id: str,
         local_token: str,
     ) -> web.Response:
-        real_token = self._interaction_tokens.get(local_token)
+        real_token = self._resolve_interaction_token(local_token)
         if real_token is not None:
             path = f"/api/v10/interactions/{interaction_id}/{real_token}/callback"
             return await self._forward_rest(request, override_path=path)
@@ -652,7 +655,7 @@ class DiscordFacade:
         match: re.Match[str],
     ) -> web.Response:
         local_token = match.group(2)
-        real_token = self._interaction_tokens.get(local_token)
+        real_token = self._resolve_interaction_token(local_token)
         if real_token is None:
             return await self._forward_rest(request)
         suffix = match.group(3) or ""
@@ -679,9 +682,35 @@ class DiscordFacade:
         token = str(copied.get("token") or "")
         if token:
             local_token = f"nemoclaw-local-{secrets.token_urlsafe(24)}"
-            self._interaction_tokens[local_token] = token
+            self._store_interaction_token(local_token, token)
             copied["token"] = local_token
         return copied
+
+    def _store_interaction_token(self, local_token: str, real_token: str) -> None:
+        self._prune_interaction_tokens()
+        self._interaction_tokens[local_token] = (
+            real_token,
+            time.monotonic() + INTERACTION_TOKEN_TTL_SECONDS,
+        )
+        self._prune_interaction_tokens()
+
+    def _resolve_interaction_token(self, local_token: str) -> str | None:
+        self._prune_interaction_tokens()
+        entry = self._interaction_tokens.get(local_token)
+        if entry is None:
+            return None
+        return entry[0]
+
+    def _prune_interaction_tokens(self) -> None:
+        now = time.monotonic()
+        for local_token, (_real_token, expires_at) in list(self._interaction_tokens.items()):
+            if expires_at <= now:
+                self._interaction_tokens.pop(local_token, None)
+        overflow = len(self._interaction_tokens) - MAX_INTERACTION_TOKENS
+        if overflow > 0:
+            oldest = sorted(self._interaction_tokens.items(), key=lambda item: item[1][1])
+            for local_token, _entry in oldest[:overflow]:
+                self._interaction_tokens.pop(local_token, None)
 
     def _verify_signature(self, request: web.Request, body: bytes) -> bool:
         public_key = (self.public_key or "").strip()
@@ -826,7 +855,7 @@ async def _run_tunnel_command(
     public_url_file: str,
     *,
     local_url: str,
-) -> asyncio.subprocess.Process | None:
+) -> tuple[asyncio.subprocess.Process | None, asyncio.Task[None] | None]:
     command = os.getenv("NEMOCLAW_DISCORD_TUNNEL_COMMAND", "").strip()
     if not command and os.getenv("NEMOCLAW_DISCORD_ENABLE_TUNNEL", "").strip() == "1":
         cloudflared = shutil.which("cloudflared")
@@ -835,7 +864,7 @@ async def _run_tunnel_command(
         else:
             LOGGER.warning("Discord interactions tunnel requested but cloudflared is not installed")
     if not command:
-        return None
+        return None, None
     LOGGER.info("Starting sandbox-owned Discord interactions tunnel command")
     proc = await asyncio.create_subprocess_shell(
         command,
@@ -854,8 +883,18 @@ async def _run_tunnel_command(
                     handle.write(url + "\n")
                 LOGGER.info("Discord interactions tunnel URL discovered")
 
-    asyncio.create_task(_capture_url())
-    return proc
+    capture_task = asyncio.create_task(_capture_url())
+
+    def _log_capture_failure(task: asyncio.Task[None]) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            LOGGER.warning("Discord interactions tunnel URL capture failed: %s", exc)
+
+    capture_task.add_done_callback(_log_capture_failure)
+    return proc, capture_task
 
 
 async def main() -> None:
@@ -882,7 +921,7 @@ async def main() -> None:
     interactions_runner: web.AppRunner | None = None
     if public_base_url or _tunnel_requested():
         interactions_runner = await facade.start_public_interactions(interactions_host, interactions_port)
-    tunnel_proc = await _run_tunnel_command(
+    tunnel_proc, tunnel_capture_task = await _run_tunnel_command(
         public_url_file,
         local_url=f"http://{interactions_host}:{interactions_port}",
     )
@@ -913,6 +952,10 @@ async def main() -> None:
             await asyncio.wait_for(tunnel_proc.wait(), timeout=5)
         except asyncio.TimeoutError:
             tunnel_proc.kill()
+    if tunnel_capture_task is not None and not tunnel_capture_task.done():
+        tunnel_capture_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await tunnel_capture_task
 
 
 if __name__ == "__main__":

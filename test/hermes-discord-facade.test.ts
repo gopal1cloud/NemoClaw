@@ -325,7 +325,10 @@ assert facade._verify_signature(FakeRequest(), body) is False
 localized = facade._localize_interaction_token(json.loads(body))
 assert localized["token"].startswith("nemoclaw-local-")
 assert "real-interaction-token" not in json.dumps(localized)
-assert facade._interaction_tokens[localized["token"]] == "real-interaction-token"
+assert facade._interaction_tokens[localized["token"]][0] == "real-interaction-token"
+facade._interaction_tokens["expired-token"] = ("stale", 0.0)
+facade._prune_interaction_tokens()
+assert "expired-token" not in facade._interaction_tokens
 `);
 
     expect(result.status, result.stderr || result.stdout).toBe(0);
@@ -382,7 +385,7 @@ async def main():
     )
     session = ForwardSession()
     facade._session = session
-    facade._interaction_tokens["nemoclaw-local-token"] = "real-interaction-token"
+    facade._store_interaction_token("nemoclaw-local-token", "real-interaction-token")
     response = await facade._handle_interaction_callback(FakeRequest(), "42", "nemoclaw-local-token")
     assert response.status == 204
     assert len(session.calls) == 1
