@@ -8984,29 +8984,39 @@ function findAvailableDashboardPort(
   isPortBoundCheck: (port: number) => boolean = isPortBoundOnHost,
 ): number {
   const occupied = getOccupiedPorts(forwardListOutput);
-  const preferredStr = String(preferredPort);
-  const owner = occupied.get(preferredStr) ?? null;
-  // If this sandbox already owns the forward, keep it.
-  if (owner === sandboxName) return preferredPort;
-  // If no forward claims the port, also check the host so we don't collide
-  // with non-OpenShell processes.
-  if (owner === null && !isPortBoundCheck(preferredPort)) return preferredPort;
-
-  for (let p = DASHBOARD_PORT_RANGE_START; p <= DASHBOARD_PORT_RANGE_END; p++) {
+  const hostBoundPorts: number[] = [];
+  // Try the preferred port first (it may be outside the dashboard range when
+  // a caller passes --control-ui-port), then the rest of the range. Each port
+  // is probed at most once so we don't pay for `lsof` + `sudo lsof` + Node
+  // bind multiple times per port.
+  const portsToScan = [
+    preferredPort,
+    ...Array.from(
+      { length: DASHBOARD_PORT_RANGE_END - DASHBOARD_PORT_RANGE_START + 1 },
+      (_, i) => DASHBOARD_PORT_RANGE_START + i,
+    ).filter((p) => p !== preferredPort),
+  ];
+  for (const p of portsToScan) {
     const pStr = String(p);
     const pOwner = occupied.get(pStr) ?? null;
     if (pOwner === sandboxName) return p;
-    if (pOwner === null && !isPortBoundCheck(p)) return p;
+    if (pOwner === null) {
+      if (!isPortBoundCheck(p)) return p;
+      hostBoundPorts.push(p);
+    }
   }
 
-  const owners = [...occupied.entries()]
+  const ownerLines = [...occupied.entries()]
     .filter(
       ([p]) => Number(p) >= DASHBOARD_PORT_RANGE_START && Number(p) <= DASHBOARD_PORT_RANGE_END,
     )
-    .map(([p, s]) => `  ${p} → ${s}`)
-    .join("\n");
+    .map(([p, s]) => `  ${p} → ${s}`);
+  const hostLines = hostBoundPorts
+    .filter((p) => p >= DASHBOARD_PORT_RANGE_START && p <= DASHBOARD_PORT_RANGE_END)
+    .map((p) => `  ${p} → non-OpenShell host listener`);
+  const lines = [...ownerLines, ...hostLines].join("\n");
   throw new Error(
-    `All dashboard ports in range ${DASHBOARD_PORT_RANGE_START}-${DASHBOARD_PORT_RANGE_END} are occupied:\n${owners}\n` +
+    `All dashboard ports in range ${DASHBOARD_PORT_RANGE_START}-${DASHBOARD_PORT_RANGE_END} are occupied:\n${lines}\n` +
       `Free a sandbox or use --control-ui-port <N> with a port outside this range.`,
   );
 }
@@ -9098,11 +9108,17 @@ function ensureDashboardForward(
   parsedUrl.port = String(actualPort);
   const actualTarget = getDashboardForwardTarget(parsedUrl.toString());
   runOpenshell(["forward", "stop", String(actualPort)], { ignoreError: true });
-  const fwdResult = runOpenshell(["forward", "start", "--background", actualTarget, sandboxName], {
-    ignoreError: true,
-    stdio: ["ignore", "ignore", "ignore"],
-  });
+  const fwdResult = runOpenshell(
+    ["forward", "start", "--background", actualTarget, sandboxName],
+    { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+  );
   if (fwdResult && fwdResult.status !== 0) {
+    const fwdDiagnostic = compactText(
+      redact(`${fwdResult.stderr || ""} ${fwdResult.stdout || ""}`),
+    );
+    const looksLikePortConflict =
+      fwdDiagnostic === "" ||
+      /eaddrinuse|address already in use|port .* in use|bind: .*in use/i.test(fwdDiagnostic);
     if (rollbackSandboxOnFailure) {
       // The sandbox was just created, committed to actualPort via its
       // baked-in CHAT_UI_URL and NEMOCLAW_DASHBOARD_PORT env. Silently
@@ -9111,11 +9127,16 @@ function ensureDashboardForward(
       // proactive probe in findAvailableDashboardPort missed the
       // conflict (e.g., another listener bound during the multi-minute
       // image build). Roll back so the next `onboard` retry's allocator
-      // observes the bound port and picks a different one (#3260).
+      // observes the bound port and picks a different one. Only the
+      // EADDRINUSE-style failure gets the port-conflict wording; other
+      // errors (gateway / transport) propagate the real diagnostic so
+      // users aren't pointed at the wrong fix (#3260).
       const err = new Error(
-        `Failed to start dashboard forward on port ${actualPort} — the host port ` +
-          `is held by another process. Free it and run \`${cliName()} onboard\` again, ` +
-          `or pass \`--control-ui-port <N>\` to pick a different dashboard port.`,
+        looksLikePortConflict
+          ? `Failed to start dashboard forward on port ${actualPort} — the host port ` +
+              `is held by another process. Free it and run \`${cliName()} onboard\` again, ` +
+              `or pass \`--control-ui-port <N>\` to pick a different dashboard port.`
+          : `Failed to start dashboard forward on port ${actualPort}: ${fwdDiagnostic.slice(0, 240)}`,
       );
       const delResult = runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
       for (const line of buildOrphanedSandboxRollbackMessage(
@@ -9127,13 +9148,18 @@ function ensureDashboardForward(
       }
       process.exit(1);
     }
-    console.warn(
-      `! Port ${actualPort} forward did not start — port may be in use by another process.`,
-    );
-    console.warn(
-      `  Check: docker ps --format 'table {{.Names}}\\t{{.Ports}}' | grep ${actualPort}`,
-    );
-    console.warn(`  Free the port, then reconnect: ${cliName()} ${sandboxName} connect`);
+    if (looksLikePortConflict) {
+      console.warn(
+        `! Port ${actualPort} forward did not start — port may be in use by another process.`,
+      );
+      console.warn(
+        `  Check: docker ps --format 'table {{.Names}}\\t{{.Ports}}' | grep ${actualPort}`,
+      );
+      console.warn(`  Free the port, then reconnect: ${cliName()} ${sandboxName} connect`);
+    } else {
+      console.warn(`! Port ${actualPort} forward did not start: ${fwdDiagnostic.slice(0, 240)}`);
+      console.warn(`  Reconnect after resolving the issue: ${cliName()} ${sandboxName} connect`);
+    }
   }
   return actualPort;
 }

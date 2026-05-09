@@ -8715,6 +8715,33 @@ const { createSandbox } = require(${onboardPath});
         /All dashboard ports in range 18789-18799 are occupied/,
       );
     });
+
+    it("includes host-bound ports in the exhaustion error so users know what's blocking them", () => {
+      // When every candidate is skipped by isPortBoundCheck rather than by
+      // an OpenShell forward, the error must still surface which ports are
+      // bound — otherwise users see "all ports are occupied" with an empty
+      // owner list and no remediation hint (CodeRabbit catch on #3260).
+      const allBound = new Set<number>();
+      for (let p = 18789; p <= 18799; p++) allBound.add(p);
+      assert.throws(
+        () => findAvailableDashboardPort("cursor", 18789, "", (p) => allBound.has(p)),
+        /18789 → non-OpenShell host listener[\s\S]*18799 → non-OpenShell host listener/,
+      );
+    });
+
+    it("probes each port at most once even when the preferred port is in the range", () => {
+      // Avoid re-probing the same port via the proactive lsof + sudo lsof +
+      // Node bind chain — those are subprocess-spawning probes and the call
+      // count matters.
+      const calls: number[] = [];
+      const stub = (p: number) => {
+        calls.push(p);
+        return false;
+      };
+      findAvailableDashboardPort("cursor", 18789, "", stub);
+      assert.equal(calls.length, 1, `expected 1 probe call, got ${calls.length}`);
+      assert.equal(calls[0], 18789);
+    });
   });
 
   it("isPortBoundOnHost has a layered probe chain — lsof, sudo lsof, Node bind (#3260)", () => {
@@ -8741,13 +8768,17 @@ const { createSandbox } = require(${onboardPath});
     // (Dockerfile ARG + NEMOCLAW_DASHBOARD_PORT env). If `openshell forward
     // start` fails after the build (TOCTOU race), we must not silently
     // return a broken port — roll back the sandbox so the next onboard
-    // can pick a different port.
+    // can pick a different port. The rollback must classify the failure
+    // (port conflict vs other) so users aren't pointed at the wrong fix.
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
     assert.match(source, /if \(fwdResult && fwdResult\.status !== 0\)/);
     assert.match(source, /if \(rollbackSandboxOnFailure\)/);
+    assert.match(source, /const looksLikePortConflict =/);
+    assert.match(source, /eaddrinuse\|address already in use/i);
+    assert.match(source, /suppressOutput: true/);
     assert.match(
       source,
       /runOpenshell\(\["sandbox", "delete", sandboxName\], \{ ignoreError: true \}\)/,
