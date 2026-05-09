@@ -185,6 +185,9 @@ It verifies that Docker is reachable, warns on untested runtimes such as Podman,
 The preflight also enforces the OpenShell version range declared in the blueprint (`min_openshell_version` and `max_openshell_version`).
 If the installed OpenShell version falls outside this range, onboarding exits with an actionable error and a link to compatible releases.
 
+When an existing gateway is detected for reuse, NemoClaw probes the host gateway HTTP endpoint (`http://127.0.0.1:${NEMOCLAW_GATEWAY_PORT}/`) before declaring it reusable, so a gateway whose container is running but whose upstream is still warming up (e.g. immediately after a Docker daemon restart) is rebuilt instead of trusted.
+Tune the wait via `NEMOCLAW_REUSE_HEALTH_POLL_COUNT` (default `6`) and `NEMOCLAW_REUSE_HEALTH_POLL_INTERVAL` (default `5` seconds).
+
 #### `--from <Dockerfile>`
 
 Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
