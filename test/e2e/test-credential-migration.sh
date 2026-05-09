@@ -267,7 +267,7 @@ ln -s "$VICTIM_FILE" "$LEGACY_FILE"
 # Drive removeLegacyCredentialsFile() directly via a tiny node one-liner.
 # Using the compiled module from dist/ matches what the CLI imports.
 node -e "
-const { removeLegacyCredentialsFile } = require('${REPO}/dist/lib/credentials.js');
+const { removeLegacyCredentialsFile } = require('${REPO}/dist/lib/credentials/store.js');
 removeLegacyCredentialsFile();
 " >/dev/null 2>&1 || {
   fail "node invocation of removeLegacyCredentialsFile failed"

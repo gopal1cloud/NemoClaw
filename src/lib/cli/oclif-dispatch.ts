@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { sandboxCommands } from "../command-registry";
+import { sandboxCommands } from "./command-registry";
 
 export type OclifDispatch = {
   kind: "oclif";
@@ -100,6 +100,7 @@ const GLOBAL_ROUTES: Readonly<Record<string, string>> = {
   status: "status",
   debug: "debug",
   uninstall: "uninstall",
+  update: "update",
   list: "list",
   "backup-all": "backup-all",
   "upgrade-sandboxes": "upgrade-sandboxes",
