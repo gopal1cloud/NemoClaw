@@ -57,6 +57,12 @@ type OnboardTestInternals = {
     options?: { webSearchSupported?: boolean | null },
   ) => T[];
   formatEnvAssignment: (name: string, value: string) => string;
+  findAvailableDashboardPort: (
+    sandboxName: string,
+    preferredPort: number,
+    forwardListOutput: string | null,
+    isPortBoundCheck?: (port: number) => boolean,
+  ) => number;
   findDashboardForwardOwner: (
     forwardListOutput: string | null | undefined,
     portToStop: string,
@@ -151,6 +157,7 @@ function isOnboardTestInternals(
     typeof value.buildCompatibleEndpointSandboxSmokeScript === "function" &&
     typeof value.buildSandboxConfigSyncScript === "function" &&
     typeof value.classifySandboxCreateFailure === "function" &&
+    typeof value.findAvailableDashboardPort === "function" &&
     typeof value.hasChatCompletionsToolCall === "function" &&
     typeof value.hasChatCompletionsToolCallLeak === "function" &&
     typeof value.filterSetupPolicyPresets === "function" &&
@@ -228,6 +235,7 @@ const {
   shouldIncludeBuildContextPath,
   shouldRunCompatibleEndpointSandboxSmoke,
   writeSandboxConfigSyncFile,
+  findAvailableDashboardPort,
   findDashboardForwardOwner,
   formatOnboardConfigSummary,
   formatSandboxBuildEstimateNote,
@@ -8649,6 +8657,102 @@ const { createSandbox } = require(${onboardPath});
       source,
       /findAvailableDashboardPort\(sandboxName, preferredPort, existingForwards\)/,
     );
+  });
+
+  describe("findAvailableDashboardPort port-conflict detection (#3260)", () => {
+    const stubBound = (...bound: number[]) => {
+      const set = new Set(bound);
+      return (port: number) => set.has(port);
+    };
+
+    it("returns the preferred port when no forward owns it and the host says it is free", () => {
+      assert.equal(
+        findAvailableDashboardPort("cursor", 18789, "", stubBound()),
+        18789,
+      );
+    });
+
+    it("skips the preferred port when host reports it bound and falls through to the range scan", () => {
+      // The proactive probe in isPortBoundOnHost can now see root-owned
+      // listeners (sudo lsof) and Node-bind-failure listeners that the
+      // bare lsof missed; the allocator must skip those ports just as it
+      // skips ports owned by other forwards.
+      assert.equal(
+        findAvailableDashboardPort("cursor", 18789, "", stubBound(18789)),
+        18790,
+      );
+    });
+
+    it("skips ports owned by other sandboxes and host-bound ports together", () => {
+      const forwardList = [
+        "SANDBOX  BIND  PORT  PID  STATUS",
+        "alpha    127.0.0.1  18789  111  running",
+      ].join("\n");
+      assert.equal(
+        findAvailableDashboardPort("cursor", 18789, forwardList, stubBound(18790)),
+        18791,
+      );
+    });
+
+    it("returns the preferred port when this sandbox already owns it", () => {
+      const forwardList = [
+        "SANDBOX  BIND  PORT  PID  STATUS",
+        "cursor   127.0.0.1  18789  111  running",
+      ].join("\n");
+      assert.equal(
+        findAvailableDashboardPort("cursor", 18789, forwardList, stubBound(18789)),
+        18789,
+      );
+    });
+
+    it("throws when every port in the range is occupied by other sandboxes", () => {
+      const lines = ["SANDBOX  BIND  PORT  PID  STATUS"];
+      for (let p = 18789; p <= 18799; p++) {
+        lines.push(`other${p}    127.0.0.1  ${p}  ${p}  running`);
+      }
+      assert.throws(
+        () => findAvailableDashboardPort("cursor", 18789, lines.join("\n"), stubBound()),
+        /All dashboard ports in range 18789-18799 are occupied/,
+      );
+    });
+  });
+
+  it("isPortBoundOnHost has a layered probe chain — lsof, sudo lsof, Node bind (#3260)", () => {
+    // Source-shape guard for the strengthened detection chain. Behavioural
+    // testing of the real probes spawns subprocesses and is covered by
+    // higher-level tests; this assertion just keeps the chain in place
+    // when the function is refactored.
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    assert.match(source, /function isPortBoundOnHost/);
+    assert.match(source, /\["lsof", "-i", `:\$\{port\}`, "-sTCP:LISTEN", "-P", "-n"\]/);
+    assert.match(
+      source,
+      /\["sudo", "-n", "lsof", "-i", `:\$\{port\}`, "-sTCP:LISTEN", "-P", "-n"\]/,
+    );
+    assert.match(source, /function probePortBoundSync/);
+    assert.match(source, /EADDRINUSE/);
+  });
+
+  it("ensureDashboardForward rolls back when forward-start fails on the create path (#3260)", () => {
+    // The sandbox is committed to its dashboard port at create time
+    // (Dockerfile ARG + NEMOCLAW_DASHBOARD_PORT env). If `openshell forward
+    // start` fails after the build (TOCTOU race), we must not silently
+    // return a broken port — roll back the sandbox so the next onboard
+    // can pick a different port.
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    assert.match(source, /if \(fwdResult && fwdResult\.status !== 0\)/);
+    assert.match(source, /if \(rollbackSandboxOnFailure\)/);
+    assert.match(
+      source,
+      /runOpenshell\(\["sandbox", "delete", sandboxName\], \{ ignoreError: true \}\)/,
+    );
+    assert.match(source, /buildOrphanedSandboxRollbackMessage/);
   });
 
   it("formatOnboardConfigSummary renders all collected fields (#2165)", () => {

@@ -8898,15 +8898,67 @@ function getOccupiedPorts(forwardListOutput: string | null): Map<string, string>
 }
 
 /**
- * Quick synchronous check whether a TCP port has an active listener on the host.
- * Uses lsof when available; returns false (optimistic) if lsof is missing.
+ * Synchronous check whether a TCP port has an active listener on the host.
+ *
+ * Detection chain — any positive signal short-circuits:
+ *   1. `lsof` — finds listeners owned by the current user.
+ *   2. `sudo -n lsof` — catches root-owned listeners (e.g., docker-proxy on
+ *      macOS) that the unprivileged lsof can't see. Silently no-ops when
+ *      the user can't escalate non-interactively.
+ *   3. Node `net` bind probe — authoritative fallback when both lsof
+ *      invocations come up empty, mirroring what `openshell forward start`
+ *      will actually attempt.
+ *
+ * Returns false (optimistic) when every probe is inconclusive — the
+ * downstream forward-start check is the final authority (#3260).
  */
 function isPortBoundOnHost(port: number): boolean {
   try {
     const out = runCapture(["lsof", "-i", `:${port}`, "-sTCP:LISTEN", "-P", "-n"], {
       ignoreError: true,
     });
-    return !!out && out.trim().length > 0;
+    if (out && out.trim().length > 0) return true;
+  } catch {
+    /* fall through to the next probe */
+  }
+
+  try {
+    const sudoOut = runCapture(
+      ["sudo", "-n", "lsof", "-i", `:${port}`, "-sTCP:LISTEN", "-P", "-n"],
+      { ignoreError: true },
+    );
+    if (sudoOut && sudoOut.trim().length > 0) return true;
+  } catch {
+    /* fall through to the bind probe */
+  }
+
+  return probePortBoundSync(port);
+}
+
+/**
+ * Synchronous Node `net` bind probe — tries to listen on the port and
+ * reports whether the bind would have failed with EADDRINUSE. Spawned via
+ * spawnSync of `node -e` because `findAvailableDashboardPort` runs deep in
+ * a sync allocation flow and `net.createServer().listen()` is async.
+ *
+ * Exit codes: 0 = bind succeeded (port free); 1 = EADDRINUSE; anything
+ * else = inconclusive (treated as free for safety — the forward-start
+ * check is authoritative).
+ */
+function probePortBoundSync(port: number): boolean {
+  try {
+    const script =
+      "const net = require('node:net');" +
+      "const srv = net.createServer();" +
+      "let done = false;" +
+      "const exit = (code) => { if (!done) { done = true; process.exit(code); } };" +
+      "srv.once('error', (e) => exit(e && e.code === 'EADDRINUSE' ? 1 : 2));" +
+      `srv.listen(${port}, '127.0.0.1', () => srv.close(() => exit(0)));`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      stdio: "ignore",
+      timeout: 2_000,
+    });
+    return result.status === 1;
   } catch {
     return false;
   }
@@ -8916,14 +8968,20 @@ function isPortBoundOnHost(port: number): boolean {
  * Find the next available dashboard port for the given sandbox.
  * Returns the preferred port if free or already owned by this sandbox,
  * otherwise scans DASHBOARD_PORT_RANGE_START..END for a free port.
- * Validates host-port availability (via lsof) so ports bound by
- * non-OpenShell processes are skipped.
+ * Validates host-port availability (via the proactive probe chain in
+ * isPortBoundOnHost) so ports bound by non-OpenShell processes are
+ * skipped (#3260).
  * Throws if the entire range is exhausted.
+ *
+ * `isPortBoundCheck` is an injectable seam for tests so they don't have
+ * to spawn real lsof / Node probes; production callers leave it at the
+ * default.
  */
 function findAvailableDashboardPort(
   sandboxName: string,
   preferredPort: number,
   forwardListOutput: string | null,
+  isPortBoundCheck: (port: number) => boolean = isPortBoundOnHost,
 ): number {
   const occupied = getOccupiedPorts(forwardListOutput);
   const preferredStr = String(preferredPort);
@@ -8932,13 +8990,13 @@ function findAvailableDashboardPort(
   if (owner === sandboxName) return preferredPort;
   // If no forward claims the port, also check the host so we don't collide
   // with non-OpenShell processes.
-  if (owner === null && !isPortBoundOnHost(preferredPort)) return preferredPort;
+  if (owner === null && !isPortBoundCheck(preferredPort)) return preferredPort;
 
   for (let p = DASHBOARD_PORT_RANGE_START; p <= DASHBOARD_PORT_RANGE_END; p++) {
     const pStr = String(p);
     const pOwner = occupied.get(pStr) ?? null;
     if (pOwner === sandboxName) return p;
-    if (pOwner === null && !isPortBoundOnHost(p)) return p;
+    if (pOwner === null && !isPortBoundCheck(p)) return p;
   }
 
   const owners = [...occupied.entries()]
@@ -9045,6 +9103,30 @@ function ensureDashboardForward(
     stdio: ["ignore", "ignore", "ignore"],
   });
   if (fwdResult && fwdResult.status !== 0) {
+    if (rollbackSandboxOnFailure) {
+      // The sandbox was just created, committed to actualPort via its
+      // baked-in CHAT_UI_URL and NEMOCLAW_DASHBOARD_PORT env. Silently
+      // returning here leaves the user with a dashboard URL that points
+      // at a port held by another process — a TOCTOU race where the
+      // proactive probe in findAvailableDashboardPort missed the
+      // conflict (e.g., another listener bound during the multi-minute
+      // image build). Roll back so the next `onboard` retry's allocator
+      // observes the bound port and picks a different one (#3260).
+      const err = new Error(
+        `Failed to start dashboard forward on port ${actualPort} — the host port ` +
+          `is held by another process. Free it and run \`${cliName()} onboard\` again, ` +
+          `or pass \`--control-ui-port <N>\` to pick a different dashboard port.`,
+      );
+      const delResult = runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
+      for (const line of buildOrphanedSandboxRollbackMessage(
+        sandboxName,
+        err,
+        delResult.status === 0,
+      )) {
+        console.error(line);
+      }
+      process.exit(1);
+    }
     console.warn(
       `! Port ${actualPort} forward did not start — port may be in use by another process.`,
     );
@@ -10491,6 +10573,7 @@ module.exports = {
   buildControlUiUrls,
 
   startGateway,
+  findAvailableDashboardPort,
   findDashboardForwardOwner,
   startGatewayForRecovery,
   openshellArgv,
