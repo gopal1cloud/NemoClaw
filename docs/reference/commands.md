@@ -643,6 +643,28 @@ If an archive command reports partial output while still producing usable data, 
 If any required state path still cannot be backed up, `rebuild` exits before destroying the original sandbox.
 After restore, the command runs `openclaw doctor --fix` for cross-version structure repair.
 
+### `nemoclaw update`
+
+Check for a NemoClaw CLI update and, when requested, run the maintained installer flow.
+This command is a discoverable CLI wrapper around the supported installer path:
+
+```console
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+```console
+$ nemoclaw update [--check] [--yes|-y]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--check` | Show the current version, latest maintained version, install type, and maintained update command without changing anything |
+| `--yes`, `-y` | Skip the confirmation prompt and run the maintained installer flow |
+
+`nemoclaw update` updates the host-side NemoClaw installation.
+It does not replace `nemoclaw upgrade-sandboxes`; use that command to inspect or rebuild existing sandboxes after the CLI has been updated.
+When the command is running from a source checkout, it reports that state and does not replace the checkout with a global package install.
+
 ### `nemoclaw upgrade-sandboxes`
 
 Rebuild sandboxes whose base image is older than the one currently pinned by NemoClaw.
