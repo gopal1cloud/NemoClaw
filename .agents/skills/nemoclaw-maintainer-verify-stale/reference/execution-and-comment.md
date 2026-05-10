@@ -392,6 +392,37 @@ case "$RESOLVED" in
   *) echo "WARN: latest install resolved to '$RESOLVED' (expected match for $LATEST). Proceeding but flag in comment." ;;
 esac
 
+# OpenShell version pin — surfaced from #1642's e2e run. Latest's blueprint.yaml may set
+# `max_openshell_version` below what the OpenShell installer would otherwise grab. The
+# baseline phase (Step 8a) installed whichever OpenShell was current at reported-version,
+# which can be newer than latest's cap (e.g., reported v0.0.6 → installed openshell 0.0.37,
+# latest v0.0.38 caps at 0.0.36, onboard preflight refuses to run). Re-pin from latest's
+# repo so onboard preflight passes; if the new pin is OLDER than the installed binary,
+# install-openshell.sh refuses the downgrade — fall back to direct GitHub download.
+brev exec "$INSTANCE_NAME" '
+  set -e
+  cd ~/NemoClaw
+  git fetch --depth 1 origin tag "'"$LATEST"'" 2>&1 | tail -2
+  git checkout -- . 2>/dev/null || true
+  git checkout "'"$LATEST"'" 2>&1 | tail -2
+
+  MAX_OS=$(grep -E "^max_openshell_version:" nemoclaw-blueprint/blueprint.yaml 2>/dev/null | awk "{print \$2}" | tr -d "\"" | tr -d "v")
+  CUR_OS=$(openshell --version 2>&1 | grep -oE "[0-9]+\.[0-9]+\.[0-9]+" | head -1 || echo 0.0.0)
+  echo "[verify-stale] openshell pin: blueprint max=$MAX_OS, currently installed=$CUR_OS"
+
+  if [ -n "$MAX_OS" ] && [ "$(printf "%s\n%s\n" "$CUR_OS" "$MAX_OS" | sort -V | tail -1)" != "$MAX_OS" ]; then
+    echo "[verify-stale] currently installed openshell ($CUR_OS) is newer than blueprint cap ($MAX_OS) — force-downgrading"
+    sudo rm -f /usr/local/bin/openshell
+    cd /tmp
+    curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/download/v$MAX_OS/openshell-x86_64-unknown-linux-musl.tar.gz" -o openshell-pin.tar.gz
+    tar -xzf openshell-pin.tar.gz
+    sudo install -m 755 ./openshell /usr/local/bin/openshell
+    openshell --version
+  else
+    sudo bash scripts/install-openshell.sh 2>&1 | tail -3
+  fi
+'
+
 brev copy ./reproducer.sh "$INSTANCE_NAME":~/reproducer.sh
 # Same PATH safeguard as the baseline call — non-login shells don't pick up ~/.local/bin
 # automatically. The reproducer's internal `sg docker -c '...'` blocks cover Docker access.

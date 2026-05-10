@@ -103,21 +103,20 @@ fi
 
 Run this check for every candidate that survived the label-based filters above; drop those whose `RECENT_MARKER` is non-empty.
 
-**Unanswered-maintainer-question handling.** Find the most recent maintainer (`MEMBER`, `OWNER`, `COLLABORATOR`) comment that the reporter has not replied to since. The age of that comment determines whether the skill skips or proceeds, with a different comment shape if it proceeds:
+**Unanswered-maintainer-question handling.** Find the most recent maintainer (`MEMBER`, `OWNER`, `COLLABORATOR`) comment that **looks like a question** (`?`, polite imperative like "please confirm/share/clarify", or starter like "could you / can you / do you") AND that the reporter has not replied to since. Pure triage acknowledgments (`"✨ Thanks for reporting…"`) are skipped. The age of the qualifying comment determines skip-or-proceed:
 
 - **Within 7 days:** **skip the issue** — the discussion is active, the skill running on top would conflict with the maintainer's framing or confuse the reporter. Surfaced during pre-flight on #2757; running verify-stale on top of a fresh "let me clarify what you observed" question from @cjagwani would have stomped on that conversation.
-- **Older than 7 days:** **proceed with verification, but use the unanswered-question comment variant.** After 7 days the maintainer's question has either been forgotten or the reporter has dropped the ball; an independent skill verdict becomes the *unsticking voice* rather than a clueless interruption. The comment leads with a markdown link to the maintainer's unanswered comment (shape shown in the Step 10 template below) and @-mentions BOTH the maintainer and the reporter, not just the reporter.
-
-Reuse the `$SEVEN_DAYS_AGO` cutoff from the marker-TTL check above for portability — no cross-platform date math beyond what's already in scope.
+- **Older than 7 days:** **proceed with verification, but use the unanswered-question comment variant.** After 7 days the maintainer's question has either been forgotten or the reporter has dropped the ball; an independent skill verdict becomes the *unsticking voice* rather than a clueless interruption. The comment leads with a markdown link to the maintainer's unanswered comment (shape shown in the Step 10 template below) and @-mentions BOTH the maintainer and the reporter, not just the reporter. Reuse `$SEVEN_DAYS_AGO` from the marker-TTL check above.
 
 ```bash
 REPORTER=$(gh issue view "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --json author --jq .author.login)
 
-# Most recent unanswered maintainer comment, with age-relative-to-cutoff classification.
+# Most recent unanswered maintainer comment that looks like a question — filters out triage acknowledgments (#1642 surfaced this).
 UNANSWERED_MAINT=$(gh issue view "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --json comments \
   --jq --arg reporter "$REPORTER" --arg cutoff "$SEVEN_DAYS_AGO" '
     (.comments
-     | map(select(.authorAssociation == "MEMBER" or .authorAssociation == "OWNER" or .authorAssociation == "COLLABORATOR"))
+     | map(select((.authorAssociation == "MEMBER" or .authorAssociation == "OWNER" or .authorAssociation == "COLLABORATOR")
+         and (.body | test("\\?|(?i)\\bplease (confirm|share|provide|clarify|tell|verify|check|let me know|let us know)|(?i)\\b(could|can|would) you\\b|(?i)\\bdo you (have|know|see|use)\\b"))))
      | sort_by(.createdAt) | last) as $maint
     | if $maint == null then null
       else
