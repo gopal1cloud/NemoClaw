@@ -47,7 +47,7 @@ const K3S_CONTAINER = "openshell-cluster-nemoclaw";
 // to read/write that agent's config from the host.
 // ---------------------------------------------------------------------------
 
-interface AgentConfigTarget {
+export interface AgentConfigTarget {
   /** Agent name (e.g. "openclaw", "hermes") */
   agentName: string;
   /** Absolute path inside sandbox to the config file */
@@ -313,6 +313,10 @@ function serializeConfig(config: ConfigObject, format: string): string {
   return JSON.stringify(config, null, 2);
 }
 
+function shellQuote(value: string): string {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
 /**
  * Parse a CLI-provided config value as JSON when possible, otherwise keep it
  * as a string literal.
@@ -357,6 +361,97 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Conf
     console.error(`  Failed to parse ${target.agentName} config: ${message}`);
     process.exit(1);
   }
+}
+
+function writeSandboxConfig(
+  sandboxName: string,
+  target: AgentConfigTarget,
+  config: ConfigObject,
+): void {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-"));
+  const tmpFile = path.join(tmpDir, target.configFile);
+  try {
+    fs.writeFileSync(tmpFile, serializeConfig(config, target.format), { mode: 0o600 });
+
+    const content = fs.readFileSync(tmpFile, "utf-8");
+    dockerExecFileSync(
+      [
+        "exec",
+        "-i",
+        K3S_CONTAINER,
+        "kubectl",
+        "exec",
+        "-n",
+        "openshell",
+        sandboxName,
+        "-c",
+        "agent",
+        "-i",
+        "--",
+        "sh",
+        "-c",
+        `cat > ${shellQuote(target.configPath)}`,
+      ],
+      { input: content, stdio: ["pipe", "pipe", "pipe"], timeout: 15000 },
+    );
+
+    try {
+      dockerExecFileSync(
+        [
+          "exec",
+          K3S_CONTAINER,
+          "kubectl",
+          "exec",
+          "-n",
+          "openshell",
+          sandboxName,
+          "-c",
+          "agent",
+          "--",
+          "chown",
+          "sandbox:sandbox",
+          target.configPath,
+        ],
+        { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
+      );
+    } catch {
+      // Best effort — chown failure is non-fatal.
+    }
+  } finally {
+    try {
+      fs.unlinkSync(tmpFile);
+      fs.rmdirSync(tmpDir);
+    } catch {
+      // Best effort.
+    }
+  }
+}
+
+function recomputeSandboxConfigHash(sandboxName: string, target: AgentConfigTarget): void {
+  if (!target.sensitiveFiles?.includes(`${target.configDir}/.config-hash`)) return;
+  dockerExecFileSync(
+    [
+      "exec",
+      K3S_CONTAINER,
+      "kubectl",
+      "exec",
+      "-n",
+      "openshell",
+      sandboxName,
+      "-c",
+      "agent",
+      "--",
+      "sh",
+      "-c",
+      [
+        `cd ${shellQuote(target.configDir)}`,
+        `sha256sum ${shellQuote(target.configFile)} > .config-hash`,
+        "(chown sandbox:sandbox .config-hash 2>/dev/null || true)",
+        "(chmod 660 .config-hash 2>/dev/null || true)",
+      ].join(" && "),
+    ],
+    { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -992,6 +1087,8 @@ export {
   parseConfigGetArgs,
   resolveAgentConfig,
   readSandboxConfig,
+  writeSandboxConfig,
+  recomputeSandboxConfigHash,
   extractDotpath,
   setDotpath,
   validateConfigDotpath,

@@ -74,34 +74,53 @@ describe("agent identity reconciliation with provider (#3175)", () => {
         providers: {
           inference: {
             api: "openai-completions",
-            models: [{ id: "inference/new-model", name: "inference/new-model" }],
+            models: [{ id: "nvidia/new-model", name: "inference/nvidia/new-model" }],
           },
         },
       },
     });
 
     expect(result.status).toBe(0);
-    expect(config.agents.defaults.model.primary).toBe("inference/new-model");
+    expect(config.agents.defaults.model.primary).toBe("inference/nvidia/new-model");
     expect(hash).not.toBe("oldhash\n");
     expect(hash).toContain("openclaw.json");
   });
 
   it("is a no-op when primary already matches the provider's model", () => {
     const { result, config, hash } = runReconcile({
-      agents: { defaults: { model: { primary: "inference/same-model" } } },
+      agents: { defaults: { model: { primary: "inference/nvidia/same-model" } } },
       models: {
         providers: {
           inference: {
             api: "openai-completions",
-            models: [{ id: "inference/same-model", name: "inference/same-model" }],
+            models: [{ id: "nvidia/same-model", name: "inference/nvidia/same-model" }],
           },
         },
       },
     });
 
     expect(result.status).toBe(0);
-    expect(config.agents.defaults.model.primary).toBe("inference/same-model");
+    expect(config.agents.defaults.model.primary).toBe("inference/nvidia/same-model");
     expect(hash).toBe("oldhash\n");
+  });
+
+  it("falls back to an inference-qualified model ref when provider metadata lacks name", () => {
+    const { result, config, hash } = runReconcile({
+      agents: { defaults: { model: { primary: "inference/old-model" } } },
+      models: {
+        providers: {
+          inference: {
+            api: "openai-completions",
+            models: [{ id: "nvidia/new-model" }],
+          },
+        },
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(config.agents.defaults.model.primary).toBe("inference/nvidia/new-model");
+    expect(hash).not.toBe("oldhash\n");
+    expect(hash).toContain("openclaw.json");
   });
 
   it("is a no-op when openclaw.json has no inference provider", () => {

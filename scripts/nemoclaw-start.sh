@@ -483,7 +483,7 @@ PYOVERRIDE
 # ── Agent identity reconciliation with provider routing ───────────
 # After the host-side `openshell inference set` swaps the gateway's
 # inference provider entry, agents.defaults.model.primary in
-# openclaw.json can drift from models.providers.<key>.models[0].id.
+# openclaw.json can drift from models.providers.<key>.models[0].name.
 # When that happens the gateway routes requests to the new model but
 # the agent self-reports the old one. Realign the two on every
 # sandbox start so the next session boots with a consistent identity.
@@ -505,8 +505,8 @@ reconcile_agent_model_with_provider() {
     return 0
   fi
 
-  local provider_model
-  provider_model="$(
+  local provider_model_ref
+  provider_model_ref="$(
     python3 - "$config_file" <<'PYRECONCILE_READ'
 import json, sys
 try:
@@ -522,25 +522,28 @@ if not isinstance(models, list) or not models:
 first = models[0]
 if not isinstance(first, dict):
     sys.exit(0)
-provider_id = first.get("id")
-if not isinstance(provider_id, str) or not provider_id:
+provider_ref = first.get("name")
+if not isinstance(provider_ref, str) or not provider_ref:
+    provider_id = first.get("id")
+    if not isinstance(provider_id, str) or not provider_id:
+        sys.exit(0)
+    provider_ref = provider_id if provider_id.startswith("inference/") else f"inference/{provider_id}"
+if not isinstance(primary, str) or primary == provider_ref:
     sys.exit(0)
-if not isinstance(primary, str) or primary == provider_id:
-    sys.exit(0)
-print(provider_id)
+print(provider_ref)
 PYRECONCILE_READ
   )"
 
-  if [ -z "$provider_model" ]; then
+  if [ -z "$provider_model_ref" ]; then
     return 0
   fi
 
-  printf '[config] Reconciling agent identity with provider model: %s (#3175)\n' "$provider_model" >&2
+  printf '[config] Reconciling agent identity with provider model: %s (#3175)\n' "$provider_model_ref" >&2
 
   prepare_openclaw_config_for_write "$config_file" "$hash_file"
   local _write_rc=0
 
-  python3 - "$config_file" "$provider_model" <<'PYRECONCILE_WRITE' || _write_rc=$?
+  python3 - "$config_file" "$provider_model_ref" <<'PYRECONCILE_WRITE' || _write_rc=$?
 import json, sys
 config_file, provider_model = sys.argv[1], sys.argv[2]
 with open(config_file) as f:
