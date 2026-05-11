@@ -1021,14 +1021,16 @@ if (!last) {
   console.log(`NO_REQUEST ${path}`);
   process.exit(2);
 }
-const expectedAuthorization = `Bearer ${expectedToken}`;
-const expectedBody = `token=${encodeURIComponent(expectedToken)}`;
-if (last.authorization !== expectedAuthorization) {
-  console.log(`BAD_AUTH ${last.authorization}`);
+if (last.authorization !== undefined || last.body !== undefined) {
+  console.log("RAW_CAPTURE_LEAK");
+  process.exit(6);
+}
+if (last.tokenMatchesExpected !== true) {
+  console.log("BAD_AUTH_REWRITE");
   process.exit(3);
 }
-if (last.body !== expectedBody) {
-  console.log(`BAD_BODY ${last.body}`);
+if (last.bodyMatchesExpected !== true) {
+  console.log("BAD_BODY_REWRITE");
   process.exit(4);
 }
 if (last.tokenLooksPlaceholder) {

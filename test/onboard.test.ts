@@ -2057,6 +2057,43 @@ const { loadAgent } = require(${agentDefsPath});
     );
   });
 
+  it("fails closed when gateway lifecycle support is not proven", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /normalized\.trim\(\)\.length > 0/);
+    assert.doesNotMatch(source, /!normalized\.trim\(\)\s*\|\|/);
+  });
+
+  it("keeps registry state unless gateway destruction succeeds", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /function destroyGateway\(\): boolean/);
+    assert.match(source, /if \(destroyResult\.status !== 0\) {\s*return false;\s*}/);
+    assert.doesNotMatch(
+      source,
+      /destroyGateway\(\);\s*registry\.clearAll\(\);\s*gatewayReuseState = "missing"/,
+    );
+  });
+
+  it("prints package-managed gateway registration hints with the local HTTPS endpoint", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(
+      source,
+      /openshell gateway add \$\{getGatewayLocalEndpoint\(\)\} --local --name \$\{GATEWAY_NAME\}/,
+    );
+    assert.doesNotMatch(source, /openshell gateway add http:\/\/127\.0\.0\.1:\$\{GATEWAY_PORT\}/);
+  });
+
   it("allows slow sandbox create recovery to wait beyond 60 seconds", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
@@ -2132,6 +2169,10 @@ if [[ "$*" == *"doctor"*"logs"* ]]; then
   printf "\\033[31mERROR\\033[0m k3s cluster crashed: OOMKilled\\r\\n"
   printf "  Container nemoclaw_k3s ran out of memory\\r\\n"
   printf "  Gateway auth token: nvapi-fakecredential-9999\\r\\n"
+  exit 0
+fi
+if [[ "$*" == "gateway --help" ]]; then
+  printf "Commands: start destroy\\n"
   exit 0
 fi
 if [[ "$*" == *"gateway"*"start"* ]]; then
@@ -5055,6 +5096,8 @@ const { createSandbox } = require(${onboardPath});
       // (they flow exclusively through the openshell provider credential system).
       assert.doesNotMatch(createCommand.command, /test-discord-token-value/);
       assert.doesNotMatch(createCommand.command, /123456:ABC-test-telegram-token/);
+      assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
+      assert.doesNotMatch(createCommand.command, /TELEGRAM_BOT_TOKEN=/);
       assert.doesNotMatch(createCommand.command, /xoxb-test-slack-token-value/);
       assert.doesNotMatch(createCommand.command, /xapp-test-slack-app-token-value/);
       assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);

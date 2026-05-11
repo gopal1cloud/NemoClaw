@@ -38,21 +38,27 @@ const server = http.createServer((req, res) => {
     const authorization = req.headers.authorization || "";
     const expectedToken = expectedTokenForPath(pathname);
     const expectedAuthorization = `Bearer ${expectedToken}`;
+    const bodyToken = new URLSearchParams(body).get("token") || "";
     const tokenMatchesExpected = authorization === expectedAuthorization;
+    const bodyMatchesExpected = bodyToken === expectedToken;
+    const tokenLooksPlaceholder =
+      typeof authorization === "string" &&
+      (authorization.includes("openshell:resolve:env:") ||
+        authorization.includes("OPENSHELL-RESOLVE-ENV-") ||
+        body.includes("openshell:resolve:env:") ||
+        body.includes("OPENSHELL-RESOLVE-ENV-"));
 
     record({
       event: "request",
       method: req.method,
       path: pathname,
-      authorization,
-      body,
       tokenMatchesExpected,
-      tokenLooksPlaceholder:
-        typeof authorization === "string" &&
-        (authorization.includes("openshell:resolve:env:") ||
-          authorization.includes("OPENSHELL-RESOLVE-ENV-") ||
-          body.includes("openshell:resolve:env:") ||
-          body.includes("OPENSHELL-RESOLVE-ENV-")),
+      bodyMatchesExpected,
+      tokenLooksPlaceholder,
+      authorizationPresent: Boolean(authorization),
+      bodyTokenPresent: Boolean(bodyToken),
+      authorizationRedacted: true,
+      bodyRedacted: true,
     });
 
     res.writeHead(tokenMatchesExpected ? 200 : 401, {

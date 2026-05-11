@@ -1434,7 +1434,9 @@ function gatewayCliSupportsLifecycleCommands(): boolean {
   // Older OpenShell CLIs own the local gateway lifecycle. PR #1286 and newer
   // package-managed CLIs expose gateway registration only.
   gatewayLifecycleCommandsSupported =
-    !normalized.trim() || (/\bstart\b/.test(normalized) && /\bdestroy\b/.test(normalized));
+    normalized.trim().length > 0 &&
+    /\bstart\b/.test(normalized) &&
+    /\bdestroy\b/.test(normalized);
   return gatewayLifecycleCommandsSupported;
 }
 
@@ -3250,7 +3252,7 @@ function sleep(seconds: number): void {
   sleepSeconds(seconds);
 }
 
-function destroyGateway() {
+function destroyGateway(): boolean {
   const hasLifecycleCommands = gatewayCliSupportsLifecycleCommands();
   const destroyResult = hasLifecycleCommands
     ? runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], {
@@ -3265,11 +3267,15 @@ function destroyGateway() {
   if (hasLifecycleCommands && destroyResult.status === 0) {
     registry.clearAll();
   }
+  if (destroyResult.status !== 0) {
+    return false;
+  }
   if (hasLifecycleCommands) {
     // openshell gateway destroy doesn't remove Docker volumes, which leaves
     // corrupted cluster state that breaks the next gateway start. Clean them up.
     dockerRemoveVolumesByPrefix(`openshell-cluster-${GATEWAY_NAME}`, { ignoreError: true });
   }
+  return true;
 }
 
 type FinalGatewayStartFailureOptions = {
@@ -4003,10 +4009,12 @@ async function preflight(
     if (containerState === "missing") {
       console.log("  Gateway metadata is stale (container not running). Cleaning up...");
       runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
-      destroyGateway();
-      registry.clearAll();
-      gatewayReuseState = "missing";
-      console.log("  ✓ Stale gateway metadata cleaned up");
+      if (destroyGateway()) {
+        gatewayReuseState = "missing";
+        console.log("  ✓ Stale gateway metadata cleaned up");
+      } else {
+        console.warn("  ! Stale gateway metadata cleanup failed; leaving registry state intact.");
+      }
     } else if (containerState === "unknown") {
       console.log(
         "  Warning: could not verify gateway container state (Docker may be unavailable). Proceeding with cached health status.",
@@ -4018,10 +4026,12 @@ async function preflight(
           `  Gateway image ${imageDrift.currentVersion} does not match openshell ${imageDrift.expectedVersion}. Recreating...`,
         );
         stopAllDashboardForwards();
-        destroyGateway();
-        registry.clearAll();
-        gatewayReuseState = "missing";
-        console.log("  ✓ Previous gateway cleaned up");
+        if (destroyGateway()) {
+          gatewayReuseState = "missing";
+          console.log("  ✓ Previous gateway cleaned up");
+        } else {
+          console.warn("  ! Previous gateway cleanup failed; leaving registry state intact.");
+        }
       }
     }
   }
@@ -4029,8 +4039,11 @@ async function preflight(
   if (gatewayReuseState === "stale" || gatewayReuseState === "active-unnamed") {
     console.log(`  Cleaning up previous ${cliDisplayName()} session...`);
     runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
-    destroyGateway();
-    console.log("  ✓ Previous session cleaned up");
+    if (destroyGateway()) {
+      console.log("  ✓ Previous session cleaned up");
+    } else {
+      console.warn("  ! Previous session cleanup failed; continuing with existing gateway state.");
+    }
   }
 
   // Clean up orphaned Docker containers from interrupted onboard (e.g. Ctrl+C
@@ -4252,7 +4265,7 @@ async function startGatewayWithOptions(
   if (!gatewayCliSupportsLifecycleCommands()) {
     console.error("  OpenShell no longer exposes 'gateway start'.");
     console.error("  Start and register the local OpenShell gateway service first, then retry:");
-    console.error(`    openshell gateway add http://127.0.0.1:${GATEWAY_PORT} --local --name ${GATEWAY_NAME}`);
+    console.error(`    openshell gateway add ${getGatewayLocalEndpoint()} --local --name ${GATEWAY_NAME}`);
     console.error(`    openshell gateway select ${GATEWAY_NAME}`);
     if (exitOnFailure) {
       process.exit(1);
@@ -4517,7 +4530,7 @@ async function recoverGatewayRuntime() {
   if (!gatewayCliSupportsLifecycleCommands()) {
     console.error("  OpenShell no longer exposes 'gateway start'.");
     console.error("  Start and register the local OpenShell gateway service first, then retry:");
-    console.error(`    openshell gateway add http://127.0.0.1:${GATEWAY_PORT} --local --name ${GATEWAY_NAME}`);
+    console.error(`    openshell gateway add ${getGatewayLocalEndpoint()} --local --name ${GATEWAY_NAME}`);
     console.error(`    openshell gateway select ${GATEWAY_NAME}`);
     return false;
   }
@@ -9910,10 +9923,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       if (containerState === "missing") {
         console.log("  Gateway metadata is stale (container not running). Cleaning up...");
         runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
-        destroyGateway();
-        registry.clearAll();
-        gatewayReuseState = "missing";
-        console.log("  ✓ Stale gateway metadata cleaned up");
+        if (destroyGateway()) {
+          gatewayReuseState = "missing";
+          console.log("  ✓ Stale gateway metadata cleaned up");
+        } else {
+          console.warn("  ! Stale gateway metadata cleanup failed; leaving registry state intact.");
+        }
       } else if (containerState === "unknown") {
         console.log(
           "  Warning: could not verify gateway container state (Docker may be unavailable). Proceeding with cached health status.",
@@ -9925,10 +9940,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             `  Gateway image ${imageDrift.currentVersion} does not match openshell ${imageDrift.expectedVersion}. Recreating...`,
           );
           stopAllDashboardForwards();
-          destroyGateway();
-          registry.clearAll();
-          gatewayReuseState = "missing";
-          console.log("  ✓ Previous gateway cleaned up");
+          if (destroyGateway()) {
+            gatewayReuseState = "missing";
+            console.log("  ✓ Previous gateway cleaned up");
+          } else {
+            console.warn("  ! Previous gateway cleanup failed; leaving registry state intact.");
+          }
         }
       }
     }
