@@ -8,11 +8,17 @@ const fs = require("fs");
 const http = require("http");
 
 const host = process.env.FAKE_SLACK_API_HOST || "0.0.0.0";
-const port = Number(process.env.FAKE_SLACK_API_PORT || "0");
+const rawPort = process.env.FAKE_SLACK_API_PORT || "0";
+const port = Number(rawPort);
 const portFile = process.env.FAKE_SLACK_API_PORT_FILE || "";
 const captureFile = process.env.FAKE_SLACK_API_CAPTURE_FILE || "";
 const expectedBotToken = process.env.FAKE_SLACK_API_EXPECTED_BOT_TOKEN || "";
 const expectedAppToken = process.env.FAKE_SLACK_API_EXPECTED_APP_TOKEN || "";
+
+if (!Number.isInteger(port) || port < 0 || port > 65535) {
+  console.error(`FAKE_SLACK_API_PORT must be an integer between 0 and 65535 (received: ${rawPort})`);
+  process.exit(2);
+}
 
 if (!expectedBotToken || !expectedAppToken) {
   console.error("FAKE_SLACK_API_EXPECTED_BOT_TOKEN and FAKE_SLACK_API_EXPECTED_APP_TOKEN are required");
