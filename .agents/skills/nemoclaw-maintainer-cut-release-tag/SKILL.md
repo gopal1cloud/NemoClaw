@@ -160,7 +160,7 @@ for label in fixed-on-latest verify-inconclusive; do
         query($num: Int!) {
           repository(owner: "NVIDIA", name: "NemoClaw") {
             issue(number: $num) {
-              projectItems(first: 10) {
+              projectItems(first: 100) {
                 nodes {
                   project { number }
                   fieldValueByName(name: "Status") {

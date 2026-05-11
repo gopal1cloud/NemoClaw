@@ -450,8 +450,6 @@ curl -fsI "$INSTALL_URL" >/dev/null 2>&1 || {
 }
 ```
 
-If invoked from an environment without a TTY (some agent harnesses), prefer `brev login --skip-browser` or `--token` over the default browser flow.
-
 ---
 
 ## Step 6.7: Try Local Reproduction First
