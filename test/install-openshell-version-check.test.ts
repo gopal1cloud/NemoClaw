@@ -20,12 +20,24 @@ function writeExecutable(target: string, contents: string) {
  * or hit the upgrade warn and then the script tries to download — so we stub
  * curl and gh to fail fast.
  */
-function runWithInstalledVersion(version: string, options: { capability?: boolean } = {}) {
+function runWithInstalledVersion(
+  version: string,
+  extraEnv: NodeJS.ProcessEnv = {},
+  options: { capability?: boolean; driverBins?: boolean; os?: string; arch?: string } = {},
+) {
   const capability = options.capability ?? true;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-ver-"));
   try {
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
+
+    if (options.os || options.arch) {
+      writeExecutable(
+        path.join(fakeBin, "uname"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "-m" ]; then echo "${options.arch ?? "x86_64"}"; else echo "${options.os ?? "Linux"}"; fi`,
+      );
+    }
 
     // Fake openshell that reports the given version
     writeExecutable(
@@ -35,6 +47,19 @@ if [ "\${1:-}" = "--version" ]; then echo "openshell ${version}"; exit 0; fi
 ${capability ? "# request-body-credential-rewrite websocket-credential-rewrite" : ""}
 exit 99`,
     );
+
+    if (options.driverBins !== false) {
+      writeExecutable(
+        path.join(fakeBin, "openshell-gateway"),
+        `#!/usr/bin/env bash
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "openshell-sandbox"),
+        `#!/usr/bin/env bash
+exit 0`,
+      );
+    }
 
     // Stub curl to fail so the install path exits without doing real network I/O
     writeExecutable(
@@ -52,7 +77,12 @@ exit 1`,
     );
 
     return spawnSync("bash", [SCRIPT], {
-      env: { ...process.env, PATH: `${fakeBin}:/usr/bin:/bin` },
+      env: {
+        ...process.env,
+        NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+        ...extraEnv,
+        PATH: `${fakeBin}:/usr/bin:/bin`,
+      },
       encoding: "utf8",
     });
   } finally {
@@ -61,20 +91,33 @@ exit 1`,
 }
 
 describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
-  it("exits cleanly when openshell 0.0.38 is already installed", () => {
+  it("exits cleanly when openshell 0.0.38 and driver binaries are already installed", () => {
     const result = runWithInstalledVersion("0.0.38");
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(/already installed.*0\.0\.38/);
   });
 
+  it("triggers reinstall when openshell 0.0.38 is missing Docker-driver binaries", () => {
+    const result = runWithInstalledVersion("0.0.38", {}, { driverBins: false, os: "Linux" });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toMatch(/missing Docker-driver binaries/);
+    expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.38'/);
+  });
+
   it("fails closed when openshell 0.0.38 lacks required messaging rewrite support", () => {
-    const result = runWithInstalledVersion("0.0.38", { capability: false });
+    const result = runWithInstalledVersion("0.0.38", {}, { capability: false });
     expect(result.status).toBe(1);
     expect(result.stdout).toMatch(/missing required messaging credential rewrite support/);
   });
 
-  it("triggers upgrade when openshell 0.0.37 is installed (below MIN_VERSION)", () => {
+  it("triggers upgrade when openshell 0.0.37 is installed (below current floor)", () => {
     const result = runWithInstalledVersion("0.0.37");
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toMatch(/below minimum.*upgrading/);
+  });
+
+  it("triggers upgrade when openshell 0.0.28 is installed (below MIN_VERSION)", () => {
+    const result = runWithInstalledVersion("0.0.28");
     // Script should warn about upgrade then fail at the download step (curl stub fails)
     expect(result.status).not.toBe(0);
     expect(result.stdout).toMatch(/below minimum.*upgrading/);
@@ -104,6 +147,22 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
     expect(result.stdout).toMatch(/above the maximum/);
   });
 
+  it("accepts an installed OpenShell dev-channel Docker-driver build", () => {
+    const result = runWithInstalledVersion("0.0.38.dev84+g6b2180425", {
+      NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/dev channel/);
+  });
+
+  it("upgrades stable OpenShell when the dev channel is requested", () => {
+    const result = runWithInstalledVersion("0.0.36", {
+      NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toMatch(/required dev-channel messaging-rewrite build/);
+  });
+
   it("proceeds to install when openshell is not present", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-noop-"));
     try {
@@ -124,12 +183,16 @@ exit 1`,
       );
 
       const result = spawnSync("bash", [SCRIPT], {
-        env: { ...process.env, PATH: `${fakeBin}:/usr/bin:/bin` },
+        env: {
+          ...process.env,
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+        },
         encoding: "utf8",
       });
 
       // Should attempt install (not exit 0 early) and fail at the download step
-      expect(result.stdout).toMatch(/Installing openshell CLI/);
+      expect(result.stdout).toMatch(/Installing OpenShell from release/);
       expect(result.status).not.toBe(0);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

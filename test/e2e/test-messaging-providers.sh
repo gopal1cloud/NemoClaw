@@ -83,6 +83,9 @@ section() {
   printf '\033[1;36m=== %s ===\033[0m\n' "$1"
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
+is_unresolved_placeholder_rejection() {
+  printf '%s\n' "$1" | grep -qiE 'credential_injection_failed|unresolved credential placeholder'
+}
 
 # Determine repo root
 if [ -d /workspace ] && [ -f /workspace/install.sh ]; then
@@ -1113,15 +1116,12 @@ if [ "$fake_slack_ready" = "1" ]; then
 fi
 
 info "Slack auth.test (unset env) response: ${sl_unset:0:300}"
-# Empirically (verified in nightly run 25070238797): when the canonical
-# placeholder names an env var that isn't registered as a provider, the
-# OpenShell L7 proxy refuses to forward and the client sees a
-# connection-level failure ("socket hang up" / ECONNRESET / EPIPE).
-# The set-var path returns HTTP 200 invalid_auth from fake Slack — these
-# shapes are completely disjoint, so we assert specifically on them
-# instead of doing a fuzzy string compare (UNDICI warnings carry a PID
-# and would always make the captures differ regardless of substance).
-if echo "$sl_unset" | grep -qE 'ERROR:.*(socket hang up|ECONNRESET|EPIPE|hang up|reset)'; then
+# OpenShell may reject the unresolved placeholder with an explicit
+# credential_injection_failed response or a connection-level failure.
+# Either shape proves the unresolved placeholder did not reach upstream.
+if is_unresolved_placeholder_rejection "$sl_unset"; then
+  pass "M-S15c: unset-var failed closed before upstream exposure"
+elif echo "$sl_unset" | grep -qE 'ERROR:.*(socket hang up|ECONNRESET|EPIPE|hang up|reset)'; then
   pass "M-S15c: unset-var triggered connection-level failure — proxy refuses to forward unsubstituted placeholder"
 elif echo "$sl_unset" | grep -qE '^200\b'; then
   fail "M-S15c: unset-var returned HTTP 200 — proxy passed canonical placeholder through unchanged for unset env (substitution may be a no-op)"
@@ -1184,7 +1184,9 @@ fi
 
 info "Slack apps.connections.open (unset env) response: ${sl_app_unset:0:300}"
 if [ "$sl_app_canon_status" = "200" ] && echo "$sl_app_canonical" | grep -qE 'invalid_auth|not_authed|not_allowed_token_type'; then
-  if echo "$sl_app_unset" | grep -qE 'ERROR:.*(socket hang up|ECONNRESET|EPIPE|hang up|reset)'; then
+  if is_unresolved_placeholder_rejection "$sl_app_unset"; then
+    pass "M-S16b: unset app-token failed closed before upstream exposure"
+  elif echo "$sl_app_unset" | grep -qE 'ERROR:.*(socket hang up|ECONNRESET|EPIPE|hang up|reset)'; then
     pass "M-S16b: L7 proxy substitutes openshell:resolve:env:SLACK_APP_TOKEN at egress (unset-var control diverged)"
   elif echo "$sl_app_unset" | grep -qE '^200\b'; then
     fail "M-S16b: unset app-token env returned HTTP 200 — proxy may be passing canonical placeholders through unchanged"

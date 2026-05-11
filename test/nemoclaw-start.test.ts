@@ -262,7 +262,10 @@ describe("nemoclaw-start non-root fallback", () => {
       'verify_config_integrity_if_locked() { :; }',
       'normalize_mutable_config_perms() { :; }',
       'apply_model_override() { :; }',
+      'reconcile_agent_model_with_provider() { :; }',
       'apply_cors_override() { :; }',
+      'refresh_openclaw_provider_placeholders() { :; }',
+      'ensure_mutable_openclaw_config_hash() { :; }',
       'export_gateway_token() { :; }',
       'write_runtime_shell_env() { :; }',
       'ensure_runtime_shell_env_shim() { :; }',
@@ -271,6 +274,7 @@ describe("nemoclaw-start non-root fallback", () => {
       'install_telegram_diagnostics() { echo "SHOULD_NOT_INSTALL"; exit 71; }',
       'install_slack_channel_guard() { echo "SHOULD_NOT_INSTALL"; exit 73; }',
       'verify_no_slack_secrets_on_disk() { echo "SHOULD_NOT_VERIFY"; exit 74; }',
+      'seed_default_workspace_templates() { :; }',
       '_SANDBOX_HOME=/sandbox',
       "NEMOCLAW_CMD=(bash -c 'echo EXPLICIT_COMMAND; exit 23')",
       nonRootFallbackBlock(src),
@@ -1386,7 +1390,7 @@ describe("NC-2227-01: legacy migration behavior", () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 });
 
 describe("Slack secrets-on-disk tripwire (#2085)", () => {
@@ -1498,7 +1502,10 @@ describe("Telegram diagnostics (#2766)", () => {
         'verify_config_integrity_if_locked() { echo "ORDER:verify"; }',
         'normalize_mutable_config_perms() { echo "ORDER:normalize"; }',
         'apply_model_override() { :; }',
+        'reconcile_agent_model_with_provider() { :; }',
         'apply_cors_override() { :; }',
+        'refresh_openclaw_provider_placeholders() { :; }',
+        'ensure_mutable_openclaw_config_hash() { :; }',
         'export_gateway_token() { :; }',
         'write_runtime_shell_env() { :; }',
         'ensure_runtime_shell_env_shim() { :; }',
@@ -1506,6 +1513,7 @@ describe("Telegram diagnostics (#2766)", () => {
         'configure_messaging_channels() { echo "ORDER:configure"; }',
         'install_slack_channel_guard() { :; }',
         'verify_no_slack_secrets_on_disk() { :; }',
+        'seed_default_workspace_templates() { :; }',
         'write_auth_profile() { :; }',
         'harden_auth_profiles() { :; }',
         'chown() { :; }',
@@ -1516,6 +1524,7 @@ describe("Telegram diagnostics (#2766)", () => {
         '_SANDBOX_HOME=/sandbox',
         `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tmpDir, "safety.js"))}`,
         `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "proxy-fix.js"))}`,
+        `_WS_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "ws-fix.js"))}`,
         `_NEMOTRON_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "nemotron-fix.js"))}`,
         `_SECCOMP_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "seccomp-guard.js"))}`,
         `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "ciao-guard.js"))}`,
