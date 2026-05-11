@@ -105,6 +105,7 @@ const GLOBAL_ROUTES: Readonly<Record<string, string>> = {
   "backup-all": "backup-all",
   "upgrade-sandboxes": "upgrade-sandboxes",
   gc: "gc",
+  resources: "resources",
 };
 
 export function resolveGlobalOclifDispatch(cmd: string, args: string[]): DispatchResult {

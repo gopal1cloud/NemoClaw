@@ -308,6 +308,7 @@ const providerModels: typeof import("./inference/provider-models") = require("./
 const sandboxCreateStream: typeof import("./sandbox-create-stream") = require("./sandbox-create-stream");
 const validationRecovery: typeof import("./validation-recovery") = require("./validation-recovery");
 const webSearch: typeof import("./inference/web-search") = require("./inference/web-search");
+const { loadResourceProfiles, appendResourceFlags } = require("./resources-cmd");
 
 import type { AgentDefinition } from "./agent/defs";
 import type { CurlProbeResult } from "./http-probe";
@@ -4783,6 +4784,7 @@ async function createSandbox(
   agent: AgentDefinition | null = null,
   controlUiPort: number | null = null,
   gpuPassthrough: boolean = false,
+  resourceProfile: { cpu_request: string; cpu_limit: string; memory_request: string; memory_limit: string } | null = null,
 ) {
   step(6, 8, "Creating sandbox");
 
@@ -5390,6 +5392,14 @@ async function createSandbox(
   ];
   if (gpuPassthrough) {
     createArgs.push("--gpu");
+  }
+
+  // Append CPU/memory resource flags from selected profile (graceful degradation).
+  if (resourceProfile) {
+    const applied = appendResourceFlags(createArgs, resourceProfile, getOpenshellBinary());
+    if (!applied) {
+      note("  OpenShell does not support resource flags — sandbox will use default limits.");
+    }
   }
 
   // Create OpenShell providers for messaging credentials so they flow through
@@ -10204,6 +10214,84 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         console.error("  Inference selection is incomplete; cannot create sandbox.");
         process.exit(1);
       }
+
+      // ── Resource profile selection ─────────────────────────────
+      const availableProfiles = loadResourceProfiles();
+      const profileNames = Object.keys(availableProfiles);
+      let selectedProfile: { cpu_request: string; cpu_limit: string; memory_request: string; memory_limit: string } | null = null;
+
+      const hasResourceEnvOverrides = !!(
+        process.env.NEMOCLAW_CPU_REQUEST || process.env.NEMOCLAW_CPU_LIMIT ||
+        process.env.NEMOCLAW_RAM_REQUEST || process.env.NEMOCLAW_RAM_LIMIT
+      );
+      if (process.env.NEMOCLAW_RESOURCE_PROFILE) {
+        const envProfile = process.env.NEMOCLAW_RESOURCE_PROFILE;
+        if (profileNames.length > 0 && availableProfiles[envProfile]) {
+          selectedProfile = { ...availableProfiles[envProfile] };
+          note(`  Resource profile (env): ${envProfile}`);
+        } else {
+          console.error(`  Unknown resource profile: '${envProfile}'`);
+          console.error(`  Valid profiles: ${profileNames.join(", ")}`);
+          process.exit(1);
+        }
+      } else if (profileNames.length > 0 && !isNonInteractive() && !hasResourceEnvOverrides) {
+        const { getHardwareResources, resolveResourceValue } = require("./resources-cmd");
+        const hw = getHardwareResources();
+        console.log("");
+        console.log("  Resource profiles:");
+        profileNames.forEach((name: string, i: number) => {
+          const p = availableProfiles[name];
+          console.log(`    ${i + 1}) ${name} (cpu=${p.cpu_request}/${p.cpu_limit}, ram=${p.memory_request}/${p.memory_limit})`);
+        });
+        console.log(`    ${profileNames.length + 1}) custom (enter values manually)`);
+        console.log(`    ${profileNames.length + 2}) No profile (default resources)`);
+        const choice = await promptOrDefault(
+          `  Choose [${profileNames.length + 2}]: `,
+          null,
+          String(profileNames.length + 2),
+        );
+        const idx = parseInt(choice.trim(), 10) - 1;
+        if (idx >= 0 && idx < profileNames.length) {
+          selectedProfile = availableProfiles[profileNames[idx]];
+          console.log(`  Using profile: ${profileNames[idx]}`);
+        } else if (idx === profileNames.length) {
+          console.log("");
+          console.log(`  Available: ${hw.cpu.cores} CPU cores, ${hw.memory.totalMB} MB RAM`);
+          console.log("  Enter values as percentages (e.g. 25%) or absolutes (e.g. 4, 8Gi)");
+          console.log("");
+          const cpuReq = (await prompt(`  CPU min (request) [25%]: `)).trim() || "25%";
+          const cpuLim = (await prompt(`  CPU max (limit) [50%]: `)).trim() || "50%";
+          const ramReq = (await prompt(`  RAM min (request) [25%]: `)).trim() || "25%";
+          const ramLim = (await prompt(`  RAM max (limit) [50%]: `)).trim() || "50%";
+          selectedProfile = {
+            cpu_request: cpuReq,
+            cpu_limit: cpuLim,
+            memory_request: ramReq,
+            memory_limit: ramLim,
+          };
+          try {
+            const cpuTotal = hw.cpu.cores;
+            const memTotal = hw.memory.totalMB;
+            const resolvedCpu = resolveResourceValue(cpuLim, cpuTotal, "cpu");
+            const resolvedRam = resolveResourceValue(ramLim, memTotal, "memory");
+            console.log(`  Resolved: CPU limit=${resolvedCpu} cores, RAM limit=${resolvedRam}`);
+          } catch (e: unknown) {
+            console.error(`  ${(e as Error).message}`);
+            process.exit(1);
+          }
+        }
+      }
+
+      if (process.env.NEMOCLAW_CPU_REQUEST || process.env.NEMOCLAW_CPU_LIMIT ||
+          process.env.NEMOCLAW_RAM_REQUEST || process.env.NEMOCLAW_RAM_LIMIT) {
+        selectedProfile = selectedProfile || { cpu_request: "", cpu_limit: "", memory_request: "", memory_limit: "" };
+        if (process.env.NEMOCLAW_CPU_REQUEST) selectedProfile.cpu_request = process.env.NEMOCLAW_CPU_REQUEST;
+        if (process.env.NEMOCLAW_CPU_LIMIT) selectedProfile.cpu_limit = process.env.NEMOCLAW_CPU_LIMIT;
+        if (process.env.NEMOCLAW_RAM_REQUEST) selectedProfile.memory_request = process.env.NEMOCLAW_RAM_REQUEST;
+        if (process.env.NEMOCLAW_RAM_LIMIT) selectedProfile.memory_limit = process.env.NEMOCLAW_RAM_LIMIT;
+        note(`  Resource overrides (env): cpu=${selectedProfile.cpu_request}/${selectedProfile.cpu_limit}, ram=${selectedProfile.memory_request}/${selectedProfile.memory_limit}`);
+      }
+
       sandboxName = await createSandbox(
         gpu,
         model,
@@ -10216,6 +10304,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         agent,
         opts.controlUiPort || null,
         gpuPassthrough,
+        selectedProfile,
       );
       webSearchConfig = nextWebSearchConfig;
       // Persist model and provider after the sandbox entry exists in the registry.

@@ -248,6 +248,7 @@ describe("command-registry", () => {
         "Credentials",
         "Backup",
         "Upgrade",
+        "Resources",
         "Cleanup",
       ]);
     });
