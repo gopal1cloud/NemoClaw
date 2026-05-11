@@ -41,6 +41,7 @@ const server = http.createServer((req, res) => {
     const bodyToken = new URLSearchParams(body).get("token") || "";
     const tokenMatchesExpected = authorization === expectedAuthorization;
     const bodyMatchesExpected = bodyToken === expectedToken;
+    const authAccepted = tokenMatchesExpected && bodyMatchesExpected;
     const tokenLooksPlaceholder =
       typeof authorization === "string" &&
       (authorization.includes("openshell:resolve:env:") ||
@@ -61,13 +62,13 @@ const server = http.createServer((req, res) => {
       bodyRedacted: true,
     });
 
-    res.writeHead(tokenMatchesExpected ? 200 : 401, {
+    res.writeHead(authAccepted ? 200 : 401, {
       "content-type": "application/json",
     });
     res.end(
       JSON.stringify({
         ok: false,
-        error: tokenMatchesExpected ? "invalid_auth" : "bad_auth",
+        error: authAccepted ? "invalid_auth" : "bad_auth",
         endpoint: pathname,
       }),
     );

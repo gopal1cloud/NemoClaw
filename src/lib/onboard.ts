@@ -4013,6 +4013,7 @@ async function preflight(
         gatewayReuseState = "missing";
         console.log("  ✓ Stale gateway metadata cleaned up");
       } else {
+        gatewayReuseState = "stale";
         console.warn("  ! Stale gateway metadata cleanup failed; leaving registry state intact.");
       }
     } else if (containerState === "unknown") {
@@ -4030,6 +4031,7 @@ async function preflight(
           gatewayReuseState = "missing";
           console.log("  ✓ Previous gateway cleaned up");
         } else {
+          gatewayReuseState = "stale";
           console.warn("  ! Previous gateway cleanup failed; leaving registry state intact.");
         }
       }
@@ -9927,6 +9929,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           gatewayReuseState = "missing";
           console.log("  ✓ Stale gateway metadata cleaned up");
         } else {
+          gatewayReuseState = "stale";
           console.warn("  ! Stale gateway metadata cleanup failed; leaving registry state intact.");
         }
       } else if (containerState === "unknown") {
@@ -9944,6 +9947,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             gatewayReuseState = "missing";
             console.log("  ✓ Previous gateway cleaned up");
           } else {
+            gatewayReuseState = "stale";
             console.warn("  ! Previous gateway cleanup failed; leaving registry state intact.");
           }
         }

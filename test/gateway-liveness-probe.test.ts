@@ -77,6 +77,18 @@ describe("gateway liveness probe (#2020)", () => {
     expect(cleanupAfterProbe).toBeTruthy();
   });
 
+  it("does not keep stale or drifted gateways reusable when cleanup fails", () => {
+    const failedStaleCleanup = content.match(
+      /else \{\s*gatewayReuseState = "stale";\s*console\.warn\("  ! Stale gateway metadata cleanup failed; leaving registry state intact\."\);/g,
+    );
+    const failedDriftCleanup = content.match(
+      /else \{\s*gatewayReuseState = "stale";\s*console\.warn\("  ! Previous gateway cleanup failed; leaving registry state intact\."\);/g,
+    );
+
+    expect(failedStaleCleanup?.length).toBeGreaterThanOrEqual(2);
+    expect(failedDriftCleanup?.length).toBeGreaterThanOrEqual(2);
+  });
+
   it("does not modify isGatewayHealthy() in src/lib/state/gateway.ts", () => {
     // isGatewayHealthy() must remain a pure function — no I/O.
     // Scope the check to the function body so unrelated helpers don't cause false failures.
