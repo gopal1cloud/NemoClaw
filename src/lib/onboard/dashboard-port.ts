@@ -21,6 +21,10 @@ import { DASHBOARD_PORT_RANGE_END, DASHBOARD_PORT_RANGE_START } from "../core/po
 const { runCapture } = require("../runner");
 type RunCaptureFn = typeof import("../runner").runCapture;
 
+// Match the broader pattern used by onboard.ts (covers CSI, OSC, and Fe escapes)
+// so colorised `openshell forward list` output parses correctly.
+const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
+
 /** OpenShell forward statuses that hold a port (and therefore block reuse). */
 export function isLiveForwardStatus(status: string): boolean {
   return status === "running" || status === "active";
@@ -31,13 +35,18 @@ export function isLiveForwardStatus(status: string): boolean {
  * Only includes running forwards — stopped/stale entries are ignored so
  * they don't block port allocation or cause false "range exhausted" errors.
  *
+ * ANSI escape codes (the openshell CLI colourises status columns when
+ * stdout is a TTY) are stripped per-line before tokenising so port numbers
+ * and status words are matched cleanly.
+ *
  * Output format (columns separated by whitespace):
  *   SANDBOX  BIND  PORT  PID  STATUS
  */
 export function getOccupiedPorts(forwardListOutput: string | null): Map<string, string> {
   const occupied = new Map<string, string>();
   if (!forwardListOutput) return occupied;
-  for (const line of forwardListOutput.split("\n")) {
+  for (const rawLine of forwardListOutput.split("\n")) {
+    const line = rawLine.replace(ANSI_RE, "");
     if (/^\s*SANDBOX\s/i.test(line)) continue;
     const parts = line.trim().split(/\s+/);
     // parts: [sandbox, bind, port, pid, status...]
