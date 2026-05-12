@@ -233,12 +233,25 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7"];
 const messages = [];
+const lines = [];
+const originalLog = console.log;
+
+function findRunningVllmChoice() {
+  const option = lines.find((line) =>
+    /^\s*\d+\) Local vLLM \[experimental\] \(localhost:8000\) — running \(suggested\)/.test(line)
+  );
+  const match = option && option.match(/^\s*(\d+)\)/);
+  if (!match) {
+    throw new Error("Could not find running vLLM option in menu:\\n" + lines.join("\\n"));
+  }
+  return match[1];
+}
 
 credentials.prompt = async (message) => {
   messages.push(message);
-  return answers.shift() || "";
+  if (/Choose \[/.test(message)) return findRunningVllmChoice();
+  return "";
 };
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
@@ -253,8 +266,6 @@ runner.runCapture = (command) => {
 const { setupNim } = require(${onboardPath});
 
 (async () => {
-  const originalLog = console.log;
-  const lines = [];
   console.log = (...args) => lines.push(args.join(" "));
   try {
     const result = await setupNim({ type: "nvidia" }, null);
@@ -308,13 +319,21 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-no-install-"));
     const scriptPath = path.join(tmpDir, "vllm-no-install-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const vllmPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "vllm.js"));
 
     const script = String.raw`
+const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const vllm = require(${vllmPath});
 
+credentials.prompt = async () => {
+  throw new Error("Unexpected prompt in non-interactive test");
+};
+credentials.ensureApiKey = async () => {
+  throw new Error("Unexpected ensureApiKey call in non-interactive test");
+};
 vllm.installVllm = async () => {
   console.error("INSTALL_VLLM_CALLED");
   return { ok: false };
