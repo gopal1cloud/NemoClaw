@@ -2018,8 +2018,35 @@ if [ "$(id -u)" -ne 0 ]; then
   trap cleanup_on_signal SIGTERM SIGINT
   print_dashboard_urls
 
-  wait "$GATEWAY_PID"
-  exit $?
+  # Auto-respawn gateway on unexpected death (NVIDIA/NemoClaw#2757). Without
+  # this loop, gateway death unblocks `wait` → PID 1 exits → Docker reaps the
+  # whole sandbox container, forcing users to run `nemoclaw connect` to recover.
+  RESPAWN_COUNT=0
+  RESPAWN_WINDOW_START=$(date +%s)
+  while :; do
+    wait "$GATEWAY_PID"
+    RC=$?
+    if [ "$RC" -eq 0 ]; then
+      exit 0
+    fi
+    NOW=$(date +%s)
+    if [ $((NOW - RESPAWN_WINDOW_START)) -gt 60 ]; then
+      RESPAWN_COUNT=0
+      RESPAWN_WINDOW_START=$NOW
+    fi
+    RESPAWN_COUNT=$((RESPAWN_COUNT + 1))
+    if [ "$RESPAWN_COUNT" -ge 5 ]; then
+      echo "[gateway] CRITICAL: $RESPAWN_COUNT respawns in <60s — gateway likely unstable; check /tmp/gateway.log" >&2
+    fi
+    echo "[gateway] pid $GATEWAY_PID exited (rc=$RC); respawning (#$RESPAWN_COUNT in window) in 2s" >&2
+    sleep 2
+    nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >>/tmp/gateway.log 2>&1 &
+    GATEWAY_PID=$!
+    # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
+    SANDBOX_WAIT_PID="$GATEWAY_PID"
+    SANDBOX_CHILD_PIDS+=("$GATEWAY_PID")
+    echo "[gateway] respawned (pid $GATEWAY_PID)" >&2
+  done
 fi
 
 # ── Root path (full privilege separation via setpriv) ──────────
@@ -2210,4 +2237,32 @@ print_dashboard_urls
 
 # Keep container running by waiting on the gateway process.
 # This script is PID 1 (ENTRYPOINT); if it exits, Docker kills all children.
-wait "$GATEWAY_PID"
+# Auto-respawn gateway on unexpected death (NVIDIA/NemoClaw#2757). Without
+# this loop, gateway death unblocks `wait` → PID 1 exits → Docker reaps the
+# whole sandbox container, forcing users to run `nemoclaw connect` to recover.
+RESPAWN_COUNT=0
+RESPAWN_WINDOW_START=$(date +%s)
+while :; do
+  wait "$GATEWAY_PID"
+  RC=$?
+  if [ "$RC" -eq 0 ]; then
+    exit 0
+  fi
+  NOW=$(date +%s)
+  if [ $((NOW - RESPAWN_WINDOW_START)) -gt 60 ]; then
+    RESPAWN_COUNT=0
+    RESPAWN_WINDOW_START=$NOW
+  fi
+  RESPAWN_COUNT=$((RESPAWN_COUNT + 1))
+  if [ "$RESPAWN_COUNT" -ge 5 ]; then
+    echo "[gateway] CRITICAL: $RESPAWN_COUNT respawns in <60s — gateway likely unstable; check /tmp/gateway.log" >&2
+  fi
+  echo "[gateway] pid $GATEWAY_PID exited (rc=$RC); respawning (#$RESPAWN_COUNT in window) in 2s" >&2
+  sleep 2
+  nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >>/tmp/gateway.log 2>&1 &
+  GATEWAY_PID=$!
+  # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
+  SANDBOX_WAIT_PID="$GATEWAY_PID"
+  SANDBOX_CHILD_PIDS+=("$GATEWAY_PID")
+  echo "[gateway] respawned (pid $GATEWAY_PID)" >&2
+done
