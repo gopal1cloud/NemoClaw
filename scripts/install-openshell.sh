@@ -113,7 +113,14 @@ use_openshell_pr1286_ci_pin() {
 }
 
 install_openshell_pr1286_ci_pin() {
-  local target_dir
+  local target_dir existing_bin
+  if existing_bin="$(command -v openshell 2>/dev/null)" \
+    && "$existing_bin" --version >/dev/null 2>&1 \
+    && openshell_has_required_messaging_features "$existing_bin"; then
+    info "openshell already installed with PR #1286 messaging rewrite support: $("$existing_bin" --version 2>&1 || echo openshell)"
+    exit 0
+  fi
+
   target_dir="/usr/local/bin"
   if [ ! -w "$target_dir" ]; then
     target_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"
