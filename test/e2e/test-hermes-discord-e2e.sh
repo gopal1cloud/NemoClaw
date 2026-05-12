@@ -165,7 +165,11 @@ OPENSHELL_BIN="${NEMOCLAW_OPENSHELL_BIN:-openshell}"
 DISCORD_TOKEN="${DISCORD_BOT_TOKEN:-test-fake-discord-token-hermes-e2e}"
 
 openshell() {
-  "$OPENSHELL_BIN" "$@"
+  if [ "$OPENSHELL_BIN" = "openshell" ]; then
+    command openshell "$@"
+  else
+    "$OPENSHELL_BIN" "$@"
+  fi
 }
 export NEMOCLAW_AGENT="${NEMOCLAW_AGENT:-hermes}"
 export NEMOCLAW_POLICY_TIER="${NEMOCLAW_POLICY_TIER:-open}"

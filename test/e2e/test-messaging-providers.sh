@@ -101,7 +101,11 @@ SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-msg-provider}"
 OPENSHELL_BIN="${NEMOCLAW_OPENSHELL_BIN:-openshell}"
 
 openshell() {
-  "$OPENSHELL_BIN" "$@"
+  if [ "$OPENSHELL_BIN" = "openshell" ]; then
+    command openshell "$@"
+  else
+    "$OPENSHELL_BIN" "$@"
+  fi
 }
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
