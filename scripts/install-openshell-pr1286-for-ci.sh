@@ -4,24 +4,50 @@
 
 set -euo pipefail
 
-# Temporary CI helper for NemoClaw PR #3323. This lets that PR's nightly
-# messaging jobs prove the OpenShell PR #1286 integration before an official
-# OpenShell release contains the required native messaging rewrite features.
+# Temporary CI helper for NemoClaw PR #3323. It mirrors OpenShell's own
+# release build shape instead of compiling ad hoc on the host runner:
+#   - OpenShell CI image
+#   - mise-managed Rust/Zig toolchain
+#   - musl CLI with bundled Z3
+#   - GNU gateway/sandbox binaries with dev-settings feature
+# Remove this after OpenShell PR #1286 is available in the normal release
+# channel consumed by scripts/install-openshell.sh.
 
 OPENSHELL_PR1286_REPO="${OPENSHELL_PR1286_REPO:-https://github.com/ericksoa/OpenShell.git}"
 OPENSHELL_PR1286_BRANCH="${OPENSHELL_PR1286_BRANCH:-fix/872-websocket-credential-rewrite}"
-OPENSHELL_PR1286_COMMIT="${OPENSHELL_PR1286_COMMIT:-d391cfce299cb96d268a0997993fc9971475ef36}"
+OPENSHELL_PR1286_COMMIT="${OPENSHELL_PR1286_COMMIT:-077544834681aa3c00f71a7d50a9efcd37afb5ad}"
+OPENSHELL_CI_IMAGE="${OPENSHELL_CI_IMAGE:-ghcr.io/nvidia/openshell/ci:latest}"
 
 runner_temp="${RUNNER_TEMP:-/tmp}"
 openshell_src="${runner_temp}/openshell-pr1286"
+openshell_out="${runner_temp}/openshell-pr1286-out"
 openshell_bin_dir="${OPENSHELL_PR1286_INSTALL_DIR:-${runner_temp}/openshell-pr1286-bin}"
-cargo_target_dir="${CARGO_TARGET_DIR:-${openshell_src}/target}"
 
-rm -rf "$openshell_src"
+case "$(uname -m)" in
+  x86_64 | amd64)
+    cli_target="x86_64-unknown-linux-musl"
+    gnu_target="x86_64-unknown-linux-gnu"
+    zig_target="x86_64-linux-musl"
+    ;;
+  aarch64 | arm64)
+    cli_target="aarch64-unknown-linux-musl"
+    gnu_target="aarch64-unknown-linux-gnu"
+    zig_target="aarch64-linux-musl"
+    ;;
+  *)
+    echo "Unsupported architecture for OpenShell PR #1286 CI build: $(uname -m)" >&2
+    exit 1
+    ;;
+esac
+
+command -v git >/dev/null 2>&1 || { echo "git is required" >&2; exit 1; }
+command -v docker >/dev/null 2>&1 || { echo "docker is required to use the OpenShell CI build image" >&2; exit 1; }
+
+rm -rf "$openshell_src" "$openshell_out"
 if [ -z "${OPENSHELL_PR1286_INSTALL_DIR:-}" ]; then
   rm -rf "$openshell_bin_dir"
 fi
-mkdir -p "$openshell_src" "$openshell_bin_dir"
+mkdir -p "$openshell_src" "$openshell_out" "$openshell_bin_dir"
 
 git -C "$openshell_src" init
 git -C "$openshell_src" remote add origin "$OPENSHELL_PR1286_REPO"
@@ -36,38 +62,69 @@ if [ "$actual_commit" != "$OPENSHELL_PR1286_COMMIT" ]; then
   exit 1
 fi
 
-if ! command -v cmake >/dev/null 2>&1; then
-  if command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
-    sudo apt-get update
-    sudo apt-get install -y cmake
-  elif command -v apt-get >/dev/null 2>&1 && [ "$(id -u)" = "0" ]; then
-    apt-get update
-    apt-get install -y cmake
-  elif command -v python3 >/dev/null 2>&1; then
-    python3 -m pip install --user cmake
-    export PATH="$HOME/.local/bin:$PATH"
-  fi
-fi
-if ! command -v cmake >/dev/null 2>&1; then
-  echo "cmake is required to build OpenShell PR #1286 with bundled Z3" >&2
-  exit 1
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+  printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io -u "${GITHUB_ACTOR:-github-actions}" --password-stdin
 fi
 
-if ! command -v rustup >/dev/null 2>&1; then
-  curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.88.0
-  # shellcheck source=/dev/null
-  [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
-fi
+docker run --rm \
+  -e CARGO_TERM_COLOR=always \
+  -e CARGO_INCREMENTAL=0 \
+  -e MISE_GITHUB_TOKEN="${GITHUB_TOKEN:-}" \
+  -e OPENSHELL_IMAGE_TAG="$OPENSHELL_PR1286_COMMIT" \
+  -v "$openshell_src:/work" \
+  -v "$openshell_out:/out" \
+  -w /work \
+  "$OPENSHELL_CI_IMAGE" \
+  bash -s -- "$cli_target" "$gnu_target" "$zig_target" <<'OPENSHELL_BUILD_EOF'
+set -euo pipefail
 
-rustup toolchain install 1.88.0 --profile minimal
-export CARGO_TARGET_DIR="$cargo_target_dir"
-cargo +1.88.0 build --locked --manifest-path "$openshell_src/Cargo.toml" -p openshell-cli --bin openshell --features bundled-z3
-cargo +1.88.0 build --locked --manifest-path "$openshell_src/Cargo.toml" -p openshell-server --bin openshell-gateway
-cargo +1.88.0 build --locked --manifest-path "$openshell_src/Cargo.toml" -p openshell-sandbox --bin openshell-sandbox
+cli_target="$1"
+gnu_target="$2"
+zig_target="$3"
 
-install -m 0755 "$cargo_target_dir/debug/openshell" "$openshell_bin_dir/openshell"
-install -m 0755 "$cargo_target_dir/debug/openshell-gateway" "$openshell_bin_dir/openshell-gateway"
-install -m 0755 "$cargo_target_dir/debug/openshell-sandbox" "$openshell_bin_dir/openshell-sandbox"
+git config --global --add safe.directory /work
+git fetch --tags --force
+mise install --locked
+mise x -- rustup target add "$cli_target" "$gnu_target"
+
+zig="$(mise which zig)"
+mkdir -p /tmp/zig-musl
+for tool in cc c++; do
+  cat >"/tmp/zig-musl/${tool}" <<EOF
+#!/bin/bash
+args=()
+for arg in "\$@"; do
+  case "\$arg" in
+    --target=*) ;;
+    *) args+=("\$arg") ;;
+  esac
+done
+exec "$zig" "$tool" --target="$zig_target" "\${args[@]}"
+EOF
+  chmod +x "/tmp/zig-musl/${tool}"
+done
+
+target_env="${cli_target//-/_}"
+target_env_upper="${target_env^^}"
+export "CC_${target_env}=/tmp/zig-musl/cc"
+export "CXX_${target_env}=/tmp/zig-musl/c++"
+export "CARGO_TARGET_${target_env_upper}_LINKER=/tmp/zig-musl/cc"
+export "CARGO_TARGET_${target_env_upper}_RUSTFLAGS=-Clink-self-contained=no"
+export CXXSTDLIB=c++
+
+mise x -- cargo build --release --target "$cli_target" -p openshell-cli --features bundled-z3
+mise x -- cargo build --release --target "$gnu_target" -p openshell-server --bin openshell-gateway --features openshell-core/dev-settings
+mise x -- cargo build --release --target "$gnu_target" -p openshell-sandbox --bin openshell-sandbox --features openshell-core/dev-settings
+
+install -m 0755 "target/${cli_target}/release/openshell" /out/openshell
+install -m 0755 "target/${gnu_target}/release/openshell-gateway" /out/openshell-gateway
+install -m 0755 "target/${gnu_target}/release/openshell-sandbox" /out/openshell-sandbox
+ls -lh /out
+OPENSHELL_BUILD_EOF
+
+install -m 0755 "$openshell_out/openshell" "$openshell_bin_dir/openshell"
+install -m 0755 "$openshell_out/openshell-gateway" "$openshell_bin_dir/openshell-gateway"
+install -m 0755 "$openshell_out/openshell-sandbox" "$openshell_bin_dir/openshell-sandbox"
 
 grep -aFq "request-body-credential-rewrite" "$openshell_bin_dir/openshell"
 grep -aFq "websocket-credential-rewrite" "$openshell_bin_dir/openshell"
@@ -80,3 +137,5 @@ if [ -n "${GITHUB_ENV:-}" ]; then
 fi
 
 "$openshell_bin_dir/openshell" --version
+"$openshell_bin_dir/openshell-gateway" --version
+"$openshell_bin_dir/openshell-sandbox" --version
