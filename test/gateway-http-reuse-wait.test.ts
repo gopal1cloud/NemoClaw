@@ -306,4 +306,39 @@ describe("waitForGatewayHttpReady (#3258)", () => {
       expect(sleeps).toEqual([0]);
     }
   });
+
+  it("treats a probe rejection as 'not ready' and continues to the next attempt", async () => {
+    let calls = 0;
+    const sleeps: number[] = [];
+    const result = await waitForGatewayHttpReady({
+      probe: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("transient probe failure");
+        return true;
+      },
+      sleeper: (s: number) => sleeps.push(s),
+      maxAttempts: 4,
+      intervalSeconds: 2,
+    });
+    expect(result).toBe(true);
+    expect(calls).toBe(2);
+    expect(sleeps).toEqual([2]);
+  });
+
+  it("returns false when every probe rejects across the whole budget", async () => {
+    let calls = 0;
+    const sleeps: number[] = [];
+    const result = await waitForGatewayHttpReady({
+      probe: async () => {
+        calls += 1;
+        throw new Error("probe is broken");
+      },
+      sleeper: (s: number) => sleeps.push(s),
+      maxAttempts: 3,
+      intervalSeconds: 1,
+    });
+    expect(result).toBe(false);
+    expect(calls).toBe(3);
+    expect(sleeps).toEqual([1, 1]);
+  });
 });

@@ -125,10 +125,21 @@ export async function waitForGatewayHttpReady(
   const rawInterval = opts.intervalSeconds ?? config.interval;
   const intervalSeconds = Number.isFinite(rawInterval) ? Math.max(0, rawInterval) : 0;
 
-  if (await probe()) return true;
+  // The default probe (isGatewayHttpReady) never rejects, but injected probes
+  // can. Treat a rejection as "not ready this attempt" so we exhaust the
+  // budget instead of bailing on the first transient failure.
+  const safeProbe = async (): Promise<boolean> => {
+    try {
+      return await probe();
+    } catch {
+      return false;
+    }
+  };
+
+  if (await safeProbe()) return true;
   for (let attempt = 1; attempt < maxAttempts; attempt++) {
     sleeper(intervalSeconds);
-    if (await probe()) return true;
+    if (await safeProbe()) return true;
   }
   return false;
 }
