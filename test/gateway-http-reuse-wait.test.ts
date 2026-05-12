@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 const require = createRequire(import.meta.url);
 const onboardModule = require("../dist/lib/onboard.js") as {
   getGatewayReuseHealthWaitConfig: () => { count: number; interval: number };
+  isDockerDriverGatewayHttpReady: (timeoutMs?: number, url?: string) => Promise<boolean>;
   isGatewayHttpReady: (timeoutMs?: number, url?: string) => Promise<boolean>;
   waitForGatewayHttpReady: (opts?: {
     probe?: () => Promise<boolean>;
@@ -32,6 +33,7 @@ const onboardModule = require("../dist/lib/onboard.js") as {
 };
 const { getGatewayReuseHealthWaitConfig, isGatewayHttpReady, waitForGatewayHttpReady } =
   onboardModule;
+const { isDockerDriverGatewayHttpReady } = onboardModule;
 
 /** Bind an ephemeral localhost port, close it, and return its URL — a port
  * that's guaranteed to refuse connections for the lifetime of the test. */
@@ -175,6 +177,36 @@ describe("isGatewayHttpReady status-code semantics (#3258)", () => {
       }
     } finally {
       await server.close();
+    }
+  });
+});
+
+describe("isDockerDriverGatewayHttpReady (#3111)", () => {
+  it("uses the Docker-driver gRPC health endpoint instead of root /", async () => {
+    let sawHealthPost = false;
+    const server = http.createServer((req, res) => {
+      if (req.method === "POST" && req.url === "/openshell.v1.OpenShell/Health") {
+        sawHealthPost = true;
+        res.statusCode = 200;
+      } else {
+        res.statusCode = 404;
+      }
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      expect(
+        await isDockerDriverGatewayHttpReady(
+          2000,
+          `http://127.0.0.1:${port}/openshell.v1.OpenShell/Health`,
+        ),
+      ).toBe(true);
+      expect(sawHealthPost).toBe(true);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
     }
   });
 });

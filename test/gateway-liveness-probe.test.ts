@@ -121,10 +121,10 @@ describe("gateway liveness probe (#2020)", () => {
     const dockerSection = content.slice(dockerStart, dockerEnd);
 
     expect(dockerSection).toMatch(
-      /isGatewayHealthy\(status, namedInfo, currentInfo\) && \(await isGatewayHttpReady\(\)\)[\s\S]*?Docker-driver gateway is healthy/,
+      /isGatewayHealthy\(status, namedInfo, currentInfo\)[\s\S]*?await isDockerDriverGatewayHttpReady\(\)[\s\S]*?Docker-driver gateway is healthy/,
     );
     expect(dockerSection).toMatch(
-      /registerDockerDriverGatewayEndpoint\(\) && \(await isGatewayHttpReady\(\)\)[\s\S]*?Reusing existing Docker-driver gateway/,
+      /registerDockerDriverGatewayEndpoint\(\)[\s\S]*?await isDockerDriverGatewayHttpReady\(\)[\s\S]*?Reusing existing Docker-driver gateway/,
     );
   });
 

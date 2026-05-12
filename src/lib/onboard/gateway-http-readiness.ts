@@ -70,6 +70,7 @@ export function getGatewayReuseHealthWaitConfig(): { count: number; interval: nu
 export function isGatewayHttpReady(
   timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
   url = `http://127.0.0.1:${GATEWAY_PORT}/`,
+  method: "GET" | "POST" = "GET",
 ): Promise<boolean> {
   const effectiveTimeout =
     Number.isFinite(timeoutMs) && timeoutMs > 0
@@ -83,7 +84,7 @@ export function isGatewayHttpReady(
       resolve(ready);
     };
     const request = http
-      .get(url, (res) => {
+      .request(url, { method }, (res) => {
         res.resume();
         const code = res.statusCode || 0;
         settle(GATEWAY_HTTP_ALIVE_CODES.has(code));
@@ -93,7 +94,15 @@ export function isGatewayHttpReady(
       request.destroy();
       settle(false);
     });
+    request.end();
   });
+}
+
+export function isDockerDriverGatewayHttpReady(
+  timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
+  url = `http://127.0.0.1:${GATEWAY_PORT}/openshell.v1.OpenShell/Health`,
+): Promise<boolean> {
+  return isGatewayHttpReady(timeoutMs, url, "POST");
 }
 
 /**

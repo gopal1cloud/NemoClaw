@@ -277,6 +277,7 @@ const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
   getGatewayReuseHealthWaitConfig,
+  isDockerDriverGatewayHttpReady,
   isGatewayHttpReady,
   waitForGatewayHttpReady,
 } = require("./onboard/gateway-http-readiness") as typeof import("./onboard/gateway-http-readiness");
@@ -5310,7 +5311,7 @@ async function startDockerDriverGateway({
     const drift = getDockerDriverGatewayRuntimeDrift(pidFileGatewayPid, gatewayEnv, gatewayBin);
     if (drift) {
       restartDockerDriverGatewayProcessForDrift(pidFileGatewayPid, drift.reason);
-    } else if (registerDockerDriverGatewayEndpoint() && (await isGatewayHttpReady())) {
+    } else if (registerDockerDriverGatewayEndpoint() && (await isDockerDriverGatewayHttpReady())) {
       console.log("  ✓ Reusing existing Docker-driver gateway");
       return;
     } else {
@@ -5340,7 +5341,7 @@ async function startDockerDriverGateway({
       });
       if (
         isGatewayHealthy(adoptedStatus, adoptedGwInfo, adoptedActiveGatewayInfo) &&
-        (await isGatewayHttpReady())
+        (await isDockerDriverGatewayHttpReady())
       ) {
         console.log(`  ✓ Reusing existing Docker-driver gateway process (PID ${portListenerPid})`);
         return;
@@ -5406,7 +5407,10 @@ async function startDockerDriverGateway({
       ignoreError: true,
     });
     const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-    if (isGatewayHealthy(status, namedInfo, currentInfo) && (await isGatewayHttpReady())) {
+    if (
+      isGatewayHealthy(status, namedInfo, currentInfo) &&
+      (await isDockerDriverGatewayHttpReady())
+    ) {
       console.log("  ✓ Docker-driver gateway is healthy");
       return;
     }
@@ -11953,6 +11957,7 @@ module.exports = {
   getGatewayReuseHealthWaitConfig,
   getGatewayReuseState,
   isDockerDriverGatewayPortListener,
+  isDockerDriverGatewayHttpReady,
   isGatewayHttpReady,
   waitForGatewayHttpReady,
   handleFinalGatewayStartFailure,
