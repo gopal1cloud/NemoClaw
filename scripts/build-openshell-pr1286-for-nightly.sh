@@ -13,7 +13,7 @@ fail() {
   exit 1
 }
 
-PINNED_COMMIT="077544834681aa3c00f71a7d50a9efcd37afb5ad"
+PINNED_COMMIT="4e689703d0d4e78d6d6277c5d6a770726bf2957d"
 OPEN_SHELL_REPO_URL="https://github.com/ericksoa/OpenShell.git"
 OPEN_SHELL_BRANCH="fix/872-websocket-credential-rewrite"
 OPEN_SHELL_PR_URL="https://github.com/NVIDIA/OpenShell/pull/1286"

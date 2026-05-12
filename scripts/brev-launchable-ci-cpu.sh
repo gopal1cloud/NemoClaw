@@ -45,7 +45,7 @@ NEMOCLAW_REF="${NEMOCLAW_REF:-main}"
 TARGET_USER="${SUDO_USER:-$(id -un)}"
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 NEMOCLAW_CLONE_DIR="${NEMOCLAW_CLONE_DIR:-${TARGET_HOME}/NemoClaw}"
-NIGHTLY_PR1286_COMMIT="077544834681aa3c00f71a7d50a9efcd37afb5ad"
+NIGHTLY_PR1286_COMMIT="4e689703d0d4e78d6d6277c5d6a770726bf2957d"
 
 LAUNCH_LOG="${LAUNCH_LOG:-/tmp/launch-plugin.log}"
 SENTINEL="/var/run/nemoclaw-launchable-ready"
