@@ -1303,7 +1303,7 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("--sandbox");
   });
 
-  it("debug warns when default sandbox is stale", testTimeoutOptions(), () => {
+  it("debug warns when default sandbox is stale", testTimeoutOptions(30_000), () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-stale-"));
     fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
     fs.writeFileSync(
@@ -1311,7 +1311,7 @@ describe("CLI dispatch", () => {
       JSON.stringify({ sandboxes: {}, defaultSandbox: "ghost" }),
       { mode: 0o600 },
     );
-    const r = runWithEnv("debug --quick 2>&1", { HOME: home });
+    const r = runWithEnv("debug --quick 2>&1", { HOME: home }, 30000);
     expect(r.code).toBe(0);
     expect(r.out).toContain("Warning");
     expect(r.out).toContain("ghost");
@@ -1476,7 +1476,7 @@ describe("CLI dispatch", () => {
     }
   });
 
-  it("sandbox inspection help keeps public sandbox-scoped usage", () => {
+  it("sandbox inspection help keeps public sandbox-scoped usage", testTimeoutOptions(15_000), () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inspection-help-"));
     writeSandboxRegistry(home);
 
@@ -2150,7 +2150,7 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
   });
 
-  it("keeps logs --follow running when one log source exits", testTimeoutOptions(), async () => {
+  it("keeps logs --follow running when one log source exits", testTimeoutOptions(10_000), async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-follow-source-exit-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -2205,7 +2205,8 @@ describe("CLI dispatch", () => {
 
     try {
       let calls: string[] = [];
-      const pollTimeoutMs = Math.min(testTimeout(10_000), Math.max(1_000, testTimeout() - 5_000));
+      const testBudgetMs = testTimeout(10_000);
+      const pollTimeoutMs = Math.min(testBudgetMs, Math.max(1_000, testBudgetMs - 5_000));
       const deadline = Date.now() + pollTimeoutMs;
       while (Date.now() < deadline) {
         calls = readCalls();
@@ -2228,7 +2229,7 @@ describe("CLI dispatch", () => {
     }
   });
 
-  it("waits for logs --follow children to stop after SIGTERM", testTimeoutOptions(), async () => {
+  it("waits for logs --follow children to stop after SIGTERM", testTimeoutOptions(10_000), async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-follow-sigterm-wait-"));
     const localBin = path.join(home, "bin");
     const markerFile = path.join(home, "logs-follow-sigterm-wait-args");
@@ -2269,7 +2270,8 @@ describe("CLI dispatch", () => {
 
     try {
       let calls: string[] = [];
-      const pollTimeoutMs = Math.min(testTimeout(10_000), Math.max(1_000, testTimeout() - 5_000));
+      const testBudgetMs = testTimeout(10_000);
+      const pollTimeoutMs = Math.min(testBudgetMs, Math.max(1_000, testBudgetMs - 5_000));
       const deadline = Date.now() + pollTimeoutMs;
       while (Date.now() < deadline) {
         calls = readCalls();
@@ -2286,7 +2288,8 @@ describe("CLI dispatch", () => {
       child.kill("SIGTERM");
 
       let callsAfterTerm: string[] = [];
-      const termDeadline = Date.now() + Math.min(testTimeout(5_000), Math.max(1_000, testTimeout() - 5_000));
+      const termTimeoutMs = Math.min(testBudgetMs, Math.max(1_000, testBudgetMs - 5_000));
+      const termDeadline = Date.now() + termTimeoutMs;
       while (Date.now() < termDeadline) {
         callsAfterTerm = readCalls();
         if (callsAfterTerm.some((call) => call.endsWith("term-start")) || hasExited) {

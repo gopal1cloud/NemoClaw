@@ -80,11 +80,18 @@ version_gte() {
   return 0
 }
 
-linux_driver_bins_present() {
-  if [ "$OS" != "Linux" ]; then
-    return 0
-  fi
-  command -v openshell-gateway >/dev/null 2>&1 && command -v openshell-sandbox >/dev/null 2>&1
+required_driver_bins_present() {
+  case "$OS" in
+    Linux)
+      command -v openshell-gateway >/dev/null 2>&1 && command -v openshell-sandbox >/dev/null 2>&1
+      ;;
+    Darwin)
+      command -v openshell-gateway >/dev/null 2>&1 && command -v openshell-driver-vm >/dev/null 2>&1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
 }
 
 openshell_has_required_messaging_features() {
@@ -155,7 +162,7 @@ if command -v openshell >/dev/null 2>&1; then
       if ! version_gte "$MAX_VERSION" "$INSTALLED_VERSION"; then
         fail "openshell $INSTALLED_VERSION is above the maximum ($MAX_VERSION) supported by this NemoClaw release. Upgrade NemoClaw first."
       fi
-      if ! linux_driver_bins_present; then
+      if ! required_driver_bins_present; then
         warn "openshell $INSTALLED_VERSION is missing Docker-driver binaries — reinstalling pinned OpenShell ${PIN_VERSION}..."
       elif ! openshell_has_required_messaging_features; then
         fail "openshell $INSTALLED_VERSION is missing required messaging credential rewrite support. Install an OpenShell build that includes provider aliases, WebSocket text rewrite, and request-body credential rewrite."
@@ -188,20 +195,35 @@ esac
 
 declare -a ASSETS=("$ASSET")
 declare -a CHECKSUM_FILES=("openshell-checksums-sha256.txt")
-if [ "$OS" = "Linux" ]; then
-  case "$ARCH_LABEL" in
-    x86_64)
-      ASSETS+=("openshell-gateway-x86_64-unknown-linux-gnu.tar.gz")
-      ASSETS+=("openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz")
-      ;;
-    aarch64)
-      ASSETS+=("openshell-gateway-aarch64-unknown-linux-gnu.tar.gz")
-      ASSETS+=("openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz")
-      ;;
-  esac
-  CHECKSUM_FILES+=("openshell-gateway-checksums-sha256.txt")
-  CHECKSUM_FILES+=("openshell-sandbox-checksums-sha256.txt")
-fi
+case "$OS" in
+  Darwin)
+    case "$ARCH_LABEL" in
+      aarch64)
+        ASSETS+=("openshell-gateway-aarch64-apple-darwin.tar.gz")
+        ASSETS+=("openshell-driver-vm-aarch64-apple-darwin.tar.gz")
+        CHECKSUM_FILES+=("openshell-gateway-checksums-sha256.txt")
+        CHECKSUM_FILES+=("openshell-checksums-sha256.txt")
+        ;;
+      x86_64)
+        fail "OpenShell ${PIN_VERSION} does not publish macOS x86_64 standalone gateway assets."
+        ;;
+    esac
+    ;;
+  Linux)
+    case "$ARCH_LABEL" in
+      x86_64)
+        ASSETS+=("openshell-gateway-x86_64-unknown-linux-gnu.tar.gz")
+        ASSETS+=("openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz")
+        ;;
+      aarch64)
+        ASSETS+=("openshell-gateway-aarch64-unknown-linux-gnu.tar.gz")
+        ASSETS+=("openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz")
+        ;;
+    esac
+    CHECKSUM_FILES+=("openshell-gateway-checksums-sha256.txt")
+    CHECKSUM_FILES+=("openshell-sandbox-checksums-sha256.txt")
+    ;;
+esac
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
@@ -257,6 +279,9 @@ install_bins() {
   if [ -x "$tmpdir/openshell-sandbox" ]; then
     install -m 755 "$tmpdir/openshell-sandbox" "$dir/openshell-sandbox"
   fi
+  if [ -x "$tmpdir/openshell-driver-vm" ]; then
+    install -m 755 "$tmpdir/openshell-driver-vm" "$dir/openshell-driver-vm"
+  fi
 }
 
 if [ -w "$target_dir" ]; then
@@ -275,6 +300,9 @@ else
   fi
   if [ -x "$tmpdir/openshell-sandbox" ]; then
     sudo install -m 755 "$tmpdir/openshell-sandbox" "$target_dir/openshell-sandbox"
+  fi
+  if [ -x "$tmpdir/openshell-driver-vm" ]; then
+    sudo install -m 755 "$tmpdir/openshell-driver-vm" "$target_dir/openshell-driver-vm"
   fi
 fi
 
