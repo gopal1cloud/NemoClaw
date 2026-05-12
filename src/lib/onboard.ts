@@ -282,6 +282,11 @@ const policies: typeof import("./policies") = require("./policies");
 const shields = require("./shields");
 const tiers: typeof import("./tiers") = require("./tiers");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
+const {
+  getGatewayReuseHealthWaitConfig,
+  isGatewayHttpReady,
+  waitForGatewayHttpReady,
+} = require("./onboard/gateway-http-readiness") as typeof import("./onboard/gateway-http-readiness");
 const preflightUtils: typeof import("./onboard/preflight") = require("./onboard/preflight");
 const clusterImagePatch: typeof import("./cluster-image-patch") = require("./cluster-image-patch");
 const {
@@ -3478,124 +3483,6 @@ function gatewayClusterHealthcheckPassed(): boolean {
     suppressOutput: true,
   });
   return result.status === 0;
-}
-
-type WaitForGatewayHttpReadyOpts = {
-  probe?: () => Promise<boolean>;
-  sleeper?: (seconds: number) => void;
-  maxAttempts?: number;
-  intervalSeconds?: number;
-};
-
-/**
- * Resolve raw poll count and interval (seconds) for the reuse-time gateway
- * HTTP readiness wait, from `NEMOCLAW_REUSE_HEALTH_POLL_COUNT` and
- * `NEMOCLAW_REUSE_HEALTH_POLL_INTERVAL`.
- *
- * Defaults are tighter than the startup health wait because reuse only needs
- * to verify a previously-warm gateway is still serving — not wait for a cold
- * k3s cluster to come up.
- *
- * The values are normalised in `waitForGatewayHttpReady`, not here, so the
- * consumer-layer guards (probe at least once; non-negative interval) cover
- * both env-derived and caller-supplied options uniformly.
- */
-function getGatewayReuseHealthWaitConfig(): { count: number; interval: number } {
-  return {
-    count: envInt("NEMOCLAW_REUSE_HEALTH_POLL_COUNT", 6),
-    interval: envInt("NEMOCLAW_REUSE_HEALTH_POLL_INTERVAL", 5),
-  };
-}
-
-/**
- * HTTP status codes that indicate the gateway dispatcher is healthy.
- *
- * Mirrors the established whitelist in `verify-deployment.ts`: 200 = serving,
- * 401 = device-auth gate is enabled but the gateway is running. Anything else
- * — including 404, 403, 502, transport errors — is treated as not ready.
- */
-const GATEWAY_HTTP_ALIVE_CODES = new Set<number>([200, 401]);
-
-/**
- * Probe the host-level gateway HTTP endpoint at `http://127.0.0.1:${GATEWAY_PORT}/`.
- *
- * Returns true when the gateway responds with a known-alive status code,
- * false on any other status (notably 5xx from a warming upstream) or any
- * transport-level error.
- *
- * Doesn't depend on Docker — issues a direct HTTP request to the host port.
- * That makes it the right probe for the Docker-state-`unknown` branch where
- * the docker daemon is itself flaky.
- *
- * `url` is overridable for unit tests; production callers use the default.
- */
-const ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS = 3000;
-
-function isGatewayHttpReady(
-  timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
-  url = `http://127.0.0.1:${GATEWAY_PORT}/`,
-): Promise<boolean> {
-  const effectiveTimeout =
-    Number.isFinite(timeoutMs) && timeoutMs > 0
-      ? Math.round(timeoutMs)
-      : ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS;
-  const http = require("http");
-  return new Promise<boolean>((resolve) => {
-    let settled = false;
-    const settle = (ready: boolean) => {
-      if (settled) return;
-      settled = true;
-      resolve(ready);
-    };
-    const request = http
-      .get(url, (res: import("node:http").IncomingMessage) => {
-        res.resume();
-        const code = res.statusCode || 0;
-        settle(GATEWAY_HTTP_ALIVE_CODES.has(code));
-      })
-      .on("error", () => settle(false));
-    request.setTimeout(effectiveTimeout, () => {
-      request.destroy();
-      settle(false);
-    });
-  });
-}
-
-/**
- * Poll the gateway HTTP endpoint until it returns ready or the configured
- * budget is exhausted. Returns true on the first ready response, false if
- * no attempt succeeds within the budget.
- *
- * Used at gateway-reuse decision sites to catch the case where the container
- * is running (or Docker can't be probed) but the gateway upstream is still
- * warming up — e.g. immediately after `colima stop && colima start`. Without
- * this, openshell CLI metadata reports "healthy" from the previous run and
- * onboard skips startup, only to fail later in step 4 with "Connection
- * refused". See #3258 (regression of #2020).
- *
- * `probe` and `sleeper` are injectable for unit testing.
- */
-async function waitForGatewayHttpReady(
-  opts: WaitForGatewayHttpReadyOpts = {},
-): Promise<boolean> {
-  const probe = opts.probe ?? (() => isGatewayHttpReady());
-  const sleeper = opts.sleeper ?? sleep;
-  const config = getGatewayReuseHealthWaitConfig();
-  // Always probe at least once, even if the caller passed a non-positive
-  // maxAttempts. Non-finite (NaN, Infinity) values fall back to safe defaults
-  // — Math.max alone would let Infinity through and hang the loop, and NaN
-  // would propagate into sleeper().
-  const rawAttempts = opts.maxAttempts ?? config.count;
-  const maxAttempts = Number.isFinite(rawAttempts) ? Math.max(1, Math.round(rawAttempts)) : 1;
-  const rawInterval = opts.intervalSeconds ?? config.interval;
-  const intervalSeconds = Number.isFinite(rawInterval) ? Math.max(0, rawInterval) : 0;
-
-  if (await probe()) return true;
-  for (let attempt = 1; attempt < maxAttempts; attempt++) {
-    sleeper(intervalSeconds);
-    if (await probe()) return true;
-  }
-  return false;
 }
 
 function repairGatewayBootstrapSecrets(): { repaired: boolean; missingSecrets: string[] } {
