@@ -12,7 +12,7 @@ NC='\033[0m'
 info() { echo -e "${GREEN}[install]${NC} $1"; }
 warn() { echo -e "${YELLOW}[install]${NC} $1"; }
 fail() {
-  echo -e "${RED}[install]${NC} $1"
+  echo -e "${RED}[install]${NC} $1" >&2
   exit 1
 }
 
@@ -65,8 +65,9 @@ fi
 # (nemoclaw-blueprint/blueprint.yaml) drives the install (#3404).
 #
 # Validation is inlined (rather than wrapped in a helper that returns via
-# $(...)) so that `fail`'s error message reaches the user's stderr instead of
-# being captured into the variable assignment.
+# $(...)) so a `fail` triggered here is not captured into the variable
+# assignment. `fail` now writes to stderr (#3446 CodeRabbit), but keeping
+# the validation outside of $(...) avoids relying on that.
 if [ "$RESOLVED_CHANNEL" != "dev" ]; then
   if [ -n "${NEMOCLAW_OPENSHELL_MIN_VERSION:-}" ]; then
     if [[ "$NEMOCLAW_OPENSHELL_MIN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
