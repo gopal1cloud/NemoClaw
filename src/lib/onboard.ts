@@ -3297,7 +3297,6 @@ function getDockerDriverGatewayEnv(
     stateDir: getDockerDriverGatewayStateDir(),
     dockerNetworkName: process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
     getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
-    resolveVmDriverBin: resolveOpenShellVmDriverBinary,
     resolveSandboxBin: resolveOpenShellSandboxBinary,
   });
 }
@@ -3870,8 +3869,8 @@ async function preflight(
   if (host.runtime !== "unknown") {
     console.log(`  ✓ Container runtime: ${host.runtime}`);
   }
-  if (isLinuxDockerDriverGatewayPlatform() && host.runtime === "podman") {
-    console.error("  ✗ NemoClaw Linux onboarding now uses OpenShell's Docker driver.");
+  if (isLinuxDockerDriverGatewayEnabled() && host.runtime === "podman") {
+    console.error("  ✗ NemoClaw onboarding now uses OpenShell's Docker driver.");
     console.error("    Podman is not supported for this NemoClaw integration path.");
     console.error("    Switch to Docker Engine and rerun onboarding.");
     process.exit(1);
@@ -4887,11 +4886,7 @@ function getSandboxRuntimeRegistryFields(
     sandboxGpuEnabled: config.sandboxGpuEnabled,
     sandboxGpuMode: config.mode,
     sandboxGpuDevice: config.sandboxGpuDevice,
-    openshellDriver: isLinuxDockerDriverGatewayEnabled()
-      ? process.platform === "darwin"
-        ? "vm"
-        : "docker"
-      : "kubernetes",
+    openshellDriver: isLinuxDockerDriverGatewayEnabled() ? "docker" : "kubernetes",
     openshellVersion: getInstalledOpenshellVersion(
       runCaptureOpenshell(["--version"], { ignoreError: true }),
     ),
@@ -5847,7 +5842,9 @@ async function createSandbox(
     discordGuilds,
     resolved ? resolved.ref : null,
     telegramConfig,
-    process.platform === "darwin",
+    // Docker-on-Colima uses normal container ownership; keep the old VM chmod
+    // compatibility path disabled unless a future VM-specific flow opts in.
+    false,
   );
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
@@ -6148,7 +6145,7 @@ async function createSandbox(
 
   // DNS proxy — run a forwarder in the sandbox pod so the isolated
   // sandbox namespace can resolve hostnames (fixes #626).
-  if (!isLinuxDockerDriverGatewayPlatform()) {
+  if (!isLinuxDockerDriverGatewayEnabled()) {
     console.log("  Setting up sandbox DNS proxy...");
     runFile("bash", [path.join(SCRIPTS, "setup-dns-proxy.sh"), GATEWAY_NAME, sandboxName], {
       ignoreError: true,
