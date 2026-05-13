@@ -452,7 +452,42 @@ export async function addSandboxChannel(sandboxName: string, args: string[] = []
   // the rebuild used to drop the queued token.
   await applyChannelAddToGatewayAndRegistry(sandboxName, channelArg, acquired);
   console.log(`  ${G}✓${R} Registered ${channelArg} bridge with the OpenShell gateway.`);
+
+  applyChannelPresetIfAvailable(sandboxName, channelArg);
+
   await promptAndRebuild(sandboxName, `add '${channelArg}'`);
+}
+
+/**
+ * Apply the network policy preset whose name matches the channel name
+ * (e.g. `telegram` channel → `telegram.yaml` preset under
+ * `nemoclaw-blueprint/policies/presets/`). No-op if the channel has no
+ * matching built-in preset. Idempotent — safe to call when the preset is
+ * already applied. Logs failure but does not abort, mirroring rebuild
+ * Step 5.5's tolerance — the user can recover with `policy-add` if it fails.
+ */
+function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): void {
+  const builtinPresets = new Set(policies.listPresets().map((p) => p.name));
+  if (!builtinPresets.has(channelName)) {
+    return;
+  }
+  try {
+    const applied = policies.applyPreset(sandboxName, channelName);
+    if (!applied) {
+      console.error(
+        `  ${YW}⚠${R} Channel '${channelName}' bridge registered but its policy preset failed to apply.`,
+      );
+      console.error(
+        `    Re-apply manually after rebuild with: ${CLI_NAME} ${sandboxName} policy-add ${channelName}`,
+      );
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  ${YW}⚠${R} Failed to apply '${channelName}' policy preset: ${msg}`);
+    console.error(
+      `    Re-apply manually after rebuild with: ${CLI_NAME} ${sandboxName} policy-add ${channelName}`,
+    );
+  }
 }
 
 export async function removeSandboxChannel(sandboxName: string, args: string[] = []): Promise<void> {
