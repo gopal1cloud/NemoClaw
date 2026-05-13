@@ -18,8 +18,8 @@
 //   or thinking blocks.
 //
 //   Also inject `chat_template_kwargs: { thinking: false }` for
-//   deepseek-ai/deepseek-v4-pro and moonshotai/kimi-k2.6, matching NVIDIA
-//   Build's tested invocation shape for the OpenAI-compatible
+//   deepseek-ai/deepseek-v4-pro, moonshotai/kimi-k2.6, and z-ai/glm-5.x,
+//   matching NVIDIA Build's tested invocation shape for the OpenAI-compatible
 //   chat-completions endpoint.
 //
 //   Scoped strictly to known affected models — all other requests pass
@@ -35,6 +35,7 @@
   var NEMOTRON_RE = /nemotron/i;
   var DEEPSEEK_V4_PRO_RE = /^deepseek-ai\/deepseek-v4-pro$/i;
   var KIMI_K26_RE = /^moonshotai\/kimi-k2\.6$/i;
+  var GLM_5_RE = /^z-ai\/glm-5(?:[./:-]|$)/i;
   var COMPLETIONS_RE = /\/v1\/chat\/completions/;
 
   function hasObjectChatTemplateKwargs(body) {
@@ -93,7 +94,8 @@
             body && body.model &&
             (NEMOTRON_RE.test(body.model) ||
               DEEPSEEK_V4_PRO_RE.test(body.model) ||
-              KIMI_K26_RE.test(body.model))
+              KIMI_K26_RE.test(body.model) ||
+              GLM_5_RE.test(body.model))
           ) {
             if (!hasObjectChatTemplateKwargs(body)) {
               body.chat_template_kwargs = {};
@@ -101,7 +103,11 @@
             if (NEMOTRON_RE.test(body.model)) {
               body.chat_template_kwargs.force_nonempty_content = true;
             }
-            if (DEEPSEEK_V4_PRO_RE.test(body.model) || KIMI_K26_RE.test(body.model)) {
+            if (
+              DEEPSEEK_V4_PRO_RE.test(body.model) ||
+              KIMI_K26_RE.test(body.model) ||
+              GLM_5_RE.test(body.model)
+            ) {
               body.chat_template_kwargs.thinking = false;
             }
             intercepted = true;

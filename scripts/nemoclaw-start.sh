@@ -1300,7 +1300,7 @@ fi
 # kwarg `force_nonempty_content` prevents this by ensuring the template
 # always emits a non-empty content field.
 #
-# DeepSeek V4 Pro and Kimi K2.6 on NVIDIA Build expect chat template
+# DeepSeek V4 Pro, Kimi K2.6, and GLM-5.x on NVIDIA Build expect chat template
 # thinking mode disabled for NemoClaw's OpenAI-compatible
 # chat-completions path.
 #

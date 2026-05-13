@@ -106,6 +106,7 @@ function send(mod, options, body) {
 send(http, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'NVIDIA/NEMOTRON-4', messages: [] }));
 send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'deepseek-ai/deepseek-v4-pro', messages: [], chat_template_kwargs: { existing: true, thinking: true } }));
 send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'moonshotai/kimi-k2.6', messages: [], chat_template_kwargs: { existing: true, thinking: true } }));
+send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'z-ai/glm-5.1', messages: [], chat_template_kwargs: { existing: true, thinking: true } }));
 send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'other-model', messages: [] }));
 send(http, { method: 'POST', path: '/v1/chat/completions' }, '{not json');
 send(http, { method: 'GET', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nemotron' }));
@@ -143,10 +144,19 @@ console.log(JSON.stringify(records));
     expect(records[2].removed).toContain("content-length");
     expect(Number(records[2].headers["Content-Length"])).toBeGreaterThan(0);
 
-    const otherBody = JSON.parse(records[3].writes[0]);
+    const glmBody = JSON.parse(records[3].writes[0]);
+    expect(glmBody.chat_template_kwargs).toEqual({
+      existing: true,
+      thinking: false,
+    });
+    expect(glmBody.chat_template_kwargs.force_nonempty_content).toBeUndefined();
+    expect(records[3].removed).toContain("content-length");
+    expect(Number(records[3].headers["Content-Length"])).toBeGreaterThan(0);
+
+    const otherBody = JSON.parse(records[4].writes[0]);
     expect(otherBody.chat_template_kwargs).toBeUndefined();
-    expect(records[4].writes[0]).toBe("{not json");
-    expect(JSON.parse(records[5].writes[0]).chat_template_kwargs).toBeUndefined();
+    expect(records[5].writes[0]).toBe("{not json");
     expect(JSON.parse(records[6].writes[0]).chat_template_kwargs).toBeUndefined();
+    expect(JSON.parse(records[7].writes[0]).chat_template_kwargs).toBeUndefined();
   });
 });
