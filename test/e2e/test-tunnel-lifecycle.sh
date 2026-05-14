@@ -144,7 +144,6 @@ preflight() {
 onboard_sandbox() {
   local name="$1"
   log "  Onboarding sandbox '$name'..."
-  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
   NEMOCLAW_SANDBOX_NAME="$name" \
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
