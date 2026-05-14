@@ -306,9 +306,9 @@ test_backup_restore_lifecycle() {
   local memory_probe memory_probe_rc=0
   memory_probe=$(sandbox_exec "if [ -f '${workspace_path}/memory/2026-04-20.md' ]; then printf 'STATE=EXISTS\\n'; cat '${workspace_path}/memory/2026-04-20.md'; else printf 'STATE=MISSING\\n'; fi") || memory_probe_rc=$?
 
-  if grep -q "${marker_content}_daily" <<< "$memory_probe"; then
+  if grep -q "${marker_content}_daily" <<<"$memory_probe"; then
     pass "TC-STATE-01: MemoryDirRestore — memory directory contents restored correctly"
-  elif grep -q "^STATE=MISSING" <<< "$memory_probe"; then
+  elif grep -q "^STATE=MISSING" <<<"$memory_probe"; then
     print_restore_output_for_diag "$restore_output"
     fail "TC-STATE-01: MemoryDirRestore" "memory/2026-04-20.md does NOT exist on sandbox after restore — backup captured it (BackupCaptureDir passed above) but restore chain dropped the directory (likely 'openshell sandbox upload' directory bug)"
   else

@@ -353,7 +353,7 @@ test_tunnel_lifecycle() {
       log "  [$i/$max_retries] Tunnel not yet reachable ('$http_code'); LOCAL is healthy → Cloudflare quick-tunnel not ready (DNS propagation or edge instability); backoff ${backoff}s..."
       sleep "$backoff"
       backoff=$((backoff * 2))
-      (( backoff > 30 )) && backoff=30
+      ((backoff > 30)) && backoff=30
     done
 
     if [[ "$http_code" == "200" ]]; then
