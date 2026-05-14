@@ -51,8 +51,7 @@ fail() {
   ((TOTAL += 1))
   echo -e "${RED}  FAIL${NC} $1 — $2" | tee -a "$LOG_FILE"
 }
-# Record a skipped test. (Kept for symmetry with pass/fail; unused after SKIP→FAIL conversion.)
-# shellcheck disable=SC2329
+# Record a skipped test.
 skip() {
   ((SKIP += 1))
   ((TOTAL += 1))
@@ -183,7 +182,7 @@ test_backup_restore_lifecycle() {
     memory_written=1
   fi
 
-  if [[ $files_written -eq 0 || $memory_written -eq 0 ]]; then
+  if [[ $files_written -ne 5 || $memory_written -ne 1 ]]; then
     fail "TC-STATE-01: Setup" "Could not write workspace files (files_written=$files_written/5, memory_written=$memory_written/1)"
     return
   fi
