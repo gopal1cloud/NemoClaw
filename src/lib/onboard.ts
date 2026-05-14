@@ -41,6 +41,8 @@ const dockerGpuSandboxCreate: typeof import("./onboard/docker-gpu-sandbox-create
 const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") = require("./onboard/docker-driver-gateway-launch");
 const { findReadableNvidiaCdiSpecFiles, getDockerCdiSpecDirs, parseDockerCdiSpecDirs }: typeof import("./onboard/docker-cdi") = require("./onboard/docker-cdi");
 const { buildSandboxGpuCreateArgs, getSandboxReadyTimeoutSecs }: typeof import("./onboard/sandbox-gpu-create") = require("./onboard/sandbox-gpu-create");
+const { formatSandboxBuildEstimateNote }: typeof import("./onboard/build-estimate") = require("./onboard/build-estimate");
+const { selectResourceProfileForSandbox }: typeof import("./onboard/resource-profile-selection") = require("./onboard/resource-profile-selection");
 const {
   isValidProxyHost,
   isValidProxyPort,
@@ -310,8 +312,7 @@ const providerModels: typeof import("./inference/provider-models") = require("./
 const sandboxCreateStream: typeof import("./sandbox/create-stream") = require("./sandbox/create-stream");
 const validationRecovery: typeof import("./validation-recovery") = require("./validation-recovery");
 const webSearch: typeof import("./inference/web-search") = require("./inference/web-search");
-const resourcesCmd: typeof import("./resources-cmd") = require("./resources-cmd");
-const { appendResourceFlags, getHardwareResources, loadResourceProfiles, resolveResourceValue } = resourcesCmd;
+const { appendResourceFlags }: typeof import("./resources-cmd") = require("./resources-cmd");
 const openshellInstallFlow: typeof import("./onboard/openshell-install") =
   require("./onboard/openshell-install");
 const openshellPinFlow: typeof import("./onboard/openshell-pin") =
@@ -323,7 +324,6 @@ import type { AgentDefinition } from "./agent/defs";
 import type { CurlProbeResult } from "./adapters/http/probe";
 import type { GatewayReuseState } from "./state/gateway";
 import type { GatewayInference } from "./inference/config";
-import type { ResourceProfile } from "./resources-cmd";
 import type { GpuInfo, ValidationResult } from "./inference/local";
 import {
   hydrateMessagingChannelConfig,
@@ -4942,25 +4942,6 @@ type OnboardConfigSummary = {
  *                     rendered as "Note: <text>" so it stays visually
  *                     distinct.
  */
-function formatSandboxBuildEstimateNote(host: ReturnType<typeof assessHost>): string | null {
-  if (host.isContainerRuntimeUnderProvisioned) {
-    return (
-      "Container runtime is under-provisioned; the sandbox build may take 30+ minutes " +
-      "or stall. See preflight warning above."
-    );
-  }
-  const cpus = host.dockerCpus;
-  const memBytes = host.dockerMemTotalBytes;
-  if (typeof cpus === "number" && typeof memBytes === "number") {
-    const memGiB = memBytes / 1024 ** 3;
-    if (cpus >= 8 && memGiB >= 16) {
-      return "Sandbox build typically takes 3–8 minutes on this host.";
-    }
-    return "Sandbox build typically takes 5–15 minutes on this host.";
-  }
-  return null;
-}
-
 function formatOnboardConfigSummary({
   provider,
   model,
@@ -5011,116 +4992,6 @@ function formatOnboardConfigSummary({
   ].join("\n");
 }
 
-function hasResourceEnvOverrides(): boolean {
-  return !!(
-    process.env.NEMOCLAW_CPU_REQUEST ||
-    process.env.NEMOCLAW_CPU_LIMIT ||
-    process.env.NEMOCLAW_RAM_REQUEST ||
-    process.env.NEMOCLAW_RAM_LIMIT
-  );
-}
-
-function applyResourceEnvOverrides(selectedProfile: ResourceProfile | null): ResourceProfile | null {
-  if (!hasResourceEnvOverrides()) return selectedProfile;
-  const nextProfile = selectedProfile || {
-    cpu_request: "",
-    cpu_limit: "",
-    memory_request: "",
-    memory_limit: "",
-  };
-  if (process.env.NEMOCLAW_CPU_REQUEST) nextProfile.cpu_request = process.env.NEMOCLAW_CPU_REQUEST;
-  if (process.env.NEMOCLAW_CPU_LIMIT) nextProfile.cpu_limit = process.env.NEMOCLAW_CPU_LIMIT;
-  if (process.env.NEMOCLAW_RAM_REQUEST) nextProfile.memory_request = process.env.NEMOCLAW_RAM_REQUEST;
-  if (process.env.NEMOCLAW_RAM_LIMIT) nextProfile.memory_limit = process.env.NEMOCLAW_RAM_LIMIT;
-  note(
-    `  Resource overrides (env): cpu=${nextProfile.cpu_request}/${nextProfile.cpu_limit}, ram=${nextProfile.memory_request}/${nextProfile.memory_limit}`,
-  );
-  return nextProfile;
-}
-
-function exitWithResourceProfileError(message: string): never {
-  console.error(`  ${message}`);
-  process.exit(1);
-}
-
-function printResolvedResourceProfile(profile: ResourceProfile, cpuTotal: number, memTotal: number): void {
-  const resolvedCpuRequest = resolveResourceValue(profile.cpu_request, cpuTotal, "cpu");
-  const resolvedCpuLimit = resolveResourceValue(profile.cpu_limit, cpuTotal, "cpu");
-  const resolvedMemoryRequest = resolveResourceValue(profile.memory_request, memTotal, "memory");
-  const resolvedMemoryLimit = resolveResourceValue(profile.memory_limit, memTotal, "memory");
-  console.log(
-    `  Resolved: CPU request=${resolvedCpuRequest} cores, CPU limit=${resolvedCpuLimit} cores, RAM request=${resolvedMemoryRequest}, RAM limit=${resolvedMemoryLimit}`,
-  );
-}
-
-async function selectResourceProfileForSandbox(): Promise<ResourceProfile | null> {
-  const availableProfiles = loadResourceProfiles();
-  const profileNames = Object.keys(availableProfiles);
-  let selectedProfile: ResourceProfile | null = null;
-
-  if (process.env.NEMOCLAW_RESOURCE_PROFILE) {
-    const envProfile = process.env.NEMOCLAW_RESOURCE_PROFILE;
-    if (profileNames.length > 0 && availableProfiles[envProfile]) {
-      selectedProfile = { ...availableProfiles[envProfile] };
-      note(`  Resource profile (env): ${envProfile}`);
-    } else {
-      console.error(`  Unknown resource profile: '${envProfile}'`);
-      console.error(`  Valid profiles: ${profileNames.join(", ")}`);
-      process.exit(1);
-    }
-  } else if (profileNames.length > 0 && !isNonInteractive() && !hasResourceEnvOverrides()) {
-    const hw = getHardwareResources();
-    console.log("");
-    console.log("  Resource profiles:");
-    profileNames.forEach((name: string, i: number) => {
-      const p = availableProfiles[name];
-      console.log(
-        `    ${i + 1}) ${name} (cpu=${p.cpu_request}/${p.cpu_limit}, ram=${p.memory_request}/${p.memory_limit})`,
-      );
-    });
-    console.log(`    ${profileNames.length + 1}) custom (enter values manually)`);
-    console.log(`    ${profileNames.length + 2}) No profile (default resources)`);
-    const choice = await promptOrDefault(
-      `  Choose [${profileNames.length + 2}]: `,
-      null,
-      String(profileNames.length + 2),
-    );
-    const trimmedChoice = choice.trim();
-    const idx = Number.parseInt(trimmedChoice, 10) - 1;
-    if (!/^\d+$/.test(trimmedChoice) || idx < 0 || idx > profileNames.length + 1) {
-      exitWithResourceProfileError(
-        `Invalid resource profile selection '${choice}'. Choose a number from 1 to ${profileNames.length + 2}.`,
-      );
-    }
-    if (idx >= 0 && idx < profileNames.length) {
-      selectedProfile = availableProfiles[profileNames[idx]];
-      console.log(`  Using profile: ${profileNames[idx]}`);
-    } else if (idx === profileNames.length) {
-      console.log("");
-      console.log(`  Available: ${hw.cpu.cores} CPU cores, ${hw.memory.totalMB} MB RAM`);
-      console.log("  Enter values as percentages (e.g. 25%) or absolutes (e.g. 4, 8Gi)");
-      console.log("");
-      const cpuReq = (await prompt(`  CPU min (request) [25%]: `)).trim() || "25%";
-      const cpuLim = (await prompt(`  CPU max (limit) [50%]: `)).trim() || "50%";
-      const ramReq = (await prompt(`  RAM min (request) [25%]: `)).trim() || "25%";
-      const ramLim = (await prompt(`  RAM max (limit) [50%]: `)).trim() || "50%";
-      selectedProfile = {
-        cpu_request: cpuReq,
-        cpu_limit: cpuLim,
-        memory_request: ramReq,
-        memory_limit: ramLim,
-      };
-      try {
-        printResolvedResourceProfile(selectedProfile, hw.cpu.cores, hw.memory.totalMB);
-      } catch (e: unknown) {
-        exitWithResourceProfileError((e as Error).message);
-      }
-    }
-  }
-
-  return applyResourceEnvOverrides(selectedProfile);
-}
-
 async function createSandbox(
   gpu: ReturnType<typeof nim.detectGpu>,
   model: string,
@@ -5133,7 +5004,7 @@ async function createSandbox(
   agent: AgentDefinition | null = null,
   controlUiPort: number | null = null,
   sandboxGpuConfig: SandboxGpuConfig | null = null,
-  resourceProfile: ResourceProfile | null = null,
+  resourceProfile: import("./resources-cmd").ResourceProfile | null = null,
 ) {
   step(6, 8, "Creating sandbox");
 
@@ -10850,7 +10721,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         console.error("  Inference selection is incomplete; cannot create sandbox.");
         process.exit(1);
       }
-      const selectedProfile = await selectResourceProfileForSandbox();
+      const selectedProfile = await selectResourceProfileForSandbox({
+        isNonInteractive,
+        note,
+        prompt,
+        promptOrDefault,
+      });
       if (fresh) {
         stopStaleDashboardListenersForSandbox(registry.listSandboxes().sandboxes, sandboxName);
       }

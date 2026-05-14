@@ -23,6 +23,33 @@ function getGatewayContainer(): string {
   return process.env.NEMOCLAW_GATEWAY_CONTAINER || `openshell-cluster-${GATEWAY_NAME}`;
 }
 
+function getBlueprintPath(): string {
+  return path.join(__dirname, "..", "..", "nemoclaw-blueprint", "blueprint.yaml");
+}
+
+function parseResourceProfilesFromBlueprint(
+  blueprintPath: string,
+): Record<string, ResourceProfile> {
+  if (!fs.existsSync(blueprintPath)) return {};
+  const content = fs.readFileSync(blueprintPath, "utf-8");
+  const blueprint = YAML.parse(content);
+  const raw = blueprint?.components?.sandbox?.resource_profiles;
+  if (!raw || typeof raw !== "object") return {};
+  const profiles: Record<string, ResourceProfile> = {};
+  for (const [name, p] of Object.entries(raw)) {
+    const prof = p as Record<string, unknown>;
+    if (prof.cpu_request && prof.cpu_limit && prof.memory_request && prof.memory_limit) {
+      profiles[name] = {
+        cpu_request: String(prof.cpu_request),
+        cpu_limit: String(prof.cpu_limit),
+        memory_request: String(prof.memory_request),
+        memory_limit: String(prof.memory_limit),
+      };
+    }
+  }
+  return profiles;
+}
+
 // ── Types ────────────────────────────────────────────────────────
 
 export interface ResourceProfile {
@@ -114,24 +141,8 @@ export function getHardwareResources(): HardwareResources {
   // Resource profiles from blueprint.yaml (CPU/RAM only)
   let profiles: Record<string, ResourceProfile> | null = null;
   try {
-    const blueprintPath = path.join(__dirname, "..", "..", "nemoclaw-blueprint", "blueprint.yaml");
-    if (fs.existsSync(blueprintPath)) {
-      const content = fs.readFileSync(blueprintPath, "utf-8");
-      const blueprint = YAML.parse(content);
-      const raw = blueprint?.components?.sandbox?.resource_profiles;
-      if (raw && typeof raw === "object") {
-        profiles = {};
-        for (const [name, p] of Object.entries(raw)) {
-          const prof = p as Record<string, unknown>;
-          profiles[name] = {
-            cpu_request: String(prof.cpu_request || ""),
-            cpu_limit: String(prof.cpu_limit || ""),
-            memory_request: String(prof.memory_request || ""),
-            memory_limit: String(prof.memory_limit || ""),
-          };
-        }
-      }
-    }
+    const parsedProfiles = parseResourceProfilesFromBlueprint(getBlueprintPath());
+    profiles = Object.keys(parsedProfiles).length > 0 ? parsedProfiles : null;
   } catch {
     // blueprint.yaml missing or unparseable — skip profiles
   }
@@ -148,11 +159,11 @@ export function getHardwareResources(): HardwareResources {
  * Print hardware resources. JSON mode writes to stdout for machine parsing.
  * Human mode writes a formatted table to stdout via console.log.
  */
-export function printHardwareResources(json: boolean): void {
+export function printHardwareResources(json: boolean): HardwareResources {
   const hw = getHardwareResources();
   if (json) {
     process.stdout.write(JSON.stringify(hw) + "\n");
-    return;
+    return hw;
   }
   console.log("");
   console.log("  Hardware Resources");
@@ -187,17 +198,9 @@ export function printHardwareResources(json: boolean): void {
   }
   console.log("  " + "\u2500".repeat(44));
   console.log("");
+  return hw;
 }
 
-/**
- * Resolve a resource value that may be a percentage (e.g. "25%") or an
- * absolute Kubernetes quantity (e.g. "4", "8Gi"). Percentages are resolved
- * against the provided total.
- *
- * @param value  - raw value from profile or env var (e.g. "25%" or "4")
- * @param total  - total available (cores for CPU, MB for memory)
- * @param unit   - "cpu" (returns integer string) or "memory" (returns "XGi")
- */
 /**
  * Resolve a resource value that may be a percentage or absolute quantity.
  * Throws on invalid percentages so callers can surface clear errors.
@@ -230,10 +233,6 @@ export function resolveResourceValue(
   return trimmed;
 }
 
-/**
- * Resolve all percentage values in a profile to absolute Kubernetes quantities.
- * Returns a new profile with resolved values.
- */
 /**
  * Parse a Kubernetes CPU quantity to whole cores.
  * Handles plain integers ("16") and millicores ("7500m" → 7.5 → 7).
@@ -288,14 +287,17 @@ export function appendResourceFlags(
   } catch {
     return false;
   }
-  // Resolve percentages to absolute values (throws on invalid %)
-  const hw = getHardwareResources();
-  const resolved = resolveProfile(profile, hw);
-  if (resolved.cpu_request) args.push("--cpu-request", resolved.cpu_request);
-  if (resolved.cpu_limit) args.push("--cpu-limit", resolved.cpu_limit);
-  if (resolved.memory_request) args.push("--memory-request", resolved.memory_request);
-  if (resolved.memory_limit) args.push("--memory-limit", resolved.memory_limit);
-  return true;
+  try {
+    const hw = getHardwareResources();
+    const resolved = resolveProfile(profile, hw);
+    if (resolved.cpu_request) args.push("--cpu-request", resolved.cpu_request);
+    if (resolved.cpu_limit) args.push("--cpu-limit", resolved.cpu_limit);
+    if (resolved.memory_request) args.push("--memory-request", resolved.memory_request);
+    if (resolved.memory_limit) args.push("--memory-limit", resolved.memory_limit);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -304,25 +306,7 @@ export function appendResourceFlags(
  */
 export function loadResourceProfiles(): Record<string, ResourceProfile> {
   try {
-    const blueprintPath = path.join(__dirname, "..", "..", "nemoclaw-blueprint", "blueprint.yaml");
-    if (!fs.existsSync(blueprintPath)) return {};
-    const content = fs.readFileSync(blueprintPath, "utf-8");
-    const blueprint = YAML.parse(content);
-    const raw = blueprint?.components?.sandbox?.resource_profiles;
-    if (!raw || typeof raw !== "object") return {};
-    const profiles: Record<string, ResourceProfile> = {};
-    for (const [name, p] of Object.entries(raw)) {
-      const prof = p as Record<string, unknown>;
-      if (prof.cpu_request && prof.cpu_limit && prof.memory_request && prof.memory_limit) {
-        profiles[name] = {
-          cpu_request: String(prof.cpu_request),
-          cpu_limit: String(prof.cpu_limit),
-          memory_request: String(prof.memory_request),
-          memory_limit: String(prof.memory_limit),
-        };
-      }
-    }
-    return profiles;
+    return parseResourceProfilesFromBlueprint(getBlueprintPath());
   } catch {
     return {};
   }

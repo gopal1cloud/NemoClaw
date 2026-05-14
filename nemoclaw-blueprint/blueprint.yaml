@@ -47,10 +47,10 @@ components:
         memory_request: "12%"
         memory_limit: "25%"
       game-developer:
-        cpu_request: "25%"
-        cpu_limit: "50%"
-        memory_request: "25%"
-        memory_limit: "50%"
+        cpu_request: "30%"
+        cpu_limit: "60%"
+        memory_request: "30%"
+        memory_limit: "60%"
       developer:
         cpu_request: "37%"
         cpu_limit: "75%"
