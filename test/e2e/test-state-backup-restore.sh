@@ -151,6 +151,14 @@ onboard_sandbox() {
   log "  Sandbox '$name' onboarded"
 }
 
+# Print full restore output to help triage directory-restore failures.
+print_restore_output_for_diag() {
+  local restore_output="$1"
+  log "  --- Full restore output (for diagnostic) ---"
+  printf '%s\n' "$restore_output" | sed 's/^/    /' | tee -a "$LOG_FILE" || true
+  log "  --- end restore output ---"
+}
+
 # =============================================================================
 # TC-STATE-01: backup-workspace.sh lifecycle
 # =============================================================================
@@ -163,23 +171,28 @@ test_backup_restore_lifecycle() {
 
   log "  Step 1: Writing marker content into workspace files..."
   local files_written=0
+  # Write the marker content into the workspace files
   for f in SOUL.md USER.md IDENTITY.md AGENTS.md MEMORY.md; do
     if sandbox_exec "mkdir -p $workspace_path && echo '${marker_content}_${f}' > ${workspace_path}/${f}" 2>/dev/null; then
       files_written=$((files_written + 1))
     fi
   done
-  sandbox_exec "mkdir -p ${workspace_path}/memory && echo '${marker_content}_daily' > ${workspace_path}/memory/2026-04-20.md" 2>/dev/null || true
+  # Write the marker content into the workspace memory directory
+  local memory_written=0
+  if sandbox_exec "mkdir -p ${workspace_path}/memory && echo '${marker_content}_daily' > ${workspace_path}/memory/2026-04-20.md" 2>/dev/null; then
+    memory_written=1
+  fi
 
-  if [[ $files_written -eq 0 ]]; then
-    fail "TC-STATE-01: Setup" "Could not write any workspace files"
+  if [[ $files_written -eq 0 || $memory_written -eq 0 ]]; then
+    fail "TC-STATE-01: Setup" "Could not write workspace files (files_written=$files_written/5, memory_written=$memory_written/1)"
     return
   fi
-  log "  Wrote $files_written workspace files + memory note"
+  log "  Wrote marker content to $files_written/5 workspace files + $memory_written/1 memory directory"
 
   log "  Step 2: Running backup-workspace.sh backup..."
   local backup_output
   backup_output=$(bash "$REPO_ROOT/scripts/backup-workspace.sh" backup "$SANDBOX_NAME" 2>&1) || true
-  log "  Backup output: ${backup_output:0:300}"
+  log "  Backup output: ${backup_output}"
 
   if echo "$backup_output" | grep -q "Backup saved"; then
     pass "TC-STATE-01: Backup completed successfully"
@@ -194,7 +207,36 @@ test_backup_restore_lifecycle() {
     fail "TC-STATE-01: Backup dir" "No backup directory found"
     return
   fi
-  log "  Backup dir: $backup_dir"
+  log "  Backup dir found: $backup_dir"
+
+  # Verify backup captured all 6 items on host (5 .md files + memory/ dir) BEFORE
+  # destroy, so a silent drop in the download chain doesn't surface as an
+  # ambiguous restore failure later.
+  log "  Step 2b: Verifying backup captured all 5 .md files on host..."
+  local backup_files_ok=0
+  for f in SOUL.md USER.md IDENTITY.md AGENTS.md MEMORY.md; do
+    if [[ -f "${backup_dir}/${f}" ]] && grep -q "${marker_content}_${f}" "${backup_dir}/${f}" 2>/dev/null; then
+      backup_files_ok=$((backup_files_ok + 1))
+    else
+      log "  WARNING: ${backup_dir}/${f} missing or content mismatch"
+    fi
+  done
+  if [[ $backup_files_ok -ne 5 ]]; then
+    fail "TC-STATE-01: BackupCaptureFiles" "Only $backup_files_ok/5 .md files captured correctly in host backup (docs say all 5 must be present — partial capture is a real bug in backup-workspace.sh FILES loop or 'openshell sandbox download')"
+    return
+  fi
+  pass "TC-STATE-01: BackupCaptureFiles — 5/5 .md files captured in host backup"
+
+  log "  Step 2c: Verifying backup captured memory directory on host..."
+  if [[ ! -f "${backup_dir}/memory/2026-04-20.md" ]]; then
+    fail "TC-STATE-01: BackupCaptureDir" "backup-workspace.sh reported success but '${backup_dir}/memory/2026-04-20.md' does NOT exist on host — backup did NOT capture memory directory (likely 'openshell sandbox download' directory bug)"
+    return
+  fi
+  if ! grep -q "${marker_content}_daily" "${backup_dir}/memory/2026-04-20.md" 2>/dev/null; then
+    fail "TC-STATE-01: BackupCaptureDir" "'${backup_dir}/memory/2026-04-20.md' exists on host but content does NOT contain expected marker — backup captured wrong content"
+    return
+  fi
+  pass "TC-STATE-01: BackupCaptureDir — memory directory captured in host backup"
 
   log "  Step 3: Destroying sandbox..."
   local destroy_ok=0
@@ -232,7 +274,7 @@ test_backup_restore_lifecycle() {
   log "  Step 5: Running backup-workspace.sh restore..."
   local restore_output
   restore_output=$(bash "$REPO_ROOT/scripts/backup-workspace.sh" restore "$SANDBOX_NAME" 2>&1) || true
-  log "  Restore output: ${restore_output:0:300}"
+  log "  Restore output: ${restore_output}"
 
   if echo "$restore_output" | grep -q "Restored"; then
     pass "TC-STATE-01: Restore completed successfully"
@@ -259,13 +301,20 @@ test_backup_restore_lifecycle() {
     fail "TC-STATE-01: FilesRestore" "Only ${files_restored}/5 workspace files restored correctly (expected 5/5 — backup-workspace.sh contract is FILES=(SOUL,USER,IDENTITY,AGENTS,MEMORY); partial restore is a real bug, not tolerance)"
   fi
 
-  local restored_memory_content
-  restored_memory_content=$(sandbox_exec "cat ${workspace_path}/memory/2026-04-20.md 2>/dev/null") || true
-  if echo "$restored_memory_content" | grep -q "${marker_content}_daily"; then
+  # Probe emits 'STATE=EXISTS' + content, or 'STATE=MISSING'. SSH errors fall through to the catch-all branch.
+  log "  Verifying memory directory restored on sandbox..."
+  local memory_probe memory_probe_rc=0
+  memory_probe=$(sandbox_exec "if [ -f '${workspace_path}/memory/2026-04-20.md' ]; then printf 'STATE=EXISTS\\n'; cat '${workspace_path}/memory/2026-04-20.md'; else printf 'STATE=MISSING\\n'; fi") || memory_probe_rc=$?
+
+  if grep -q "${marker_content}_daily" <<< "$memory_probe"; then
     pass "TC-STATE-01: MemoryDirRestore — memory directory contents restored correctly"
+  elif grep -q "^STATE=MISSING" <<< "$memory_probe"; then
+    print_restore_output_for_diag "$restore_output"
+    fail "TC-STATE-01: MemoryDirRestore" "memory/2026-04-20.md does NOT exist on sandbox after restore — backup captured it (BackupCaptureDir passed above) but restore chain dropped the directory (likely 'openshell sandbox upload' directory bug)"
   else
-    log "  Memory note content: ${restored_memory_content:0:100}"
-    fail "TC-STATE-01: MemoryDirRestore" "Memory directory not restored — backup-workspace.sh declares DIRS=(memory) so this is a real regression in the directory backup/restore chain, NOT an unsupported feature."
+    log "  Memory probe (rc=$memory_probe_rc, first 200B): ${memory_probe:0:200}"
+    print_restore_output_for_diag "$restore_output"
+    fail "TC-STATE-01: MemoryDirRestore" "memory/2026-04-20.md marker not found on sandbox — either SSH error (rc=$memory_probe_rc) or restore put wrong content. See probe output above."
   fi
 }
 

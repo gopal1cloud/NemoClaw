@@ -311,7 +311,7 @@ test_tunnel_lifecycle() {
         ;;
       cloudflare)
         fail "TC-DEPLOY-01a: CloudflareRegister" \
-          "[Cloudflare fault] cloudflared failed to register with Cloudflare (third-party flap). Safe to retry CI."
+          "[Cloudflare fault] cloudflared failed to register with Cloudflare."
         ;;
       *)
         fail "TC-DEPLOY-01a: Start" \
@@ -328,9 +328,9 @@ test_tunnel_lifecycle() {
   # ── TC-DEPLOY-01b: Tunnel serves the OpenClaw dashboard ────────────────────────
   if [[ -n "$tunnel_url" ]]; then
     log "  Step 3: Probing tunnel URL (exponential backoff + local re-verify)..."
-    local http_code="000" body_file backoff=2
+    local http_code="000" body_file backoff=2 max_retries=15
     body_file=$(mktemp)
-    for i in $(seq 1 10); do
+    for i in $(seq 1 "$max_retries"); do
       # curl -w '%{http_code}' always writes the 3-char status (writes "000" on
       # connection failure), so do NOT chain `|| echo "000"` — that would append
       # a second "000" to whatever curl already wrote, producing "000000".
@@ -341,8 +341,8 @@ test_tunnel_lifecycle() {
         break
       fi
 
-      # Re-verify local BEFORE logging "Cloudflare flap" — fact-find first so the
-      # log message reflects truth at this moment (avoid lying log lines).
+      # Re-verify local BEFORE attributing the failure to Cloudflare — fact-find
+      # first so the log message reflects truth at this moment (avoid lying logs).
       if ! probe_local_dashboard; then
         fail "TC-DEPLOY-01b: LocalRegression" \
           "[NemoClaw fault] Tunnel returned $http_code AND local dashboard regressed during retry loop (was healthy at pre-check). Likely sandbox/dashboard crash — NOT a Cloudflare issue."
@@ -350,7 +350,7 @@ test_tunnel_lifecycle() {
         return
       fi
 
-      log "  [$i] Tunnel returned '$http_code' but LOCAL is healthy → Cloudflare edge flap; backoff ${backoff}s..."
+      log "  [$i/$max_retries] Tunnel not yet reachable ('$http_code'); LOCAL is healthy → Cloudflare quick-tunnel not ready (DNS propagation or edge instability); backoff ${backoff}s..."
       sleep "$backoff"
       backoff=$((backoff * 2))
       (( backoff > 30 )) && backoff=30
@@ -364,9 +364,9 @@ test_tunnel_lifecycle() {
       fi
     else
       # If we get here, every retry re-checked local and found it healthy
-      # → CONFIRMED Cloudflare edge issue, not NemoClaw bug.
+      # → attribute the failure to Cloudflare quick-tunnel (third-party).
       fail "TC-DEPLOY-01b: CloudflareEdge" \
-        "[Cloudflare fault] Tunnel URL returned $http_code after 10 retries while local stayed healthy throughout — CONFIRMED Cloudflare quick-tunnel edge issue, NOT a NemoClaw bug. Safe to retry CI."
+        "[Cloudflare fault] Tunnel URL never became reachable after $max_retries retries (last status '$http_code') while local stayed healthy throughout — Cloudflare quick-tunnel did not become reachable in time (slow DNS propagation or edge instability)."
     fi
     rm -f "$body_file"
   else
@@ -376,10 +376,10 @@ test_tunnel_lifecycle() {
   log "  Step 4: Running nemoclaw tunnel stop..."
   local stop_output stop_rc=0
   stop_output=$(nemoclaw tunnel stop 2>&1) || stop_rc=$?
-  log "  Tunnel stop output:     ${stop_output//$'\n'/$'\n'    }"
+  log "  Tunnel stop output:"
+  printf '%s\n' "$stop_output" | sed 's/^/    /' | tee -a "$LOG_FILE" || true
   if [[ $stop_rc -ne 0 ]]; then
     fail "TC-DEPLOY-01c: Stop command" "nemoclaw tunnel stop failed (exit $stop_rc)"
-    log "  Tunnel stop output: ${stop_output}"
     return
   fi
 

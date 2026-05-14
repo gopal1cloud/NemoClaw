@@ -834,7 +834,7 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-  test-deployment-services.sh:
+  test-state-backup-restore.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
     bucket: rebuild-runtime
@@ -855,6 +855,26 @@ scripts:
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-STATE-01: Backup dir'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'TC-STATE-01: BackupCaptureFiles'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'TC-STATE-01: BackupCaptureFiles — 5/5 .md files captured in host backup'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'TC-STATE-01: BackupCaptureDir'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'TC-STATE-01: BackupCaptureDir — memory directory captured in host backup'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
@@ -889,22 +909,47 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-STATE-01: ${verified}/5 workspace files verified with correct content'
+    - legacy: 'TC-STATE-01: FilesRestore — ${files_restored}/5 workspace files restored correctly'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-STATE-01: ${verified}/5 workspace files verified (partial tolerance applied)'
+    - legacy: 'TC-STATE-01: FilesRestore'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-STATE-01: Verify'
+    - legacy: 'TC-STATE-01: MemoryDirRestore — memory directory contents restored correctly'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-STATE-01: Memory note restored correctly'
+    - legacy: 'TC-STATE-01: MemoryDirRestore'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: $PASS${NC}
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: $FAIL${NC}
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+  test-tunnel-lifecycle.sh:
+    scenario: ubuntu-repo-cloud-openclaw
+    status: migrated
+    bucket: rebuild-runtime
+    assertions:
+    - legacy: 'TC-DEPLOY-01a: LocalReadiness'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'TC-DEPLOY-01a: Local dashboard reachable (pre-check passed)'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
@@ -919,7 +964,27 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-DEPLOY-01a: Start'
+    - legacy: 'TC-DEPLOY-01a: NoSpawn'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'TC-DEPLOY-01a: CaptureBug'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'TC-DEPLOY-01a: LocalOrigin'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'TC-DEPLOY-01a: CloudflareRegister'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'TC-DEPLOY-01b: LocalRegression'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
@@ -934,7 +999,7 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: TC-DEPLOY-01b
+    - legacy: 'TC-DEPLOY-01b: CloudflareEdge'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
@@ -950,36 +1015,6 @@ scripts:
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-DEPLOY-01c: Tunnel URL absent after stop'
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-DEPLOY-01c: Stop'
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-DEPLOY-02: openshell binary still in PATH after uninstall'
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-DEPLOY-02: openshell'
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-DEPLOY-02: nemoclaw removed after uninstall'
-      status: retired
-      reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
-      reviewer: e2e-maintainers
-      approved_at: '2026-05-13'
-    - legacy: 'TC-DEPLOY-02: uninstall completed (nemoclaw in source tree is expected)'
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-DEPLOY-02: nemoclaw'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
