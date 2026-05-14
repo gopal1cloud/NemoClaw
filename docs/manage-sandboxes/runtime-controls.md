@@ -54,6 +54,7 @@ The table below maps each commonly changed item to the layer that owns it and th
 | GPU passthrough enable / device selector | **Locked at creation** | Re-onboard with `--gpu` / `--sandbox-gpu-device` |
 | Shields posture (locked ↔ default mutable) | Runtime (operator-only) | `nemoclaw <name> shields up` / `shields down` — see the next section |
 | Agents allow-list (`agents.list` in `openclaw.json`) | Runtime — hot-reloaded by OpenClaw on config change | Edit `openclaw.json` while shields are down |
+| `openclaw.json` keys (general — model, agents.list, web.backend, channel config, etc.) | Mixed: locked under `shields up`, runtime-editable under `shields down`. Individual keys still follow the rebuild rules in the rows above (e.g. provider switch requires rebuild even after editing the JSON). | `nemoclaw <name> shields down`, edit `/opt/nemoclaw/openclaw.json` inside the sandbox, then `nemoclaw <name> shields up` |
 
 If a row above conflicts with what you observe, the runtime source of truth inside the sandbox is `/opt/nemoclaw/openclaw.json`; the host registry caches metadata but the image and OpenClaw read from the in-sandbox file.
 
