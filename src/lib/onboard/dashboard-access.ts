@@ -59,6 +59,14 @@ function readBindOverride(options: DashboardAccessOptions): string | undefined {
   return typeof raw === "string" ? raw : undefined;
 }
 
+/**
+ * I/O-boundary wrapper around the pure `buildChain` function. Resolves the
+ * platform hints (`isWsl`, `wslHostAddress`, `bindOverride`) from the host
+ * environment and config, then delegates the actual decision to `buildChain`
+ * so the contract stays a pure function and tests can call `buildChain`
+ * directly without env mocks. Callers in onboard / status / doctor share
+ * this entry point so the same hints apply consistently across the CLI.
+ */
 export function buildDashboardChain(
   chatUiUrl = defaultChatUiUrl(),
   options: DashboardAccessOptions = {},
