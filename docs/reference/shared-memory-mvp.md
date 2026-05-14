@@ -3,8 +3,8 @@ title:
   page: "OpenShell Shared Agent Memory MVP"
   nav: "Shared Memory MVP"
 description:
-  main: "Design proposal for a Redis-backed OpenShell shared memory driver that lets heterogeneous agents exchange durable, scoped memory events."
-  agent: "Describes the proposed OpenShell shared agent memory MVP, including repo boundaries, Redis Streams backend, API contract, security model, pull-delivery subscriptions, and the OpenClaw plus Hermes acceptance demo. Use when designing cross-agent memory for OpenClaw, Hermes, and future agent runtimes."
+  main: "Reference design and implementation record for a Redis-backed OpenShell shared memory driver that lets heterogeneous agents exchange durable, scoped memory events."
+  agent: "Describes the OpenShell shared agent memory MVP, including ownership boundaries, Redis Streams backend, API contract, sandbox configuration, pull-delivery subscriptions, security invariants, and the OpenClaw plus Hermes acceptance demo."
 keywords: ["shared agent memory", "agent memory fabric", "redis streams", "openclaw hermes memory"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "hermes", "redis", "memory", "architecture"]
@@ -12,7 +12,7 @@ content:
   type: reference
   difficulty: technical_advanced
   audience: ["developer", "engineer"]
-status: draft
+status: published
 ---
 
 <!--
@@ -22,151 +22,152 @@ status: draft
 
 # OpenShell Shared Agent Memory MVP
 
-This document proposes an MVP for shared memory across heterogeneous agents using OpenShell as the driver boundary.
-NemoClaw is the reference integration environment, not the owner of the durable memory primitive.
-The target scenario is one OpenClaw sandbox and one Hermes sandbox sharing durable updates through an OpenShell-managed memory API backed by Redis Streams.
+This page documents the shared agent memory MVP implemented across OpenShell, NemoClaw, and Hermes.
+The design uses OpenShell as the driver boundary, Redis Streams as the MVP backend, and thin runtime adapters for each agent.
 
-The design treats pub-sub as a delivery pattern, not the memory system itself.
-The durable product primitive is an append-only memory event log with queryable views, subscriptions, acknowledgements, provenance, and policy enforcement.
-In the MVP, subscriptions use pull delivery: `subscribe` creates a durable filtered inbox and `poll` pulls pending events from that inbox.
+The core decision is simple: OpenShell owns durable shared memory.
+NemoClaw configures and demonstrates the integration.
+Agent runtimes own their adapters.
+
+## Decision Summary
+
+The MVP uses an append-only memory event log with scoped queries and durable subscriptions.
+It does not use direct Redis access from agents, shared writable files, or runtime-specific memory formats as the cross-agent contract.
+
+Key decisions:
+
+- OpenShell exposes the shared memory API.
+- Redis Streams provide the MVP storage and delivery backend.
+- NemoClaw passes only sandbox-safe memory configuration into agent sandboxes.
+- Redis credentials stay in the OpenShell gateway process.
+- OpenClaw and Hermes use separate adapters that call the same OpenShell memory API.
+- `subscribe` creates a durable filtered inbox.
+- `poll` pulls pending events from that subscription inbox.
+- `ack` records that the subscriber has processed the event.
+
+## Current Status
+
+The MVP is implemented on the shared-memory feature branches.
+
+| Area | Branch | Status |
+|---|---|---|
+| NemoClaw integration and OpenClaw adapter | `NVIDIA/NemoClaw:aniket/feat-shared-agent-memory` | Implemented |
+| OpenShell memory driver and Redis backend | `aknvda/OpenShell:aniket/feat-shared-agent-memory` | Implemented |
+| Hermes shared-memory adapter | `aknvda/hermes-agent:aniket/feat-shared-agent-memory` | Implemented |
+
+The recorded demo is available in the NemoClaw branch at `demo-recordings/shared-memory-demo-openclaw-hermes.mp4`.
+The local runnable demo is `examples/shared-memory/run-local-demo.sh`.
 
 ## Problem
 
-NemoClaw can manage multiple sandboxes and multiple agent runtimes, but each sandbox currently owns its own workspace and memory files.
-That works for a single assistant, but it does not provide a clean coordination model when different agents need to collaborate.
+NemoClaw can run multiple sandboxes and agent runtimes, but each runtime normally owns its own workspace and memory model.
+That is enough for one assistant.
+It is not enough when different agents need to coordinate on durable facts, task state, findings, or handoffs.
 
-Examples include:
+Shared filesystem memory is not the right primitive.
+It couples agents to one file layout, makes replay and audit difficult, and gives the platform little control over provenance, policy, retention, or secret handling.
 
-- An OpenClaw agent discovers a project convention and a Hermes agent needs that convention for planning.
-- A Hermes agent updates task state and an OpenClaw agent needs the latest status before taking action.
-- A monitoring agent finds a security issue and all coding agents should see the finding.
-- Multiple sandboxes should share selected durable facts without mounting the same writable filesystem.
-
-Shared filesystem memory is not a strong enough abstraction.
-It creates race conditions, couples agents to one file layout, and makes provenance, replay, policy, and audit hard to enforce.
-
-## Goals
-
-The MVP should provide a shared memory fabric with these properties:
-
-- Agent-neutral API.
-- Redis Streams backend for durable event delivery.
-- Pull-based subscriptions with acknowledgement.
-- Queryable memory events by scope, topic, subject, and time.
-- Provenance on every memory event.
-- Secret scanning and schema validation before persistence.
-- No Redis credentials inside agent sandboxes.
-- OpenClaw and Hermes adapters that use the same API contract.
-- NemoClaw integration that configures the backend and demonstrates two-agent sharing.
-
-## Non-Goals
-
-The MVP should not implement every memory capability at once.
-
-The first version should not include:
-
-- Vector search.
-- Distributed consensus.
-- Multi-region replication.
-- Automatic conflict resolution across semantic facts.
-- Agent ranking or trust scoring beyond basic provenance fields.
-- Direct Redis access from agent processes.
-- A permanent NemoClaw-owned memory implementation.
+The MVP solves this with a platform-managed memory API.
+Agents publish structured events into a scoped stream and subscribe to the event types they need.
 
 ## Value Proposition
 
-Shared memory gives heterogeneous agents shared situational awareness without forcing them to use the same runtime, workspace layout, or internal memory model.
+Shared Agent Memory provides durable, scoped, auditable memory exchange for heterogeneous agents through an agent-neutral API.
 
-For operators, the value is continuity across sandboxes and agent runtimes.
-For agent developers, the value is a stable integration contract.
-For platform maintainers, the value is a single policy and audit boundary for durable agent memory.
+For operators, it gives continuity across sandboxes and agent runtimes.
+For agent developers, it gives a stable integration contract.
+For platform maintainers, it creates one policy and audit boundary for durable agent memory.
 
-The strongest product statement is:
+The practical outcome is that OpenClaw, Hermes, and future agents can coordinate without knowing each other's implementation details or storage backend.
 
-> Shared Agent Memory provides durable, scoped, auditable memory exchange for heterogeneous agents through an agent-neutral API.
+## Goals
+
+The MVP provides:
+
+- Agent-neutral publish, query, subscribe, poll, and acknowledge operations.
+- Redis Streams backed durability.
+- Pull-based subscriptions with acknowledgement.
+- Scoped queries by event type, subject, provenance, and time.
+- Provenance on every event.
+- Schema validation before persistence.
+- Secret scanning before persistence.
+- No Redis credentials inside agent sandboxes.
+- Thin OpenClaw and Hermes adapters over the same OpenShell API.
+- A runnable OpenClaw plus Hermes acceptance demo.
+
+## Non Goals
+
+The MVP intentionally does not include:
+
+- Vector search.
+- Semantic conflict resolution.
+- Multi-region replication.
+- Distributed consensus.
+- Agent trust scoring.
+- Direct Redis access from agent processes.
+- A permanent NemoClaw-owned memory service.
+
+Those capabilities can be added after the event, subscription, and policy contract is stable.
 
 ## Ownership Boundaries
 
-The MVP should be implemented across three ownership layers.
+The implementation is split by platform responsibility.
 
-| Layer | Owner | Responsibilities |
+| Layer | Owner | Responsibility |
 |---|---|---|
-| Memory platform | OpenShell | Memory API, Redis driver, auth, policy, sandbox-safe endpoint, event delivery, replay, and acknowledgement. |
-| Reference integration | NemoClaw | Onboarding configuration, policy preset, adapter installation, docs, examples, and an OpenClaw plus Hermes demo. |
-| Agent adapters | Agent runtimes | Runtime-specific mapping between shared memory and each agent's native tools, context, sessions, or memory model. |
+| Memory platform | OpenShell | Memory API, Redis driver, backend credentials, validation, policy, delivery, replay, and acknowledgement. |
+| Reference integration | NemoClaw | Onboarding configuration, sandbox-safe environment, registry metadata, OpenClaw adapter packaging, docs, examples, and demo. |
+| Runtime adapter | Each agent runtime | Mapping shared memory operations into native tools, memory, sessions, plans, or task state. |
 
-NemoClaw should not own shared memory semantics.
-NemoClaw should configure and demonstrate the platform primitive.
+NemoClaw must not own shared memory semantics.
+It should configure and demonstrate the OpenShell platform primitive.
 
-OpenShell should own the durable memory service because it already owns sandbox identity, gateway mediation, provider delivery, policy, and runtime integration boundaries.
+The OpenClaw adapter currently lives in NemoClaw because NemoClaw builds the OpenClaw sandbox image and plugin assets.
+The Hermes adapter lives in the Hermes repo because Hermes owns its tool interface and runtime behavior.
 
-## System Architecture
+## Architecture
 
-The MVP uses a memory service in front of Redis.
-Agents call the memory service through an OpenShell-managed endpoint.
-The memory service validates requests, applies policy, scans for secrets, writes to Redis Streams, and exposes query and subscription APIs.
+Agents call a memory service through an OpenShell-managed endpoint.
+The service validates requests, applies policy, scans payloads, writes to Redis Streams, and serves query and subscription reads.
 
 ```text
 OpenClaw adapter        Hermes adapter        Future agent adapter
       |                       |                       |
-      +----------- Shared Memory API -----------------+
+      +----------- OpenShell shared memory API -------+
                           |
                  OpenShell memory service
                           |
                  Redis Streams memory driver
 ```
 
-Agents must not connect directly to Redis.
-The service boundary keeps credentials, policy, validation, and audit independent of any specific agent runtime.
+This boundary keeps backend credentials, policy, validation, and audit independent of the agent runtime.
 
-## Repository Plan
+## Repository Layout
 
 ### OpenShell
 
-OpenShell should hold the core memory primitive.
+The OpenShell branch contains the platform primitive.
 
-Proposed files:
+Implemented files:
 
 ```text
 crates/openshell-server/src/memory.rs
 crates/openshell-sandbox/src/memory_local.rs
-```
-
-Expected updates:
-
-```text
-Cargo.toml
-Cargo.lock
-crates/openshell-server/Cargo.toml
-crates/openshell-sandbox/Cargo.toml
-crates/openshell-server/src/lib.rs
 crates/openshell-server/src/http.rs
+crates/openshell-server/src/lib.rs
 crates/openshell-sandbox/src/lib.rs
 crates/openshell-sandbox/src/proxy.rs
 ```
 
-The MVP starts HTTP-first to avoid committing a protobuf/gRPC contract too early.
-The `memory.local` route is sandbox-local and forwards only `/v1/memory/*` calls to the gateway.
-Redis remains behind the gateway driver.
-
-Later production hardening can split the server module into:
-
-```text
-crates/openshell-server/src/memory/mod.rs
-crates/openshell-server/src/memory/store.rs
-crates/openshell-server/src/memory/redis.rs
-crates/openshell-server/src/memory/types.rs
-proto/memory.proto
-crates/openshell-server/src/grpc/memory.rs
-```
+The MVP is HTTP-first.
+That keeps the contract easy to exercise while the semantics settle.
+The sandbox-local `memory.local` route forwards memory calls to the gateway without exposing Redis to the sandbox.
 
 ### NemoClaw
 
-NemoClaw should configure and demonstrate shared memory.
-It should also package the OpenClaw adapter for the reference OpenClaw sandbox because NemoClaw owns the OpenClaw sandbox image and plugin assets in this branch.
-That adapter should remain thin and portable so it can move if OpenClaw later owns the plugin directly.
+The NemoClaw branch contains the reference integration and the OpenClaw adapter.
 
-Current MVP files:
+Implemented files:
 
 ```text
 src/lib/shared-memory.ts
@@ -175,81 +176,85 @@ src/lib/onboard.ts
 src/lib/onboard/dockerfile-patch.ts
 src/lib/state/registry.ts
 src/lib/inventory/index.ts
-src/lib/inventory/index.test.ts
 scripts/generate-openclaw-config.py
-Dockerfile
-test/registry.test.ts
 nemoclaw-blueprint/openclaw-plugins/shared-memory/
-docs/reference/shared-memory-mvp.md
 examples/shared-memory/
+demo-recordings/
+docs/reference/shared-memory-mvp.md
 ```
 
-A dedicated network policy preset can follow once the OpenShell sandbox-facing route is finalized.
+NemoClaw resolves shared-memory configuration during onboarding, stores non-secret registry metadata, passes sandbox-safe environment to the agent, and conditionally installs the OpenClaw adapter.
 
-The NemoClaw MVP should support environment-driven configuration first.
-CLI flags can follow once the OpenShell API stabilizes.
+### Hermes
+
+The Hermes branch contains the Hermes adapter.
+
+Implemented files:
 
 ```text
-NEMOCLAW_SHARED_MEMORY=redis
-OPENSHELL_MEMORY_REDIS_URL=redis://...
-NEMOCLAW_SHARED_MEMORY_SCOPE=workspace:nemoclaw
+tools/shared_memory_tool.py
+toolsets.py
+tests/test_shared_memory_tool.py
 ```
 
-### Agent Adapters
+The NemoClaw demo calls this adapter through `examples/shared-memory/hermes-agent.py`.
+The adapter uses the same OpenShell memory API as OpenClaw.
 
-OpenClaw and Hermes should each receive a thin adapter.
-The adapter maps shared memory APIs into the runtime's native tool, memory, session, or planning model.
+## Configuration
 
-The adapter should expose the same conceptual operations for every runtime:
+Enable the MVP with environment variables during NemoClaw onboarding.
+
+```console
+$ NEMOCLAW_SHARED_MEMORY=redis \
+  OPENSHELL_MEMORY_REDIS_URL=redis://127.0.0.1:6379 \
+  NEMOCLAW_SHARED_MEMORY_SCOPE=workspace:nemoclaw \
+  nemoclaw onboard
+```
+
+Optional endpoint override:
+
+```console
+$ OPENSHELL_MEMORY_URL=http://memory.local/v1
+```
+
+NemoClaw validates the Redis URL, scope, and memory endpoint.
+It sends only the following sandbox-safe values into the agent environment:
 
 ```text
-shared_memory_publish
-shared_memory_query
-shared_memory_subscribe
-shared_memory_poll
-shared_memory_ack
+NEMOCLAW_SHARED_MEMORY=1
+OPENSHELL_MEMORY_BACKEND=redis
+OPENSHELL_MEMORY_SCOPE=workspace:nemoclaw
+OPENSHELL_MEMORY_URL=http://memory.local/v1
 ```
 
-The OpenClaw adapter currently lives in NemoClaw under `nemoclaw-blueprint/openclaw-plugins/shared-memory/`.
-That placement is appropriate for the MVP because NemoClaw builds the OpenClaw sandbox image and can conditionally install the adapter when shared memory is enabled.
-The Hermes adapter currently lives in the Hermes repo and is exercised by the local demo through `examples/shared-memory/hermes-agent.py`.
-Both adapters call the same OpenShell memory API and neither adapter receives Redis credentials.
+`OPENSHELL_MEMORY_REDIS_URL` remains host-side and is not sent to agent sandboxes.
 
 ## API Contract
 
-The initial service contract should be intentionally small.
+The MVP contract is intentionally small.
 
-```text
-PublishMemoryEvent
-QueryMemoryEvents
-CreateMemorySubscription
-PollMemorySubscription
-AckMemoryEvents
-```
+| Operation | Route | Purpose |
+|---|---|---|
+| Publish | `POST /v1/memory/events` | Append a scoped memory event. |
+| Query | `GET /v1/memory/query` | Read events by deterministic filters. |
+| Subscribe | `POST /v1/memory/subscriptions` | Create a durable filtered inbox. |
+| Poll | `GET /v1/memory/subscriptions/{id}/poll` | Pull pending events from the subscription inbox. |
+| Ack | `POST /v1/memory/subscriptions/{id}/ack` | Mark events as processed by the subscriber. |
 
-An HTTP facade can map those operations to these routes:
-
-```text
-POST /v1/memory/events
-GET  /v1/memory/query
-POST /v1/memory/subscriptions
-GET  /v1/memory/subscriptions/{id}/poll
-POST /v1/memory/subscriptions/{id}/ack
-```
-
-The first implementation can expose gateway APIs directly.
-The sandbox-friendly target should be `memory.local`, similar in spirit to routed inference.
+Sandboxed agents should use:
 
 ```text
 http://memory.local/v1/memory/events
 http://memory.local/v1/memory/query
-http://memory.local/v1/memory/subscriptions/{id}/poll
+http://memory.local/v1/memory/subscriptions
 ```
+
+Local demos can call the gateway directly through `http://127.0.0.1:<port>/v1`.
 
 ## Event Schema
 
-A memory event is append-only.
-Events may later produce materialized views, but the original event should remain the audit source.
+Memory events are append-only.
+Materialized views may be added later, but the original event remains the audit source.
 
 ```json
 {
@@ -262,9 +267,9 @@ Events may later produce materialized views, but the original event should remai
     "recommendation": "Validate subscribe, pull, acknowledge, and response publishing against the OpenShell memory driver."
   },
   "provenance": {
-    "agent_id": "openclaw:main",
+    "agent_id": "openclaw:demo",
     "runtime": "openclaw",
-    "sandbox_id": "openclaw-demo",
+    "sandbox_id": "shared-memory-demo",
     "source": "agent_observation"
   },
   "visibility": "shared",
@@ -278,211 +283,126 @@ Required fields:
 
 | Field | Purpose |
 |---|---|
-| `id` | Stable event identifier assigned by the memory service. |
-| `type` | Dot-delimited topic-like event type. |
-| `scope` | Sharing boundary such as `workspace:nemoclaw` or `project:NemoClaw`. |
+| `id` | Service-assigned stable event identifier. |
+| `type` | Dot-delimited event type. |
+| `scope` | Sharing boundary such as `workspace:nemoclaw`. |
 | `subject` | Stable entity or topic within the scope. |
-| `content` | Structured event payload. |
-| `provenance` | Runtime, agent, sandbox, and source information. |
+| `content` | Structured payload. |
+| `provenance` | Agent, runtime, sandbox, and source information. |
 | `visibility` | Sharing level such as `private`, `shared`, or `public`. |
 | `sensitivity` | Policy hint such as `normal`, `confidential`, or `secret_candidate`. |
-| `schema_version` | Version for forward-compatible parsing. |
+| `schema_version` | Event schema version. |
 | `created_at` | Service-side timestamp. |
 
 ## Scope Model
 
-Scopes define where an event can be queried and which subscribers can receive it.
+Scopes define who can query an event and which subscribers can receive it.
 
-Initial scopes:
+Initial scope prefixes:
 
-| Scope Prefix | Example | Purpose |
+| Prefix | Example | Use |
 |---|---|---|
-| `user` | `user:aniket` | Preferences and user-level context. |
+| `user` | `user:aniket` | User-level preferences and context. |
 | `workspace` | `workspace:nemoclaw` | Shared workspace memory across sandboxes. |
 | `project` | `project:NemoClaw` | Repository or project facts. |
-| `sandbox` | `sandbox:openclaw-demo` | Runtime-local observations that may be promoted later. |
+| `sandbox` | `sandbox:shared-memory-demo` | Runtime-local observations. |
 
-Scope names should be explicit.
-Agents should not publish to a global default scope unless the operator configured one.
+Agents should publish to explicit scopes.
+They should not rely on a global default scope.
 
-## Subscription Model
+## Subscription Semantics
 
-Subscriptions should be pull-based in the MVP.
-Push notifications can be added later as a wake-up optimization.
+Subscriptions use pull delivery in the MVP.
+This is deliberate.
 
-Pull-based delivery is a better first contract because agents can be offline, restarted, busy, or rate-limited.
-The service retains unacknowledged events until subscribers poll and acknowledge them.
-In this document and demo, `poll` means "pull pending events from my durable subscription inbox."
-It is not an extra query step after subscribing.
-The durable subscription stores the filter, cursor, and acknowledgement state; polling only controls when the agent is ready to consume the pending events.
-Future delivery modes can add webhooks, server-sent events, WebSockets, or sandbox wakeups without changing the publish event schema.
+`subscribe` creates a durable filtered inbox with cursor and acknowledgement state.
+`poll` pulls pending events from that inbox when the agent is ready to consume them.
+`poll` is not an extra query step and does not mean the agent missed a push notification.
+
+Pull delivery is a strong first contract because agents can be offline, restarted, busy, or rate-limited.
+Future OpenShell delivery modes can add webhooks, server-sent events, WebSockets, or sandbox wakeups without changing the event schema.
 
 Example subscription:
 
 ```json
 {
-  "subscription_id": "sub_hermes_planner_project",
+  "subscription_id": "release-shared-memory-hermes",
   "subscriber": {
-    "agent_id": "hermes:planner",
+    "agent_id": "hermes:demo",
     "runtime": "hermes",
-    "sandbox_id": "hermes-demo"
+    "sandbox_id": "shared-memory-demo"
   },
-  "scope": "workspace:nemoclaw",
+  "scope": "workspace:nemoclaw-demo",
   "filters": {
-    "types": ["project.*", "task.*"]
+    "types": ["release.*"]
   },
   "delivery": "pull"
 }
 ```
 
-The service should return only events that match the subscription scope and filters.
-The subscriber should call `AckMemoryEvents` after it has integrated the event or intentionally ignored it.
+Subscribers should acknowledge events after they integrate or intentionally ignore them.
 
 ## Redis Driver
 
-Redis Streams should be the source of truth for MVP event delivery.
-Plain Redis Pub/Sub should not be the source of truth because offline subscribers miss messages.
+Redis Streams are the MVP source of truth for event delivery.
+Plain Redis Pub/Sub is not sufficient because offline subscribers miss messages.
 
-Recommended Redis keys:
+Core operations:
 
-```text
-mem:{scope}:events
-mem:{scope}:subject:{subject}
-mem:{scope}:type:{type}
-mem:{scope}:agent:{agent_id}
-mem:{scope}:created_at
-mem:subscription:{subscription_id}
-```
-
-Recommended operations:
-
-| Operation | Redis Command | Purpose |
+| Memory operation | Redis operation | Purpose |
 |---|---|---|
-| Publish | `XADD` | Append a memory event to the scoped stream. |
-| Create subscription | `XGROUP CREATE MKSTREAM` | Initialize durable delivery state. |
-| Poll | `XREADGROUP` | Read pending or new events for a subscriber. |
-| Ack | `XACK` | Mark consumed events. |
-| Query latest subject view | `HGETALL` | Read materialized current state for a subject. |
+| Publish | `XADD` | Append an event to the scoped stream. |
+| Subscribe | Consumer group state | Track durable subscriber position. |
+| Poll | Stream read | Return pending or new events for a subscriber. |
+| Ack | Acknowledgement state | Mark events as processed. |
+| Query | Stream scan or materialized view | Return deterministic filtered events. |
 
-The Redis implementation should sit behind a store interface.
+Redis stays behind the OpenShell memory service.
+Future drivers can replace Redis without changing the agent adapter contract.
 
-```text
-MemoryStore
-  publish(event)
-  query(filter)
-  create_subscription(spec)
-  poll(subscription_id, limit)
-  ack(subscription_id, event_ids)
-```
+## Adapter Contract
 
-That interface keeps Redis replaceable.
-Future drivers could use another stream, queue, database, or hosted memory service.
-
-## Query Model
-
-The MVP query API should support deterministic filters before semantic search.
-
-Initial filters:
-
-- `scope`.
-- `type` or type prefix.
-- `subject`.
-- `agent_id`.
-- `sandbox_id`.
-- `created_after`.
-- `created_before`.
-- `limit`.
-
-Vector search should wait until the event and subscription contract is stable.
-A later implementation can build an embedding index over accepted memory events or materialized views.
-
-## Agent Adapter Contract
-
-Each agent adapter should do three things:
-
-- Publish durable observations, decisions, and task updates.
-- Poll for subscribed updates when the agent is ready to consume them.
-- Map shared events into the agent's native memory, prompt context, planning state, or tools.
-
-Adapters should be thin.
-They should not own Redis credentials or bypass the memory service.
-
-Adapter configuration:
+Every runtime adapter exposes the same conceptual operations:
 
 ```text
-OPENSHELL_MEMORY_URL=http://memory.local/v1
-OPENSHELL_MEMORY_SCOPE=workspace:nemoclaw
-AGENT_ID=openclaw:main
-SANDBOX_ID=openclaw-demo
+shared_memory_publish
+shared_memory_query
+shared_memory_subscribe
+shared_memory_poll
+shared_memory_ack
 ```
 
-For OpenClaw, the adapter exposes tool calls that publish, query, subscribe, poll, and acknowledge shared memory.
-For Hermes, the adapter can initially be a plugin or sidecar client that maps events into Hermes memories, sessions, plans, or task state.
+Adapters are thin by design.
+They translate between the agent runtime and OpenShell memory events.
+They do not own backend credentials, retention, policy, or cross-agent semantics.
 
-## NemoClaw Integration
+## Security Invariants
 
-NemoClaw should make the MVP easy to run, but it should not become the memory platform.
+Shared memory is durable platform state.
+The MVP keeps these invariants:
 
-The current integration:
+- Agents never receive Redis credentials.
+- Agents call only the OpenShell memory endpoint.
+- Events are schema-validated before persistence.
+- Event content is scanned for secret-like material before persistence.
+- Every event carries provenance.
+- Scope checks happen at the OpenShell service boundary.
+- Subscription state is per subscriber.
+- Acknowledgement state is durable.
+- Audit logs can record publish, subscription creation, poll, and ack operations.
 
-- Detects shared-memory configuration during onboarding.
-- Validates that the Redis URL is present when Redis mode is selected.
-- Keep the Redis URL host-side only.
-- Passes only the sandbox-safe memory endpoint, scope, and backend into agent sandboxes.
-- Configures the OpenShell memory backend through host-side environment for the MVP.
-- Defaults the sandbox-facing memory endpoint to `http://memory.local/v1`.
-- Enables the OpenClaw adapter in the sandbox image when shared memory is configured.
-- Records shared-memory metadata in the local sandbox registry for status and diagnostics.
-- Recreates a sandbox when shared-memory configuration changes, because the runtime environment is set at sandbox creation time.
-- Provides a local demo that runs OpenClaw and Hermes adapters against the same OpenShell memory scope.
-
-The Hermes adapter is not implemented in NemoClaw.
-The local demo points at the Hermes repo and imports its shared-memory tool.
-That split keeps NemoClaw focused on integration while each agent runtime owns its adapter behavior.
-
-The initial user-facing configuration can be environment-driven.
-
-```console
-$ NEMOCLAW_SHARED_MEMORY=redis \
-  OPENSHELL_MEMORY_REDIS_URL=redis://127.0.0.1:6379 \
-  NEMOCLAW_SHARED_MEMORY_SCOPE=workspace:nemoclaw \
-  nemoclaw onboard
-```
-
-Later CLI support can add explicit flags after the OpenShell contract stabilizes.
-
-## Security Model
-
-Shared memory is a durable data store.
-The security bar should be closer to credentials and audit logs than temporary chat context.
-
-The MVP should enforce:
-
-- No Redis credentials in agent sandboxes.
-- Service-side schema validation.
-- Service-side secret scanning before persistence.
-- Per-event provenance.
-- Per-scope access checks.
-- Deny-by-default sandbox network policy.
-- Audit logs for publish, subscription creation, poll, and ack.
-- Redaction path for events that should no longer be returned.
-
-The service should reject events that look like API keys, tokens, private keys, or credential files unless an explicit administrative override exists.
-The service should record rejection metadata without storing the secret body.
+The service rejects events that look like API keys, tokens, private keys, or credential files unless a future administrative policy explicitly allows them.
+Rejected payload bodies should not be stored.
 
 ## Conflict Handling
 
-The MVP should not try to automatically resolve semantic conflicts.
-It should preserve competing events with provenance.
+The MVP preserves competing events instead of resolving semantic conflicts automatically.
 
-Example:
+For example, OpenClaw and Hermes may both publish `release.blocker.detected` for the same subject.
+The memory service stores both events with provenance.
+A later materialized view can mark one event as latest, accepted, superseded, or rejected.
 
-- OpenClaw publishes `release.blocker.detected` for `shared-memory-mvp/hermes-adapter-smoke`.
-- Hermes publishes another `release.blocker.detected` for the same subject.
-- The memory service stores both events.
-- A materialized view may mark one as latest, accepted, superseded, or rejected later.
-
-Initial conflict fields:
+Conflict metadata can use:
 
 | Field | Purpose |
 |---|---|
@@ -491,89 +411,76 @@ Initial conflict fields:
 | `supersedes` | Links an event to the event it replaces. |
 | `status` | Tracks `proposed`, `accepted`, `superseded`, or `rejected`. |
 
-The default publish status should be `proposed` or `accepted` based on operator policy.
-The MVP can start with `accepted` for trusted local demos and add approval workflows later.
+The trusted local demo uses accepted events.
+Production policy can add approval workflows later.
 
-## MVP Acceptance Demo
+## Acceptance Demo
 
-The first demo should prove that the memory fabric works across agent runtimes.
-The current local demo is a release-validation handoff:
-OpenClaw publishes a release blocker, Hermes receives it through its subscription inbox, Hermes acknowledges it, and Hermes publishes a remediation plan that OpenClaw queries.
-
-Acceptance flow:
+The acceptance demo proves that shared memory works across agent runtimes.
+It uses a release-validation handoff:
 
 1. Start Redis.
-2. Start OpenShell with the memory backend enabled.
-3. Configure both adapters with the same shared memory scope, `workspace:nemoclaw-demo`.
+2. Start the OpenShell gateway with the memory backend enabled.
+3. Configure OpenClaw and Hermes with the same scope, `workspace:nemoclaw-demo`.
 4. Hermes subscribes to `release.*`.
-5. OpenClaw publishes a `release.blocker.detected` event for `shared-memory-mvp/hermes-adapter-smoke`.
-6. Hermes pulls its subscription inbox and receives the release blocker.
+5. OpenClaw publishes `release.blocker.detected` for `shared-memory-mvp/hermes-adapter-smoke`.
+6. Hermes polls its subscription inbox and receives the OpenClaw blocker.
 7. Hermes acknowledges the blocker.
-8. Hermes publishes a `release.remediation.planned` event for `hermes:demo`.
+8. Hermes publishes `release.remediation.planned`.
 9. OpenClaw queries `release.remediation.planned` and sees the Hermes response.
-10. Agents use only the OpenShell memory endpoint and scope.
-11. Redis credentials stay in the OpenShell gateway process.
+10. Both agents use only the OpenShell memory API.
+11. Redis credentials remain in the OpenShell gateway process.
 
-For the local MVP demo on a development machine, use:
+Run the local demo from the NemoClaw branch:
 
 ```console
-examples/shared-memory/run-local-demo.sh
+$ examples/shared-memory/run-local-demo.sh
 ```
 
-That script is a working local demo, not only a mock transcript.
-It starts Redis, starts the OpenShell gateway from the shared-memory branch, loads the OpenClaw adapter from this NemoClaw branch, loads the Hermes adapter from the configured Hermes repo, and exercises the publish, subscribe, poll, acknowledge, publish, and query flow through OpenShell.
-It defaults to:
+The script starts Redis, starts the OpenShell gateway, loads the OpenClaw adapter from this NemoClaw branch, loads the Hermes adapter from the Hermes repo, and exercises publish, subscribe, poll, acknowledge, publish, and query through OpenShell.
 
-- OpenShell repo: `/home/ubuntu/anikkulkarni/openshell-features/feat-shared-agent-memory`
-- Hermes repo: `/home/ubuntu/anikkulkarni/hermes-agent`
-- Redis port: `16379`
-- OpenShell gateway port: `18080`
-- Scope: `workspace:nemoclaw-demo`
+Override repo locations when needed:
 
-The demo wrappers make the repo boundaries explicit:
+```console
+$ OPENSHELL_REPO=/path/to/OpenShell \
+  HERMES_REPO=/path/to/hermes-agent \
+  examples/shared-memory/run-local-demo.sh
+```
 
-- `examples/shared-memory/openclaw-agent.js` loads `nemoclaw-blueprint/openclaw-plugins/shared-memory/index.js`.
-- `examples/shared-memory/hermes-agent.py` imports `tools.shared_memory_tool` from the Hermes repo.
-- `examples/shared-memory/run-local-demo.sh` starts the Redis container and the OpenShell gateway, then runs both adapters against `http://127.0.0.1:18080/v1`.
+The narrated recording is generated from `demo-recordings/remotion-shared-memory`.
+The rendered video is `demo-recordings/shared-memory-demo-openclaw-hermes.mp4`.
+It is slowed to `1.18x` with matched narration playback so viewers can follow the terminal panes and voiceover.
 
-The recorded narrated demo is generated from `demo-recordings/remotion-shared-memory`.
-Its timeline is intentionally slowed to `1.18x` while the narration plays at the matching reduced rate, so reviewers can follow the terminal panes and voiceover without losing sync.
+## Verification
 
-## Implementation Sequence
+The MVP branch has been verified with:
 
-Start with the platform contract, then integrate through NemoClaw.
-The current branches already implement the early platform, integration, adapter, and demo slices needed for an MVP demo.
+```console
+$ npx vitest run src/lib/shared-memory.test.ts src/lib/inventory/index.test.ts src/lib/onboard/dockerfile-patch.test.ts test/generate-openclaw-config.test.ts test/registry.test.ts test/openclaw-shared-memory-plugin.test.ts
+$ npm run docs
+$ examples/shared-memory/run-local-demo.sh
+```
 
-Recommended sequence:
+The local demo completed end to end with Redis, the OpenShell gateway, the OpenClaw adapter, and the Hermes adapter.
 
-1. Add a gateway HTTP memory facade in OpenShell.
-2. Add the `MemoryStore` boundary and Redis Streams store behind the same boundary.
-3. Add direct gateway smoke tests for publish, subscribe, poll, and ack.
-4. Add sandbox-safe `memory.local` routing through the OpenShell sandbox proxy.
-5. Add NemoClaw env-driven shared-memory onboarding.
-6. Add NemoClaw registry metadata and status output.
-7. Add the OpenClaw adapter to the NemoClaw-packaged OpenClaw plugin set.
-8. Add the Hermes adapter in the Hermes repo.
-9. Add the OpenClaw plus Hermes acceptance demo.
-10. Promote the HTTP contract to gRPC/protobuf only if the OpenShell API needs it.
+## Remaining Hardening
 
-## Open Questions
+Before broad production use, the platform work should add:
 
-The MVP should answer these before broadening the design:
+- Authenticated memory calls.
+- Per-scope access policy.
+- More explicit retention and redaction behavior.
+- Direct OpenShell gateway smoke tests for publish, subscribe, poll, and ack.
+- A stable OpenShell API surface, either HTTP-only or HTTP plus gRPC.
+- Operator-facing policy for `accepted` versus `proposed` publish status.
+- Rebuildable materialized views for query acceleration.
+- A decision on whether the OpenClaw adapter remains NemoClaw-packaged or moves to an OpenClaw-owned distribution.
+- Optional push delivery for wakeups after pull delivery remains the durable baseline.
 
-- Should OpenShell expose memory only through gRPC first, HTTP first, or both.
-- Should OpenShell keep the first contract HTTP-only or add gRPC once the semantics settle.
-- Should publish default to `accepted` or `proposed`.
-- How should operators configure per-scope access policy.
-- How should event redaction interact with Redis Streams retention.
-- How should materialized views be rebuilt after schema changes.
-- Whether the OpenClaw adapter should remain packaged by NemoClaw or move into an OpenClaw-owned distribution after the MVP.
-- Which push delivery mechanism should complement pull subscriptions first.
+## Bottom Line
 
-## Next Steps
+The MVP validates the integration model the lead engineer described.
+NemoClaw does not change its internal memory model.
+Instead, it integrates with an OpenShell-owned shared memory driver and packages the OpenClaw side of the demo.
 
-- Use this document as the NemoClaw-side design record for the MVP.
-- Draft the corresponding OpenShell RFC before adding platform code.
-- Keep the first implementation Redis-backed but backend-neutral.
-- Keep NemoClaw focused on onboarding, configuration, packaging the OpenClaw adapter, docs, and the cross-agent demo.
-- Keep Hermes adapter behavior in the Hermes repo.
+That gives OpenClaw, Hermes, and future agents a common coordination layer while keeping platform memory semantics, credentials, policy, and audit inside OpenShell.
