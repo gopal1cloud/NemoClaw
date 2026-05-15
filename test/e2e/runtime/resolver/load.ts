@@ -70,6 +70,9 @@ function validateScenarios(doc: Record<string, unknown>, file: string): Scenario
         `scenario ${id} uses array-form 'expected_states'; use singular 'expected_state'`,
       );
     }
+    if (typeof e.alias_for_plan === "string") {
+      continue;
+    }
     if (typeof e.expected_state !== "string") {
       throw new Error(`scenario ${id} must declare a string 'expected_state'`);
     }
