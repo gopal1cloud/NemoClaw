@@ -711,7 +711,7 @@ Introduce the layered terminology and schema support while preserving current sc
 - Existing scenario-framework tests pass.
 - No live E2E behavior changes are required in this phase.
 
-## Phase 2: Layered Coverage and Gap Reports
+## Phase 2: Layered Coverage and Gap Reports [COMPLETED: 71fddfdc9]
 
 Make the existing coverage and parity data visible by layer.
 
