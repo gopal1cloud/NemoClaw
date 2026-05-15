@@ -38,8 +38,9 @@ bash test/e2e/runtime/coverage-report.sh                     # Markdown matrix o
 
 Special-purpose regression runners live under `runtime/` when they need
 a different userspace than the host runner. For example, the issue #3396
-runner executes the full NVIDIA Endpoints E2E from an Ubuntu 22.04 /
-glibc 2.35 CUDA container while reusing the host GPU and Docker daemon:
+runner executes a targeted NVIDIA Endpoints onboarding E2E from an Ubuntu
+22.04 / glibc 2.35 CUDA container while reusing the host GPU and Docker
+daemon:
 
 ```bash
 NVIDIA_API_KEY=nvapi-... bash test/e2e/runtime/run-issue-3396-jammy-container.sh
