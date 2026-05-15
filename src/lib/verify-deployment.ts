@@ -88,14 +88,21 @@ function defaultSleep(ms: number): Promise<void> {
 // 401 = device auth is enabled but the gateway is running.
 const GATEWAY_ALIVE_CODES = new Set([200, 401]);
 
-// Host-side gateway log paths. The current sandbox does not write
-// /tmp/gateway.log; the gateway runs on the host and writes here.
-// Keep in sync with gatewayLogCandidates() in onboard/sandbox-create-failure.ts.
-const GATEWAY_LOG_HINT_PATHS = [
-  "~/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.log",
-  "~/.local/state/openshell/openshell-gateway.log",
-] as const;
-const GATEWAY_LOG_HINT = `The gateway process may have crashed during startup. Check the host-side gateway log at ${GATEWAY_LOG_HINT_PATHS[0]} (or ${GATEWAY_LOG_HINT_PATHS[1]} on older installs).`;
+// Gateway-failure hint: cover both layers the probe could be failing at.
+// The probe runs curl inside the sandbox against the in-sandbox OpenClaw
+// gateway (initialised at /tmp/gateway.log by agent/runtime.ts), so the
+// sandbox log is the first thing to check. If the sandbox itself never
+// came up, the host-side OpenShell gateway log is the right place to
+// look — see gatewayLogCandidates() in onboard/sandbox-create-failure.ts.
+function buildGatewayLogHint(sandboxName: string): string {
+  return (
+    `The gateway probe failed after retrying. Inspect the in-sandbox gateway log with ` +
+    `\`nemoclaw ${sandboxName} logs\` (the gateway writes to /tmp/gateway.log inside the sandbox when it starts). ` +
+    `If the sandbox itself never came up, also check the host-side OpenShell gateway log at ` +
+    `~/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.log ` +
+    `(or ~/.local/state/openshell/openshell-gateway.log on older installs).`
+  );
+}
 
 // ── Core verification ────────────────────────────────────────────────
 
@@ -269,7 +276,7 @@ export async function verifyDeployment(
     link: "gateway",
     status: gateway.reachable ? "ok" : "fail",
     detail: gateway.detail,
-    hint: gateway.reachable ? "" : GATEWAY_LOG_HINT,
+    hint: gateway.reachable ? "" : buildGatewayLogHint(sandboxName),
   });
 
   // 2. Gateway version (cosmetic — not a health signal)

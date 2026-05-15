@@ -53,15 +53,20 @@ describe("verifyDeployment", () => {
     expect(gwDiag?.hint).toContain("openshell-gateway.log");
   });
 
-  it("hint points at host-side gateway log paths, not /tmp inside the sandbox (#3563)", async () => {
+  it("hint surfaces both the in-sandbox gateway log (via nemoclaw logs) and the host OpenShell log (#3563)", async () => {
     const deps = makeDeps({
       executeSandboxCommand: () => ({ status: 0, stdout: "000", stderr: "" }),
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
     const gwDiag = result.diagnostics.find((d) => d.link === "gateway");
+    // In-sandbox gateway log surfaced via the documented CLI, not a raw `docker exec` hint.
+    expect(gwDiag?.hint).toContain("nemoclaw my-sandbox logs");
+    expect(gwDiag?.hint).toContain("/tmp/gateway.log");
+    // Host-side OpenShell gateway log covers the createSandbox-never-came-up case.
     expect(gwDiag?.hint).toContain(".local/state/nemoclaw/openshell-docker-gateway");
-    expect(gwDiag?.hint).not.toContain("/tmp/gateway.log");
-    expect(gwDiag?.hint).not.toContain("inside the sandbox");
+    // The retry budget makes the old false-positive timing claim go away — no
+    // bare "Check /tmp/gateway.log inside the sandbox" instruction anymore.
+    expect(gwDiag?.hint).not.toContain("Check /tmp/gateway.log inside the sandbox");
   });
 
   it("reports unhealthy when sandbox is unreachable (SSH failed)", async () => {
