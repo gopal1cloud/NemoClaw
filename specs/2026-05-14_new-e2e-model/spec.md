@@ -726,15 +726,14 @@ Make the existing coverage and parity data visible by layer.
    - suite coverage
    - parity status by layer
    - top deferred gap domains
-4. Add `.e2e/reports/summary.md` generation.
-5. Update `e2e-scenarios.yaml` and `e2e-parity-compare.yaml` to append summary markdown to `$GITHUB_STEP_SUMMARY`.
+4. Add `.e2e/reports/summary.md` generation for local artifacts and later workflow consumption.
 
 ### Acceptance Criteria
 
 - `bash test/e2e/runtime/coverage-report.sh` includes sections for base scenarios, onboarding profiles, test plans, suites, and parity by layer.
 - Parity map validation accepts explicit `layer` fields.
 - Deferred assertions without explicit layer are still accepted with an inferred/default layer during transition.
-- GitHub Actions summary shows the layered coverage report after scenario and parity runs.
+- `.e2e/reports/summary.md` shows the layered coverage report for local runs and workflow artifacts.
 - Artifacts still include JSON and raw logs.
 
 ## Phase 3: Onboarding Assertion Stage

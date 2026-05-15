@@ -50,8 +50,6 @@ Use existing Vitest scenario-framework tests under `test/e2e/scenario-framework-
   - Add sections for base scenarios, onboarding profiles, test plans, suites, and parity by layer.
 - `e2e-parity-map.test.ts`
   - Accept explicit `layer` and `gap_domain`; infer/default layer during transition.
-- `e2e-scenarios-workflow.test.ts`
-  - Verify workflow appends summary markdown to `$GITHUB_STEP_SUMMARY`.
 
 **New Tests to Create:**
 1. `test_should_render_layered_coverage_sections`
@@ -63,9 +61,9 @@ Use existing Vitest scenario-framework tests under `test/e2e/scenario-framework-
 3. `test_should_infer_layer_for_deferred_assertion_without_layer`
    - **Input**: transitional legacy entry.
    - **Expected**: validation passes with inferred/default layer marker.
-4. `test_should_write_summary_markdown_for_workflow_upload`
+4. `test_should_write_summary_markdown_for_local_report_artifact`
    - **Input**: coverage command.
-   - **Expected**: `.e2e/reports/summary.md` exists and contains layered tables.
+   - **Expected**: `.e2e/reports/summary.md` exists and contains layered tables for local artifact and future workflow use.
 
 ## Phase 3: Onboarding Assertion Stage - Test Guide
 
