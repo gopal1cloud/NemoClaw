@@ -125,7 +125,10 @@ preflight() {
       | sudo tee /etc/apt/sources.list.d/cloudflared.list >/dev/null
     sudo apt-get update -qq
     sudo apt-get install -y "cloudflared=${cf_version}*" \
-      || { log "ERROR: cloudflared ${cf_version} not available in Cloudflare APT repo"; exit 1; }
+      || {
+        log "ERROR: cloudflared ${cf_version} not available in Cloudflare APT repo"
+        exit 1
+      }
     log "cloudflared ${cf_version} installed (GPG verified via Cloudflare APT repo)"
   fi
 
