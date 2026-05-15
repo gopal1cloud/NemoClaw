@@ -491,10 +491,10 @@ The resolver must fail fast with clear messages when:
 - a test plan references a missing onboarding assertion
 - a test plan references a missing suite
 - a suite `requires_state` key is incompatible with the selected expected state
-- an onboarding profile requires a runner/secret not available through the base plan
+- an onboarding profile declares `runner_requirements`, `required_secrets`, or capability metadata that are structurally incompatible with the selected base plan metadata
 - a negative base scenario is combined with a positive onboarding profile without `expected_failure`
 
-Phase 1 compatibility validation must preserve `runner_requirements`, capability metadata, and `expected_failure` metadata in plan output when present, but it does not need to enforce live runner capability detection or structured failure matching.
+Phase 1 compatibility validation is metadata-only: preserve `runner_requirements`, `required_secrets`, capability metadata, and `expected_failure` metadata in plan output when present, and validate only declared incompatibilities. It must not probe live runner capabilities, check whether secrets exist in the environment, or perform structured failure matching.
 
 ### Gap classification model
 

@@ -33,6 +33,10 @@ Use existing Vitest scenario-framework tests under `test/e2e/scenario-framework-
    - **Input**: fixture plans with missing base, onboarding, expected state, assertion, and suite IDs.
    - **Expected**: clear resolver errors naming the missing reference.
    - **Covers**: compatibility rules.
+5. `test_should_reject_declared_metadata_incompatibility_without_live_secret_or_capability_checks`
+   - **Input**: fixture plan whose onboarding profile declares runner/secret requirements that conflict with base metadata.
+   - **Expected**: resolver reports a metadata compatibility error, and tests assert no environment secret lookup or live capability command is invoked.
+   - **Covers**: Phase 1 metadata-only compatibility boundary.
 5. `test_should_print_layered_plan_only_without_running_e2e`
    - **Input**: `bash test/e2e/runtime/run-scenario.sh <plan> --plan-only`
    - **Expected**: exits 0 and prints/resolves layered plan only.
