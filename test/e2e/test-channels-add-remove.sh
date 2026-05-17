@@ -125,13 +125,22 @@ openclaw_has_telegram() {
   esac
 }
 
-# Check whether a named preset is currently applied to the sandbox.
-# Uses host-side `nemoclaw <sb> policy-list` since presets live in the
-# gateway policy engine (not in the sandbox filesystem).
+# Print the policy-list snapshot for operator visibility. Call before each
+# policy_list_has_preset assertion so the test transcript shows the actual
+# gateway state next to the pass/fail line.
+print_policy_list() {
+  info "policy-list snapshot:"
+  nemoclaw "$SANDBOX_NAME" policy-list 2>&1 | sed 's/^/    /' || true
+}
+
+# Check whether a named preset is currently applied to the sandbox. Uses
+# host-side `nemoclaw <sb> policy-list` since presets live in the gateway
+# policy engine (not in the sandbox filesystem). Matches only the applied
+# marker (●); the inactive marker (○) is treated as "not applied".
 policy_list_has_preset() {
   local preset="$1"
   nemoclaw "$SANDBOX_NAME" policy-list 2>/dev/null \
-    | grep -E "^\s*${preset}\b" >/dev/null
+    | grep -E "^\s*●\s+${preset}\b" >/dev/null
 }
 
 # Run rebuild with live tail of the rebuild log so the operator can see
@@ -289,6 +298,7 @@ else
   fi
 fi
 
+print_policy_list
 if policy_list_has_preset telegram; then
   fail "C2c: 'telegram' preset unexpectedly applied at baseline"
 else
@@ -336,12 +346,11 @@ section "Phase 4: Verify post-add state (regression #3437)"
 # policies.applyPreset, so the rebuild backup manifest did not capture the
 # telegram preset and the rebuilt sandbox had no egress to api.telegram.org.
 # This assertion is the load-bearing check for #3437.
+print_policy_list
 if policy_list_has_preset telegram; then
   pass "C4a: 'telegram' preset present in policy list after add+rebuild (#3437 fixed)"
 else
   fail "C4a: REGRESSION — 'telegram' preset missing from policy list after add+rebuild (#3437)"
-  info "policy list output:"
-  nemoclaw "$SANDBOX_NAME" policy list 2>&1 | head -20 || true
 fi
 
 # C4b: openclaw.json inside the rebuilt sandbox contains the telegram block.
@@ -399,6 +408,8 @@ else
   tail -20 /tmp/nc-remove.log 2>/dev/null || true
 fi
 
+unset TELEGRAM_BOT_TOKEN
+
 info "Rebuilding sandbox to apply the remove..."
 if run_rebuild_with_live_log /tmp/nc-rebuild-remove.log; then
   pass "C5b: rebuild (post-remove) completed"
@@ -446,6 +457,7 @@ fi
 #
 # Reported as info-only until the remove-side fix lands. Flip to pass/fail
 # once the symmetric helper is wired in.
+print_policy_list
 if policy_list_has_preset telegram; then
   skip "C6c: 'telegram' preset still applied after remove — remove-side cleanup pending (follow-up)"
 else
