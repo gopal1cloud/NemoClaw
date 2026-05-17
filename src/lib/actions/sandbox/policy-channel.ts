@@ -337,12 +337,47 @@ async function applyChannelRemoveToGatewayAndRegistry(
     );
     process.exit(1);
   }
+
+  // Detach providers from the sandbox before deletion. openshell rejects
+  // `provider delete` with FailedPrecondition when the provider is still
+  // attached to a sandbox; the sandbox image itself only stops referencing
+  // the bridge after the next rebuild, so without an explicit detach the
+  // delete will fail on any sandbox that is still alive at remove-time.
+  // NotFound / NotAttached are treated as success-equivalent because a
+  // previous run may have already detached, or the channel may have been
+  // configured for a sandbox that is no longer alive.
+  const detachFailures: Array<{ name: string; output: string }> = [];
+  for (const envKey of channelTokenKeys) {
+    const name = bridgeProviderName(sandboxName, channelName, envKey);
+    const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (result.status !== 0) {
+      const output = `${result.stdout || ""}${result.stderr || ""}`;
+      if (!/\bNotFound\b|not found|not attached/i.test(output)) {
+        detachFailures.push({ name, output: output.trim() });
+      }
+    }
+  }
+  if (detachFailures.length > 0) {
+    console.error(
+      `  Failed to detach bridge provider(s) from sandbox '${sandboxName}': ${detachFailures.map((f) => f.name).join(", ")}.`,
+    );
+    for (const f of detachFailures) {
+      console.error(`    [${f.name}] ${f.output.split("\n").join("\n      ")}`);
+    }
+    console.error("  Registry not updated; re-run after resolving the gateway error.");
+    process.exit(1);
+  }
+
   // Capture each delete's outcome. If any non-NotFound failure surfaces
   // we must NOT update the registry — otherwise NemoClaw would record
   // the channel as removed locally while the bridge is still live in
   // the gateway, which produces a half-configured sandbox the user
-  // can't easily recover.
-  const failed: string[] = [];
+  // can't easily recover. Surface the underlying openshell output so the
+  // operator can see exactly why the delete was rejected.
+  const deleteFailures: Array<{ name: string; output: string }> = [];
   for (const envKey of channelTokenKeys) {
     const name = bridgeProviderName(sandboxName, channelName, envKey);
     const result = runOpenshell(["provider", "delete", name], {
@@ -354,14 +389,17 @@ async function applyChannelRemoveToGatewayAndRegistry(
       // Treat "not found" as success-equivalent — a previous run may
       // have already deleted the provider.
       if (!/\bNotFound\b|not found/i.test(output)) {
-        failed.push(name);
+        deleteFailures.push({ name, output: output.trim() });
       }
     }
   }
-  if (failed.length > 0) {
+  if (deleteFailures.length > 0) {
     console.error(
-      `  Failed to delete bridge provider(s) from the OpenShell gateway: ${failed.join(", ")}.`,
+      `  Failed to delete bridge provider(s) from the OpenShell gateway: ${deleteFailures.map((f) => f.name).join(", ")}.`,
     );
+    for (const f of deleteFailures) {
+      console.error(`    [${f.name}] ${f.output.split("\n").join("\n      ")}`);
+    }
     console.error("  Registry not updated; re-run after resolving the gateway error.");
     process.exit(1);
   }
