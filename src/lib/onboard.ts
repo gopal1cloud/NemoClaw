@@ -42,7 +42,7 @@ const dockerGpuSandboxCreate: typeof import("./onboard/docker-gpu-sandbox-create
 const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") = require("./onboard/docker-driver-gateway-launch");
 const { findReadableNvidiaCdiSpecFiles, getDockerCdiSpecDirs, parseDockerCdiSpecDirs }: typeof import("./onboard/docker-cdi") = require("./onboard/docker-cdi");
 const { buildSandboxGpuCreateArgs, getSandboxReadyTimeoutSecs }: typeof import("./onboard/sandbox-gpu-create") = require("./onboard/sandbox-gpu-create");
-const { selectResourceProfileForSandbox }: typeof import("./onboard/resource-profile-selection") = require("./onboard/resource-profile-selection");
+const { appendResourceFlagsForProfile, selectResourceProfileForSandbox }: typeof import("./onboard/resource-profile-selection") = require("./onboard/resource-profile-selection");
 const {
   isValidProxyHost,
   isValidProxyPort,
@@ -325,7 +325,6 @@ const providerModels: typeof import("./inference/provider-models") = require("./
 const sandboxCreateStream: typeof import("./sandbox/create-stream") = require("./sandbox/create-stream");
 const validationRecovery: typeof import("./validation-recovery") = require("./validation-recovery");
 const webSearch: typeof import("./inference/web-search") = require("./inference/web-search");
-const { appendResourceFlags }: typeof import("./resources-cmd") = require("./resources-cmd");
 const openshellInstallFlow: typeof import("./onboard/openshell-install") =
   require("./onboard/openshell-install");
 const openshellPinFlow: typeof import("./onboard/openshell-pin") =
@@ -390,8 +389,6 @@ const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.
 
 const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
 
-// Re-export shared JSON types under the names used throughout this module.
-// See src/lib/core/json-types.ts for the canonical definitions.
 import type {
   JsonObject as LooseObject,
 } from "./core/json-types";
@@ -493,9 +490,6 @@ async function promptYesNoOrDefault(
   return chosen;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────
-
-// Gateway state functions — delegated to src/lib/state/gateway.ts
 const {
   isSandboxReady,
   parseSandboxStatus,
@@ -5283,8 +5277,6 @@ async function createSandbox(
   };
   process.on("exit", cleanupBuildCtx);
 
-  // Create sandbox (use -- echo to avoid dropping into interactive shell)
-  // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
   const defaultPolicyPath = path.join(
     ROOT,
     "nemoclaw-blueprint",
@@ -5348,13 +5340,7 @@ async function createSandbox(
     }),
   ];
 
-  // Append CPU/memory resource flags from selected profile (graceful degradation).
-  if (resourceProfile) {
-    const applied = appendResourceFlags(createArgs, resourceProfile, getOpenshellBinary());
-    if (!applied) {
-      note("  OpenShell does not support resource flags — sandbox will use default limits.");
-    }
-  }
+  appendResourceFlagsForProfile(createArgs, resourceProfile, getOpenshellBinary(), { isNonInteractive, note, prompt, promptOrDefault });
 
   // Create OpenShell providers for messaging credentials so they flow through
   // the provider/placeholder system instead of raw env vars. The L7 proxy
@@ -10057,12 +10043,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         console.error("  Inference selection is incomplete; cannot create sandbox.");
         process.exit(1);
       }
-      const selectedProfile = await selectResourceProfileForSandbox({
-        isNonInteractive,
-        note,
-        prompt,
-        promptOrDefault,
-      });
+      const resourceProfile = await selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault });
       if (fresh) {
         stopStaleDashboardListenersForSandbox(registry.listSandboxes().sandboxes, sandboxName);
       }
@@ -10078,7 +10059,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         agent,
         opts.controlUiPort || null,
         sandboxGpuConfig,
-        selectedProfile,
+        resourceProfile,
       );
       webSearchConfig = nextWebSearchConfig;
       registry.updateSandbox(sandboxName, {

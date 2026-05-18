@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  appendResourceFlags,
   getHardwareResources,
   loadResourceProfiles,
   resolveResourceValue,
@@ -120,4 +121,15 @@ export async function selectResourceProfileForSandbox(
   }
 
   return applyResourceEnvOverrides(selectedProfile, deps);
+}
+
+export function appendResourceFlagsForProfile(
+  args: string[],
+  profile: ResourceProfile | null,
+  openshellBinary: string,
+  deps: ResourceProfileSelectionDeps,
+): void {
+  if (profile && !appendResourceFlags(args, profile, openshellBinary)) {
+    deps.note("  OpenShell does not support resource flags — sandbox will use default limits.");
+  }
 }
