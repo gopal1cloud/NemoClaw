@@ -241,7 +241,8 @@ const {
 };
 const { sleepSeconds, waitForHttp, waitUntil } = require("./core/wait");
 const platformUtils: typeof import("./platform") = require("./platform");
-const { inferContainerRuntime, isWsl, shouldPatchCoredns } = platformUtils;
+const { containerCanReachHostLoopback, inferContainerRuntime, isWsl, shouldPatchCoredns } =
+  platformUtils;
 const { resolveOpenshell } = require("./adapters/openshell/resolve");
 const credentials: typeof import("./credentials/store") = require("./credentials/store");
 const {
@@ -6999,19 +7000,23 @@ async function setupNim(
         }
         if (!ollamaReady) {
           console.log("  Starting Ollama...");
-          // Keep raw Ollama loopback-only. Non-WSL containers reach it through
-          // the authenticated proxy on OLLAMA_PROXY_PORT.
+          // Keep raw Ollama loopback-only. Containers reach it through the
+          // authenticated proxy on OLLAMA_PROXY_PORT, except under Docker
+          // Desktop on WSL where the daemon's host-network bridge can reach
+          // the WSL host's loopback directly.
           // Shell required: backgrounding (&), env var prefix, output redirection.
-          const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} `;
-          runShell(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
+          runShell(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
+            ignoreError: true,
+          });
           if (!waitForHttp(`http://127.0.0.1:${OLLAMA_PORT}/`, 10)) {
             console.error(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
             if (isNonInteractive()) process.exit(1);
             continue selectionLoop;
           }
         }
-        if (isWsl()) {
-          // WSL2 doesn't need the proxy — Docker can reach the host directly.
+        if (containerCanReachHostLoopback(getContainerRuntime())) {
+          // Docker Desktop on WSL publishes the host's 127.0.0.1 into containers
+          // via host.docker.internal — no auth proxy needed.
           console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
         } else {
           if (!startOllamaAuthProxy()) {
@@ -7165,8 +7170,9 @@ async function setupNim(
           // Fall back to manual start only when systemd is unavailable.
           if (overrideState === "not-applicable" && !findReachableOllamaHost()) {
             console.log("  Starting Ollama...");
-            const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} `;
-            runShell(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
+            runShell(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
+              ignoreError: true,
+            });
             if (!waitForHttp(`http://127.0.0.1:${OLLAMA_PORT}/`, 10)) {
               console.error(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
               if (isNonInteractive()) process.exit(1);
@@ -7174,8 +7180,9 @@ async function setupNim(
             }
           }
         }
-        if (isWsl()) {
-          // WSL2 doesn't need the proxy — Docker reaches the host directly.
+        if (containerCanReachHostLoopback(getContainerRuntime())) {
+          // Docker Desktop on WSL publishes the host's 127.0.0.1 into containers
+          // via host.docker.internal — no auth proxy needed.
           console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
         } else {
           if (!startOllamaAuthProxy()) {
