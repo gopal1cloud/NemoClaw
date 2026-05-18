@@ -630,10 +630,24 @@ while True:
 """
 
 
+def _reap_browser_use_cdp_tunnel(proc):
+    if proc.poll() is None:
+        proc.terminate()
+    try:
+        proc.wait(timeout=1)
+    except Exception:
+        try:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait(timeout=1)
+        except Exception:
+            # Tunnel cleanup must not fail plugin shutdown.
+            pass
+
+
 def _cleanup_browser_use_cdp_tunnels():
     for remote_url, (proc, _url) in list(_BROWSER_USE_CDP_TUNNELS.items()):
-        if proc.poll() is None:
-            proc.terminate()
+        _reap_browser_use_cdp_tunnel(proc)
         _BROWSER_USE_CDP_TUNNELS.pop(remote_url, None)
 
 
@@ -643,6 +657,7 @@ atexit.register(_cleanup_browser_use_cdp_tunnels)
 def _start_browser_use_cdp_tunnel(cdp_url):
     for remote_url, (proc, _url) in list(_BROWSER_USE_CDP_TUNNELS.items()):
         if proc.poll() is not None:
+            _reap_browser_use_cdp_tunnel(proc)
             _BROWSER_USE_CDP_TUNNELS.pop(remote_url, None)
 
     parsed = urlparse(str(cdp_url or ""))
