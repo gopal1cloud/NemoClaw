@@ -594,7 +594,7 @@ Run <code class="docutils literal notranslate"><span class="pre">nemoclaw</span>
 <span class="gp">$ </span>openshell<span class="w"> </span>sandbox<span class="w"> </span>download<span class="w"> </span>&lt;sandbox-name&gt;<span class="w"> </span>/sandbox/output<span class="w"> </span>./output
 </pre></div>
 </div>
-<p>For one-off commands, use <code class="docutils literal notranslate"><span class="pre">nemoclaw</span> <span class="pre">&lt;name&gt;</span> <span class="pre">exec</span></code> instead — it runs as the sandbox user (HOME=/sandbox) and finds NemoClaw-provisioned config that raw <code class="docutils literal notranslate"><span class="pre">openshell</span> <span class="pre">sandbox</span> <span class="pre">exec</span></code> (or <code class="docutils literal notranslate"><span class="pre">docker</span> <span class="pre">exec</span></code>) can miss.</p>
+<p>For one-off commands, use <code class="docutils literal notranslate"><span class="pre">nemoclaw</span> <span class="pre">&lt;name&gt;</span> <span class="pre">exec</span></code> instead — it runs as the sandbox user (<code class="docutils literal notranslate"><span class="pre">HOME=/sandbox</span></code>) and finds NemoClaw-provisioned config that raw <code class="docutils literal notranslate"><span class="pre">openshell</span> <span class="pre">sandbox</span> <span class="pre">exec</span></code> (or <code class="docutils literal notranslate"><span class="pre">docker</span> <span class="pre">exec</span></code>) can miss.</p>
 </li>
 <li><p>Inspect or replace raw OpenShell policy:</p>
 <div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>openshell<span class="w"> </span>policy<span class="w"> </span>get<span class="w"> </span>--full<span class="w"> </span>&lt;sandbox-name&gt;<span class="w"> </span>&gt;<span class="w"> </span>live-policy.yaml
@@ -624,7 +624,7 @@ Those commands do not update NemoClaw’s registry, session metadata, workspace-
 It waits for readiness, handles stale SSH host keys after gateway restarts, and prints agent-specific hints.</p>
 <p>Use <code class="docutils literal notranslate"><span class="pre">openshell</span> <span class="pre">sandbox</span> <span class="pre">connect</span> <span class="pre">&lt;name&gt;</span></code> only when you intentionally want the raw OpenShell connection path.</p>
 <p>For a one-off command, use <code class="docutils literal notranslate"><span class="pre">nemoclaw</span> <span class="pre">&lt;name&gt;</span> <span class="pre">exec</span></code> instead of opening an interactive shell.
-It runs as the sandbox user (HOME=/sandbox) and forwards everything after <code class="docutils literal notranslate"><span class="pre">--</span></code> to the sandbox.
+It runs as the sandbox user (<code class="docutils literal notranslate"><span class="pre">HOME=/sandbox</span></code>) and forwards everything after <code class="docutils literal notranslate"><span class="pre">--</span></code> to the sandbox.
 Reach for <code class="docutils literal notranslate"><span class="pre">openshell</span> <span class="pre">sandbox</span> <span class="pre">exec</span></code> directly only when you intentionally want the raw OpenShell exec path.</p>
 <div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>nemoclaw<span class="w"> </span>my-assistant<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>--<span class="w"> </span>cat<span class="w"> </span>/tmp/gateway.log
 </pre></div>
