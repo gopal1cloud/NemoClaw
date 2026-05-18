@@ -175,8 +175,11 @@ telegram_egress_open() {
   fi
   # Proxy denial signatures — fetch raises a network error before any HTTP
   # status. The gateway L7 surfaces the rejection with one of these.
-  if echo "$body" | grep -qiE "policy_denied|engine:ssrf|forbidden by policy|fetch failed|CONNECT.*40[0-9]"; then
+  if echo "$body" | grep -qiE "policy_denied|engine:ssrf|forbidden by policy|CONNECT.*40[0-9]"; then
     return 1
+  fi
+  if echo "$body" | grep -qiE "fetch failed|ENOTFOUND|ECONNRESET|ETIMEDOUT"; then
+    return 2
   fi
   return 2
 }
