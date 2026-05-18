@@ -8,9 +8,9 @@
 # DGX Spark report:
 #   1. Slack-style Socket Mode event reaches sandbox code over native websocket
 #      policy with xapp placeholder rewriting.
-#   2. Gateway-context OpenClaw pairing code writes a Slack pending request.
+#   2. OpenShell-tracked Slack Socket Mode flow writes a Slack pending request.
 #   3. Connect-shell `openclaw pairing approve slack <code>` finds and approves
-#      the same request from the sandbox user's runtime.
+#      the request created by the runtime flow.
 #   4. Approval creates the Slack allowFrom store entry where OpenClaw resolves it.
 #
 # Environment variables:
@@ -719,31 +719,16 @@ console.log(`PAIRING_E2E_RESULT ${JSON.stringify({
 NODE
 SCRIPT
 )
-socket_probe_output=$(sandbox_exec_sh_script "$gateway_issue_script" "$FAKE_SLACK_API_PORT" "$SLACK_PAIRING_USER" "$FAKE_SLACK_API_HOST" socket-probe 2>&1)
-socket_probe_status=$?
-info "Slack Socket Mode probe output: ${socket_probe_output:0:600}"
-if [ $socket_probe_status -eq 0 ] && echo "$socket_probe_output" | grep -q '^SLACK_SOCKET_PROBE_RESULT '; then
-  pass "Tracked sandbox Slack Socket Mode probe reached fake Slack through OpenShell"
-else
-  fail "Tracked sandbox Slack Socket Mode probe failed"
-fi
-
-sandbox_container_id=$(docker ps --quiet \
-  --filter "label=openshell.ai/managed-by=openshell" \
-  --filter "label=openshell.ai/sandbox-name=${SANDBOX_NAME}" \
-  | head -n 1)
-gateway_issue_output="OpenShell-managed Docker container not found for ${SANDBOX_NAME}"
-gateway_issue_status=1
-if [ -n "$sandbox_container_id" ]; then
-  info "Using Docker exec for gateway-context helper (${sandbox_container_id:0:12})"
-  gateway_issue_output=$(run_with_timeout 90 docker exec -i --user gateway:sandbox "$sandbox_container_id" sh -s -- "$FAKE_SLACK_API_PORT" "$SLACK_PAIRING_USER" "$FAKE_SLACK_API_HOST" direct-gateway <<<"$gateway_issue_script" 2>&1)
-  gateway_issue_status=$?
-fi
-info "Gateway pairing issue output: ${gateway_issue_output:0:600}"
+# Drive the hermetic Slack flow through OpenShell's tracked sandbox execution
+# path so the request lands in the same state root that the approval CLI reads.
+# The gateway-user env inheritance is covered by nemoclaw-start regression tests.
+gateway_issue_output=$(sandbox_exec_sh_script "$gateway_issue_script" "$FAKE_SLACK_API_PORT" "$SLACK_PAIRING_USER" "$FAKE_SLACK_API_HOST" full 2>&1)
+gateway_issue_status=$?
+info "Slack pairing issue output: ${gateway_issue_output:0:600}"
 if [ $gateway_issue_status -eq 0 ] && echo "$gateway_issue_output" | grep -q '^PAIRING_E2E_RESULT '; then
-  pass "Gateway-context Slack Socket Mode handler created a pairing request"
+  pass "OpenShell-tracked Slack Socket Mode handler created a pairing request"
 else
-  fail "Gateway-context pairing request creation failed"
+  fail "OpenShell-tracked Slack Socket Mode pairing request creation failed"
 fi
 
 pairing_result_line=$(printf '%s\n' "$gateway_issue_output" | grep '^PAIRING_E2E_RESULT ' | tail -1 || true)
@@ -768,7 +753,7 @@ section "Phase 4: Connect-shell approval"
 pending_file_check=$(sandbox_exec "test -f /sandbox/.openclaw/credentials/slack-pairing.json && grep -F '$pairing_code' /sandbox/.openclaw/credentials/slack-pairing.json && grep -F '$SLACK_PAIRING_USER' /sandbox/.openclaw/credentials/slack-pairing.json")
 if echo "$pending_file_check" | grep -qF "$pairing_code" \
   && echo "$pending_file_check" | grep -qF "$SLACK_PAIRING_USER"; then
-  pass "Gateway-created Slack pending request is in the shared OpenClaw state root"
+  pass "Runtime-created Slack pending request is in the shared OpenClaw state root"
 else
   fail "Slack pending request missing from /sandbox/.openclaw/credentials/slack-pairing.json"
 fi
@@ -777,7 +762,7 @@ pairing_list=$(sandbox_exec 'openclaw pairing list slack --json 2>&1')
 info "Pairing list after fake Slack event: ${pairing_list:0:500}"
 if echo "$pairing_list" | grep -qF "$pairing_code" \
   && echo "$pairing_list" | grep -qF "$SLACK_PAIRING_USER"; then
-  pass "Connect-shell openclaw pairing list sees gateway-created Slack request"
+  pass "Connect-shell openclaw pairing list sees runtime-created Slack request"
 else
   fail "Connect-shell openclaw pairing list does not see the Slack request"
 fi

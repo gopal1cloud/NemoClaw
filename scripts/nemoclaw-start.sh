@@ -199,13 +199,16 @@ if [ -z "$_DASHBOARD_PORT_RAW" ]; then
   fi
 else
   _DASHBOARD_PORT="$(printf '%s' "$_DASHBOARD_PORT_RAW" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  _DASHBOARD_PORT_VALID=1
   case "$_DASHBOARD_PORT" in
     *[!0-9]* | '')
-      echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535" >&2
-      exit 1
+      _DASHBOARD_PORT_VALID=0
       ;;
   esac
-  if ! [ "$_DASHBOARD_PORT" -ge 1024 ] || ! [ "$_DASHBOARD_PORT" -le 65535 ]; then
+  if [ "$_DASHBOARD_PORT_VALID" -eq 1 ] && { [ "$_DASHBOARD_PORT" -lt 1024 ] || [ "$_DASHBOARD_PORT" -gt 65535 ]; }; then
+    _DASHBOARD_PORT_VALID=0
+  fi
+  if [ "$_DASHBOARD_PORT_VALID" -ne 1 ]; then
     echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535" >&2
     exit 1
   fi

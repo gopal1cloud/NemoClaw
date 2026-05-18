@@ -6890,22 +6890,12 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'Tracked sandbox Slack Socket Mode probe reached fake Slack through OpenShell'
+    - legacy: 'OpenShell-tracked Slack Socket Mode handler created a pairing request'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'Tracked sandbox Slack Socket Mode probe failed'
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'Gateway-context Slack Socket Mode handler created a pairing request'
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'Gateway-context pairing request creation failed'
+    - legacy: 'OpenShell-tracked Slack Socket Mode pairing request creation failed'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
@@ -6930,7 +6920,7 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'Gateway-created Slack pending request is in the shared OpenClaw state root'
+    - legacy: 'Runtime-created Slack pending request is in the shared OpenClaw state root'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
@@ -6940,7 +6930,7 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'Connect-shell openclaw pairing list sees gateway-created Slack request'
+    - legacy: 'Connect-shell openclaw pairing list sees runtime-created Slack request'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers

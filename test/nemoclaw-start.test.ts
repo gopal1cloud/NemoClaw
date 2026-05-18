@@ -282,6 +282,13 @@ describe("nemoclaw-start non-root fallback", () => {
       expect(baked.stdout).toContain("SANDBOX_HOME=/sandbox");
       expect(baked.stdout).toContain("OPENCLAW_STATE_DIR=/sandbox/.openclaw");
       expect(baked.stdout).toContain("CMD=openclaw agent");
+
+      const invalidHighPort = runScenario("set -- nemoclaw-start openclaw agent", {
+        NEMOCLAW_DASHBOARD_PORT: "70000",
+      });
+      expect(invalidHighPort.status).toBe(1);
+      expect(invalidHighPort.stderr).toContain("Invalid NEMOCLAW_DASHBOARD_PORT='70000'");
+      expect(invalidHighPort.stderr).toContain("must be an integer between 1024 and 65535");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -1367,7 +1374,7 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     fs.mkdirSync(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "openclaw"),
-      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nprintf 'gateway stdout marker\\n'\nprintf 'gateway stderr marker\\n' >&2\nexec sleep 30\n`,
+      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nprintf 'state=%s oauth=%s home=%s config=%s\\n' "$OPENCLAW_STATE_DIR" "$OPENCLAW_OAUTH_DIR" "$OPENCLAW_HOME" "$OPENCLAW_CONFIG_PATH" >> ${JSON.stringify(openclawLog)}\nprintf 'gateway stdout marker\\n'\nprintf 'gateway stderr marker\\n' >&2\nexec sleep 30\n`,
       { mode: 0o755 },
     );
     fs.writeFileSync(
@@ -1383,6 +1390,10 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         "set -euo pipefail",
         `export PATH=${JSON.stringify(`${fakeBin}:${process.env.PATH || ""}`)}`,
         `OPENCLAW=${JSON.stringify(path.join(fakeBin, "openclaw"))}`,
+        "export OPENCLAW_HOME=/sandbox",
+        "export OPENCLAW_STATE_DIR=/sandbox/.openclaw",
+        "export OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json",
+        "export OPENCLAW_OAUTH_DIR=/sandbox/.openclaw/credentials",
         '_DASHBOARD_PORT="19000"',
         "start_persistent_gateway_log_mirror() { sleep 30 & GATEWAY_LOG_PERSIST_PID=$!; }",
         "start_auto_pair() { sleep 30 & AUTO_PAIR_PID=$!; }",
@@ -1423,6 +1434,9 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     const { result, openclaw, gateway } = runLaunchBlock("non-root");
     expect(result.status).toBe(0);
     expect(openclaw).toContain("gateway run --port 19000");
+    expect(openclaw).toContain(
+      "state=/sandbox/.openclaw oauth=/sandbox/.openclaw/credentials home=/sandbox config=/sandbox/.openclaw/openclaw.json",
+    );
     expect(gateway).toContain("gateway stdout marker");
     expect(gateway).toContain("gateway stderr marker");
     expect(result.stdout).not.toContain("gateway stdout marker");
@@ -1438,10 +1452,13 @@ describe("nemoclaw-start gateway launch signal handling", () => {
   });
 
   it("launches the root gateway through gosu with the configured port and tracks child PIDs", () => {
-    const { result, gosu } = runLaunchBlock("root");
+    const { result, openclaw, gosu } = runLaunchBlock("root");
     expect(result.status).toBe(0);
     expect(gosu).toContain("user=gateway");
     expect(gosu).toContain("gateway run --port 19000");
+    expect(openclaw).toContain(
+      "state=/sandbox/.openclaw oauth=/sandbox/.openclaw/credentials home=/sandbox config=/sandbox/.openclaw/openclaw.json",
+    );
     const gatewayPid = result.stdout.match(/GATEWAY_PID=(\d+)/)?.[1];
     expect(gatewayPid).toBeTruthy();
     expect(result.stdout).toContain(`WAIT_PID=${gatewayPid}`);
