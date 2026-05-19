@@ -253,6 +253,13 @@ def token_positions(text: str, token: str) -> list[int]:
     return [match.start() for match in re.finditer(re.escape(token), text)]
 
 
+def strip_terminal_control(text: str) -> str:
+    text = re.sub(r"\x1b\][^\x07]*(?:\x07|\x1b\\)", "", text)
+    text = re.sub(r"\x1b\[[0-9;?]*[@-~]", "", text)
+    text = re.sub(r"\x1b.", "", text)
+    return text.replace("\r", "\n")
+
+
 def analyze_visible_screen(screen_text: str) -> dict[str, object]:
     failures: list[str] = []
     prompt_positions: list[int] = []
@@ -314,6 +321,15 @@ def run(sandbox_name: str) -> int:
             120,
             "OpenClaw TUI",
         )
+        session.wait_for(
+            lambda raw, screen: (
+                "connected | idle" in f"{screen}\n{strip_terminal_control(raw)}"
+                and "openclaw-tui" in f"{screen}\n{strip_terminal_control(raw)}"
+                and "inference/" in f"{screen}\n{strip_terminal_control(raw)}"
+            ),
+            180,
+            "OpenClaw TUI routed-model readiness",
+        )
 
         time.sleep(2)
         for spec in MESSAGES:
@@ -331,12 +347,30 @@ def run(sandbox_name: str) -> int:
 
         raw_text = session.raw.decode("utf-8", "ignore")
         screen_text = session.screen.text()
+        raw_plain = strip_terminal_control(raw_text)
         with open(RAW_LOG, "w", encoding="utf-8") as handle:
             handle.write(raw_text)
         with open(SCREEN_LOG, "w", encoding="utf-8") as handle:
             handle.write(screen_text)
 
-        analysis = analyze_visible_screen(screen_text)
+        analysis_text = (
+            screen_text
+            if all(spec.prompt_token in screen_text for spec in MESSAGES)
+            else raw_plain
+        )
+        analysis = analyze_visible_screen(analysis_text)
+        analysis["analysisSource"] = "screen" if analysis_text == screen_text else "raw-terminal-stream"
+        failures = analysis["failures"]
+        if isinstance(failures, list):
+            lowered = raw_plain.lower()
+            for marker in (
+                "send failed:",
+                "history failed:",
+                "gateway request timeout",
+                "gateway closed",
+            ):
+                if marker in lowered:
+                    failures.append(f"TUI reported {marker.rstrip(':')}")
         print("ISSUE3145_TUI_RESULT " + json.dumps(analysis, sort_keys=True))
         if analysis["failures"]:
             print(f"Captured TUI screen: {SCREEN_LOG}", file=sys.stderr)

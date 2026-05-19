@@ -389,7 +389,7 @@ if openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
     -o ConnectTimeout=10 \
     -o LogLevel=ERROR \
     "openshell-${SANDBOX_NAME}" \
-    ". /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; openclaw agent --agent main --json --session-id '${agent_session_id}' -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.'" \
+    "nemoclaw-start openclaw agent --agent main --json --session-id '${agent_session_id}' -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.'" \
     2>/dev/null) || true
 fi
 rm -f "$ssh_config"

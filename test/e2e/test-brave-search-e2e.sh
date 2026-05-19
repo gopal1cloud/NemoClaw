@@ -287,7 +287,7 @@ check_real_brave_search_via_agent() {
     return
   fi
 
-  ssh_cmd=". /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; openclaw agent --agent main --json --session-id '${session_id}' -m 'Use the web search tool to find one result for the query: NVIDIA. Reply with only the title of the top result.'"
+  ssh_cmd="nemoclaw-start openclaw agent --agent main --json --session-id '${session_id}' -m 'Use the web search tool to find one result for the query: NVIDIA. Reply with only the title of the top result.'"
   raw=$(run_with_timeout 120 ssh -F "$ssh_cfg" \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
