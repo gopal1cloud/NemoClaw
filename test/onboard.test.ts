@@ -677,7 +677,8 @@ runner.runCapture = (command) => {
 };
 registry.updateSandbox = () => true;
 adapter.ensureBedrockRuntimeAdapter = async ({ classification, compatibleCredential }) => ({
-  baseUrl: "http://127.0.0.1:11436/v1",
+  baseUrl: "http://host.openshell.internal:11436/v1",
+  localBaseUrl: "http://127.0.0.1:11436/v1",
   credentialEnv: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
   token: "adapter-token",
   region: classification.region,
@@ -721,7 +722,10 @@ const { setupInference } = require(${onboardPath});
     assert.match(providerCommand.command, /--name compatible-anthropic-endpoint/);
     assert.match(providerCommand.command, /--type openai/);
     assert.match(providerCommand.command, /--credential NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN/);
-    assert.match(providerCommand.command, /OPENAI_BASE_URL=http:\/\/127\.0\.0\.1:11436\/v1/);
+    assert.match(
+      providerCommand.command,
+      /OPENAI_BASE_URL=http:\/\/host\.openshell\.internal:11436\/v1/,
+    );
     assert.equal(providerCommand.env?.NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN, "adapter-token");
     assert.ok(
       !JSON.stringify(commands).includes("bedrock-bearer"),

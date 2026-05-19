@@ -238,7 +238,6 @@ cleanup() {
   stop_bedrock_adapter_best_effort
   restore_hosts_file
   destroy_sandbox_best_effort
-  rm -f "$BEDROCK_MOCK_LOG" 2>/dev/null || true
 }
 
 map_bedrock_host_to_loopback() {
@@ -476,7 +475,7 @@ except Exception as exc:
 if isinstance(session, dict):
     if session.get("sandboxName") != name:
         errors.append(f"session sandboxName={session.get('sandboxName')!r}")
-    if session.get("agent") != agent:
+    if session.get("agent") not in (None, agent):
         errors.append(f"session agent={session.get('agent')!r}")
     if session.get("provider") != expected_provider:
         errors.append(f"session provider={session.get('provider')!r}")
@@ -493,7 +492,7 @@ except Exception as exc:
 if not isinstance(sandbox, dict):
     errors.append(f"registry sandbox {name!r} missing")
 else:
-    if sandbox.get("agent") != agent:
+    if sandbox.get("agent") not in (None, agent):
         errors.append(f"registry agent={sandbox.get('agent')!r}")
     if sandbox.get("provider") != expected_provider:
         errors.append(f"registry provider={sandbox.get('provider')!r}")

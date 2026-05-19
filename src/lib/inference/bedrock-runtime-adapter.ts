@@ -28,6 +28,8 @@ import { run, runCapture, SCRIPTS } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
 import {
   BEDROCK_RUNTIME_ADAPTER_BIND_HOST,
+  BEDROCK_RUNTIME_ADAPTER_LOOPBACK_HOST,
+  BEDROCK_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL,
   BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL,
   BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
   BEDROCK_RUNTIME_AWS_BEARER_TOKEN_ENV,
@@ -866,7 +868,7 @@ function probeAdapterHealth(options: {
     const port = options.port || BEDROCK_RUNTIME_ADAPTER_PORT;
     const req = http.request(
       {
-        hostname: BEDROCK_RUNTIME_ADAPTER_BIND_HOST,
+        hostname: BEDROCK_RUNTIME_ADAPTER_LOOPBACK_HOST,
         port,
         path: "/health",
         method: "GET",
@@ -916,6 +918,7 @@ export async function ensureBedrockRuntimeAdapter(options: {
   compatibleCredential?: string | null;
 }): Promise<{
   baseUrl: string;
+  localBaseUrl: string;
   credentialEnv: string;
   token: string;
   region: string;
@@ -938,6 +941,7 @@ export async function ensureBedrockRuntimeAdapter(options: {
     process.env[BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV] = priorToken;
     return {
       baseUrl: BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL,
+      localBaseUrl: BEDROCK_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL,
       credentialEnv: BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
       token: priorToken,
       region,
@@ -969,7 +973,7 @@ export async function ensureBedrockRuntimeAdapter(options: {
 
   if (!(await waitForAdapterHealth(token))) {
     throw new Error(
-      `Bedrock Runtime adapter did not become healthy on ${BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL}`,
+      `Bedrock Runtime adapter did not become healthy on ${BEDROCK_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL}`,
     );
   }
 
@@ -985,6 +989,7 @@ export async function ensureBedrockRuntimeAdapter(options: {
 
   return {
     baseUrl: BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL,
+    localBaseUrl: BEDROCK_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL,
     credentialEnv: BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
     token,
     region,

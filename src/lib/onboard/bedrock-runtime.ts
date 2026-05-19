@@ -177,7 +177,7 @@ export async function setupBedrockRuntimeInference(options: {
   options.verifyOnboardInferenceSmoke({
     provider: options.provider,
     model: options.model,
-    endpointUrl: adapter.baseUrl,
+    endpointUrl: adapter.localBaseUrl,
     credentialEnv: adapter.credentialEnv,
     forceOpenAiLike: true,
   });
