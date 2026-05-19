@@ -379,7 +379,7 @@ test_sbx_02_connect_chat() {
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 -o LogLevel=ERROR \
     "openshell-${SANDBOX_A}" \
-    "openclaw agent --agent main --json --thinking off --session-id '${session_id}' -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.'" \
+    ". /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; openclaw agent --agent main --json --thinking off --session-id '${session_id}' -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.'" \
     2>/dev/null) || true
   rm -f "$ssh_cfg"
 

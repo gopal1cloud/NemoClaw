@@ -233,7 +233,7 @@ gateway_diagnostics() {
   echo "  [nemoclaw status]"
   nemoclaw "$SANDBOX_NAME" status 2>&1 | head -30 | sed 's/^/    /'
   echo "  [openshell sandbox containers / pod]"
-  openshell sandbox info --name "$SANDBOX_NAME" 2>&1 | head -20 | sed 's/^/    /' || true
+  openshell sandbox get "$SANDBOX_NAME" 2>&1 | head -20 | sed 's/^/    /' || true
   if [ -n "$pid" ]; then
     echo "  [reported pid: $pid]"
     echo "  [/proc/${pid} listing]"

@@ -514,7 +514,7 @@ check_openclaw_agent_turn() {
     -o ConnectTimeout=10 \
     -o LogLevel=ERROR \
     "openshell-${SANDBOX_NAME}" \
-    "openclaw agent --agent main --json --session-id '${session_id}' -m 'Reply with only: PONG'" \
+    ". /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; openclaw agent --agent main --json --session-id '${session_id}' -m 'Reply with only: PONG'" \
     2>/dev/null) || rc=$?
   rm -f "$ssh_cfg"
 
