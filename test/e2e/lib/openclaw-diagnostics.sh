@@ -47,7 +47,7 @@ openclaw_diag_init() {
 openclaw_diag_capture_snapshot() {
   local phase="${1:-snapshot}"
   local sandbox="${2:-${OPENCLAW_DIAG_SANDBOX:-}}"
-  local phase_slug out
+  local phase_slug out ssh_cfg timeout_bin ssh_rc
 
   if [ -z "$sandbox" ]; then
     return 0
@@ -75,8 +75,27 @@ openclaw_diag_capture_snapshot() {
 
     echo ""
     echo "=== sandbox ==="
-    # shellcheck disable=SC2016  # The script runs inside the sandbox.
-    openshell sandbox exec --name "$sandbox" -- sh -lc '
+    ssh_cfg="$(mktemp)"
+    if openshell sandbox ssh-config "$sandbox" >"$ssh_cfg" 2>/dev/null; then
+      timeout_bin=""
+      if [ "${NEMOCLAW_E2E_NO_TIMEOUT:-0}" != "1" ] && [ -n "${TIMEOUT_CMD:-}" ] && [[ "${TIMEOUT_CMD}" != *" "* ]]; then
+        timeout_bin="$TIMEOUT_CMD"
+      elif [ "${NEMOCLAW_E2E_NO_TIMEOUT:-0}" != "1" ] && command -v timeout >/dev/null 2>&1; then
+        timeout_bin="timeout"
+      elif [ "${NEMOCLAW_E2E_NO_TIMEOUT:-0}" != "1" ] && command -v gtimeout >/dev/null 2>&1; then
+        timeout_bin="gtimeout"
+      fi
+
+      # Send the diagnostic script on stdin. `openshell sandbox exec` rejects
+      # command arguments containing newlines, and compacting this script into a
+      # one-liner makes the artifact harder to trust.
+      if [ -n "$timeout_bin" ]; then
+        if "$timeout_bin" 60 ssh -F "$ssh_cfg" \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o ConnectTimeout=10 \
+          -o LogLevel=ERROR \
+          "openshell-${sandbox}" sh -s <<'NEMOCLAW_OPENCLAW_DIAG_REMOTE'
 set +e
 echo "--- identity ---"
 date -u +"utc=%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date
@@ -135,7 +154,89 @@ for d in /sandbox/.openclaw/agents/main/sessions /home/sandbox/.openclaw/agents/
     tail -c 200000 "$f" 2>&1
   done
 done
-' 2>&1 || true
+NEMOCLAW_OPENCLAW_DIAG_REMOTE
+        then
+          ssh_rc=0
+        else
+          ssh_rc=$?
+        fi
+      else
+        if ssh -F "$ssh_cfg" \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o ConnectTimeout=10 \
+          -o LogLevel=ERROR \
+          "openshell-${sandbox}" sh -s <<'NEMOCLAW_OPENCLAW_DIAG_REMOTE'
+set +e
+echo "--- identity ---"
+date -u +"utc=%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date
+whoami 2>/dev/null || true
+pwd 2>/dev/null || true
+
+echo "--- versions ---"
+nemoclaw --version 2>&1 || true
+openshell --version 2>&1 || true
+openclaw --version 2>&1 || true
+node --version 2>&1 || true
+
+echo "--- selected env ---"
+env | sort | grep -E "^(OPENCLAW|NEMOCLAW|OPENSHELL|NODE|HTTPS?_PROXY|NO_PROXY|PATH|HOME|USER)=" || true
+
+echo "--- processes ---"
+ps -eo pid,ppid,user,stat,comm,args 2>/dev/null | sed -n "1,260p" || ps aux 2>/dev/null | sed -n "1,260p" || true
+
+echo "--- listeners ---"
+ss -ltnp 2>/dev/null || netstat -ltnp 2>/dev/null || netstat -an 2>/dev/null | sed -n "1,120p" || true
+
+echo "--- key paths ---"
+for d in /tmp /sandbox/.openclaw /sandbox/.openclaw/agents /sandbox/.openclaw/agents/main /sandbox/.openclaw/agents/main/sessions /home/sandbox/.openclaw /root/.openclaw; do
+  [ -e "$d" ] || continue
+  printf "\n### ls -la %s\n" "$d"
+  ls -la "$d" 2>&1 | sed -n "1,160p"
+done
+
+echo "--- gateway logs ---"
+for f in /tmp/gateway.log /tmp/openclaw-gateway.log /tmp/nemoclaw-gateway.log; do
+  [ -f "$f" ] || continue
+  printf "\n### %s tail\n" "$f"
+  tail -400 "$f" 2>&1
+done
+
+echo "--- proxy env ---"
+for f in /tmp/nemoclaw-proxy-env.sh /tmp/nemoclaw-runtime-env.sh; do
+  [ -f "$f" ] || continue
+  printf "\n### %s\n" "$f"
+  cat "$f" 2>&1
+done
+
+echo "--- openclaw config ---"
+for f in /sandbox/.openclaw/openclaw.json /home/sandbox/.openclaw/openclaw.json /root/.openclaw/openclaw.json; do
+  [ -f "$f" ] || continue
+  printf "\n### %s\n" "$f"
+  cat "$f" 2>&1
+done
+
+echo "--- latest session files ---"
+for d in /sandbox/.openclaw/agents/main/sessions /home/sandbox/.openclaw/agents/main/sessions /root/.openclaw/agents/main/sessions; do
+  [ -d "$d" ] || continue
+  find "$d" -maxdepth 1 -type f 2>/dev/null | sort | tail -80 | while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    printf "\n### %s size=%s\n" "$f" "$(wc -c <"$f" 2>/dev/null || echo ?)"
+    tail -c 200000 "$f" 2>&1
+  done
+done
+NEMOCLAW_OPENCLAW_DIAG_REMOTE
+        then
+          ssh_rc=0
+        else
+          ssh_rc=$?
+        fi
+      fi
+      [ "$ssh_rc" -eq 0 ] || echo "(snapshot ssh exited rc=$ssh_rc)"
+    else
+      echo "(openshell sandbox ssh-config failed for $sandbox)"
+    fi
+    rm -f "$ssh_cfg"
   } | openclaw_diag_redact >"$out"
 }
 
