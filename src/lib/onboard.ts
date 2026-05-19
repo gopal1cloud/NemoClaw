@@ -7572,13 +7572,14 @@ async function setupInference(
   } else if (provider === "ollama-local") {
     const validation = validateLocalProvider(provider);
     let proxyReady = false;
+    const frontOllamaWithProxy = shouldFrontOllamaWithProxy();
     if (!validation.ok) {
       // The container reachability check uses Docker's --add-host host-gateway,
       // which may not work on all Docker configurations (e.g., Brev, rootless).
       // The real sandbox uses k3s CoreDNS + NodeHosts — a different path.
       // Try to start/restart the auth proxy before probing — this recovers
       // from stale or missing proxy processes before we decide to abort.
-      if (!isWsl()) {
+      if (frontOllamaWithProxy) {
         ensureOllamaAuthProxy();
         proxyReady = isProxyHealthy();
       }
@@ -7606,7 +7607,7 @@ async function setupInference(
     }
     const baseUrl = getLocalProviderBaseUrl(provider);
     let ollamaCredential = "ollama";
-    if (shouldFrontOllamaWithProxy()) {
+    if (frontOllamaWithProxy) {
       // Skip if already started during the fallback recovery above.
       if (!proxyReady) ensureOllamaAuthProxy();
       const proxyToken = getOllamaProxyToken();
