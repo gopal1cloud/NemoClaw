@@ -350,7 +350,6 @@ import {
   sanitizeMessagingChannelConfig,
 } from "./messaging-channel-config";
 import { streamGatewayStart } from "./onboard/gateway";
-import { reportGpuPassthroughRecovery } from "./onboard/gpu-recovery";
 import {
   HERMES_TOOL_GATEWAY_PRESET_NAMES,
   mergeRequiredHermesToolGatewayPolicyPresets,
