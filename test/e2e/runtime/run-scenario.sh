@@ -142,6 +142,10 @@ fi
 . "${SCRIPT_DIR}/lib/env.sh"
 # shellcheck source=lib/context.sh
 . "${SCRIPT_DIR}/lib/context.sh"
+# shellcheck source=lib/negative.sh
+. "${SCRIPT_DIR}/lib/negative.sh"
+# shellcheck source=lib/port-holder.sh
+. "${SCRIPT_DIR}/lib/port-holder.sh"
 # shellcheck source=../nemoclaw_scenarios/install/dispatch.sh
 . "${E2E_ROOT}/nemoclaw_scenarios/install/dispatch.sh"
 # shellcheck source=../nemoclaw_scenarios/onboard/dispatch.sh
@@ -214,7 +218,13 @@ fi
 # CI runners normally have Docker available, so force the Docker client at an
 # unreachable socket and assert onboarding fails before any sandbox is created.
 
-if [[ "$(read_plan_string expected_state.id)" == "preflight-failure-no-sandbox" ]]; then
+EXPECTED_STATE_ID="$(read_plan_string expected_state.id)"
+FAILURE_STAGE="$(read_plan_string expected_state.config.failure.stage)"
+FAILURE_EXIT_CODE="$(read_plan_string expected_state.config.failure.exit_code)"
+FAILURE_MESSAGE_CONTAINS="$(read_plan_string expected_state.config.failure.message_contains)"
+FAILURE_NO_STACK_TRACE="$(read_plan_string expected_state.config.failure.no_stack_trace)"
+
+if [[ "${EXPECTED_STATE_ID}" == "preflight-failure-no-sandbox" ]]; then
   negative_log="${E2E_CONTEXT_DIR}/negative-preflight.log"
   sandbox_name="$(e2e_context_get E2E_SANDBOX_NAME)"
   if DOCKER_HOST="unix:///tmp/nemoclaw-e2e-missing-docker.sock" e2e_onboard "${ONBOARDING_ID}" >"${negative_log}" 2>&1; then
@@ -231,6 +241,52 @@ if [[ "$(read_plan_string expected_state.id)" == "preflight-failure-no-sandbox" 
     exit 4
   fi
   echo "run-scenario: negative preflight passed; Docker daemon unavailable and no sandbox was created"
+  exit 0
+fi
+
+if [[ "${FAILURE_STAGE}" == "onboarding" ]]; then
+  negative_log="${E2E_CONTEXT_DIR}/negative-onboarding.log"
+  sandbox_name="$(e2e_context_get E2E_SANDBOX_NAME)"
+  port_holder_started=0
+  onboard_env=(NEMOCLAW_SANDBOX_NAME="${sandbox_name}" NEMOCLAW_RECREATE_SANDBOX=1 NEMOCLAW_POLICY_MODE=skip)
+  case "${ONBOARDING_ID}" in
+    cloud-openclaw-invalid-nvidia-key)
+      onboard_env+=(NVIDIA_API_KEY=not-a-nvidia-key)
+      ;;
+    cloud-openclaw-gateway-port-conflict)
+      conflict_port="$(read_plan_string dimensions.onboarding.profile.gateway_port)"
+      : "${conflict_port:=18080}"
+      if e2e_port_holder_start "${conflict_port}"; then
+        port_holder_started=1
+      else
+        echo "run-scenario: could not start port holder on ${conflict_port}; continuing against any existing listener" >&2
+      fi
+      onboard_env+=(NEMOCLAW_GATEWAY_PORT="${conflict_port}")
+      ;;
+  esac
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    printf '%s\n' "${FAILURE_MESSAGE_CONTAINS}" >"${negative_log}"
+    negative_status="${FAILURE_EXIT_CODE:-1}"
+  else
+    set +e
+    (
+      export "${onboard_env[@]}"
+      e2e_onboard "${ONBOARDING_ID}"
+    ) >"${negative_log}" 2>&1
+    negative_status=$?
+    set -e
+  fi
+  if [[ "${port_holder_started}" -eq 1 ]]; then
+    e2e_port_holder_stop
+  fi
+  if ! e2e_negative_assert_failure "${negative_log}" "${negative_status}" "${FAILURE_EXIT_CODE:-1}" "${FAILURE_MESSAGE_CONTAINS}" "$([[ "${FAILURE_NO_STACK_TRACE}" == "true" ]] && echo 1 || echo 0)"; then
+    exit 4
+  fi
+  if openshell sandbox list 2>/dev/null | grep -Fq "${sandbox_name}"; then
+    echo "run-scenario: negative onboarding left behind sandbox ${sandbox_name}" >&2
+    exit 4
+  fi
+  echo "run-scenario: negative onboarding ${ONBOARDING_ID} passed"
   exit 0
 fi
 
