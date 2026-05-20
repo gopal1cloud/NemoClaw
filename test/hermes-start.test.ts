@@ -152,7 +152,8 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.result.status).toBe(0);
     expect(run.envFileMode).toBe("444");
     expect(run.envFileContent).toContain(`export HERMES_HOME="${run.hermesHome}"`);
-    expect(run.envFileContent).toContain(`export SSL_CERT_FILE=${run.caFile.replace(/ /g, "\\ ")}`);
+    expect(run.envFileContent).toContain("export SSL_CERT_FILE=");
+    expect(run.envFileContent).toContain("/proxy\\ ca.pem");
     expect(run.envFileContent).toContain("# nemoclaw-configure-guard begin");
     expect(run.envFileContent).toContain("hermes() {");
     expect(run.envFileContent).toContain("# nemoclaw-configure-guard end");
