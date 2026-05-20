@@ -534,11 +534,10 @@ describe("service environment", () => {
     });
 
     it("removes legacy proxy-env.sh source shims from sandbox user rc files", () => {
-      const fakeHome = join(tmpdir(), `nemoclaw-rc-shim-test-${process.pid}`);
+      const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-shim-test-"));
       const proxyEnvPath = join(fakeHome, "proxy-env.sh");
-      const tmpFile = join(tmpdir(), `nemoclaw-rc-shim-write-test-${process.pid}.sh`);
+      const tmpFile = join(fakeHome, "rc-shim-write-test.sh");
       try {
-        execFileSync("mkdir", ["-p", fakeHome]);
         writeFileSync(
           join(fakeHome, ".bashrc"),
           [
