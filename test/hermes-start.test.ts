@@ -148,11 +148,12 @@ function runRuntimeShellEnvBootstrap() {
 describe("agents/hermes/start.sh runtime shell env", () => {
   it("puts the Hermes configure guard in the sourced proxy env file", () => {
     const run = runRuntimeShellEnvBootstrap();
+    const escapedCaFile = run.caFile.replace(/ /g, "\\ ");
 
     expect(run.result.status).toBe(0);
     expect(run.envFileMode).toBe("444");
     expect(run.envFileContent).toContain(`export HERMES_HOME="${run.hermesHome}"`);
-    expect(run.envFileContent).toMatch(/^export SSL_CERT_FILE=.*\/proxy\\ ca\.pem$/m);
+    expect(run.envFileContent).toContain(`export SSL_CERT_FILE=${escapedCaFile}`);
     expect(run.envFileContent).toContain("# nemoclaw-configure-guard begin");
     expect(run.envFileContent).toContain("hermes() {");
     expect(run.envFileContent).toContain("# nemoclaw-configure-guard end");
