@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, afterEach } from "vitest";
 import YAML from "yaml";
@@ -18,6 +19,19 @@ const BASE_PERMISSIVE = YAML.stringify({
 });
 
 const tempFilesToClean: string[] = [];
+
+function trackTempForCleanup(out: string, basePath: string): void {
+  // Defensive: if the helper degrades to the static base path we must
+  // never try to `rm -rf` its parent dir — that would target the
+  // user's checkout. Only enqueue paths that the helper actually
+  // produced via mkdtemp.
+  if (out === basePath) return;
+  const tempRoot = path.resolve(os.tmpdir());
+  const parent = path.resolve(path.dirname(out));
+  const rel = path.relative(tempRoot, parent);
+  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return;
+  tempFilesToClean.push(out);
+}
 
 afterEach(() => {
   while (tempFilesToClean.length > 0) {
@@ -45,7 +59,8 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       livePolicyYaml: liveYaml,
       readBasePolicy: () => BASE_PERMISSIVE,
     });
-    tempFilesToClean.push(out);
+    trackTempForCleanup(out, "/unused-base.yaml");
+    expect(out).not.toBe("/unused-base.yaml");
 
     const result = YAML.parse(fs.readFileSync(out, "utf-8"));
     expect(result.filesystem_policy.read_write).toEqual(
@@ -64,7 +79,8 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       livePolicyYaml: liveYaml,
       readBasePolicy: () => BASE_PERMISSIVE,
     });
-    tempFilesToClean.push(out);
+    trackTempForCleanup(out, "/unused-base.yaml");
+    expect(out).not.toBe("/unused-base.yaml");
 
     const result = YAML.parse(fs.readFileSync(out, "utf-8"));
     expect(result.filesystem_policy.include_workdir).toBe(true);
@@ -83,7 +99,8 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       livePolicyYaml: liveYaml,
       readBasePolicy: () => BASE_PERMISSIVE,
     });
-    tempFilesToClean.push(out);
+    trackTempForCleanup(out, "/unused-base.yaml");
+    expect(out).not.toBe("/unused-base.yaml");
 
     const result = YAML.parse(fs.readFileSync(out, "utf-8"));
     expect(result.filesystem_policy.read_write).toContain("/tmp");
@@ -103,7 +120,8 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       livePolicyYaml: liveYaml,
       readBasePolicy: () => BASE_PERMISSIVE,
     });
-    tempFilesToClean.push(out);
+    trackTempForCleanup(out, "/unused-base.yaml");
+    expect(out).not.toBe("/unused-base.yaml");
 
     const result = YAML.parse(fs.readFileSync(out, "utf-8"));
     const rwCount = result.filesystem_policy.read_write.filter((p: string) => p === "/tmp").length;
@@ -159,5 +177,23 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       readBasePolicy: () => "::: not yaml :::",
     });
     expect(out).toBe(basePath);
+  });
+
+  it("returns the static base path when temp-file write throws", () => {
+    const basePath = "/path/to/static.yaml";
+    const liveYaml = YAML.stringify({
+      filesystem_policy: { read_write: ["/proc"] },
+    });
+    let writeAttempts = 0;
+    const out = buildRuntimePermissivePolicy(basePath, {
+      livePolicyYaml: liveYaml,
+      readBasePolicy: () => BASE_PERMISSIVE,
+      writeTempPolicy: () => {
+        writeAttempts += 1;
+        throw new Error("ENOSPC: simulated /tmp full");
+      },
+    });
+    expect(out).toBe(basePath);
+    expect(writeAttempts).toBe(1);
   });
 });

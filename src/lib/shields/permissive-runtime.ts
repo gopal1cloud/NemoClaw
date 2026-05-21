@@ -4,7 +4,9 @@
 import fs from "node:fs";
 import YAML from "yaml";
 
-import { secureTempFile } from "../onboard/temp-files";
+import { cleanupTempDir, secureTempFile } from "../onboard/temp-files";
+
+const TEMP_FILE_PREFIX = "nemoclaw-permissive-runtime";
 
 /**
  * Build a permissive policy YAML whose filesystem path lists
@@ -47,11 +49,17 @@ import { secureTempFile } from "../onboard/temp-files";
 export interface PermissiveRuntimeDeps {
   // Pre-parsed live policy YAML body (e.g. parseCurrentPolicy(rawPolicy)
   // from the caller, which already strips the OpenShell header). Passed
-  // in rather than fetched here so this helper stays a pure transform.
+  // in rather than fetched here so live-policy acquisition stays
+  // outside this helper — the helper itself still does I/O (base read,
+  // temp file write) but does not shell out to openshell.
   livePolicyYaml: string;
   // Lazy because callers may want to defer the read until the helper
   // actually needs it. The returned string is parsed by YAML.parse.
   readBasePolicy: () => string;
+  // Injectable temp-file writer. Defaults to fs.writeFileSync via
+  // secureTempFile when omitted. Exposed so tests can drive the
+  // write-failure fallback path without monkey-patching node:fs.
+  writeTempPolicy?: (yaml: string) => string;
 }
 
 export function buildRuntimePermissivePolicy(
@@ -100,11 +108,24 @@ export function buildRuntimePermissivePolicy(
   fsPolicy.read_write = [...baseRw];
   fsPolicy.read_only = [...baseRo];
 
+  const yaml = YAML.stringify(base);
+  if (deps.writeTempPolicy) {
+    try {
+      return deps.writeTempPolicy(yaml);
+    } catch {
+      return basePermissivePath;
+    }
+  }
+  let tmpPath: string | null = null;
   try {
-    const tmpPath = secureTempFile("nemoclaw-permissive-runtime", ".yaml");
-    fs.writeFileSync(tmpPath, YAML.stringify(base), { mode: 0o600 });
+    tmpPath = secureTempFile(TEMP_FILE_PREFIX, ".yaml");
+    fs.writeFileSync(tmpPath, yaml, { mode: 0o600 });
     return tmpPath;
   } catch {
+    // secureTempFile may have created an mkdtemp directory before
+    // writeFileSync failed. Clean it up so we do not leak a 0700 dir
+    // on /tmp every time the write path errors.
+    if (tmpPath) cleanupTempDir(tmpPath, TEMP_FILE_PREFIX);
     return basePermissivePath;
   }
 }
