@@ -402,6 +402,17 @@ describe("generate-openclaw-config.py: config generation", () => {
     });
   });
 
+  it("normalizes a schemeless OpenShell loopback proxy URL before writing Discord config", () => {
+    const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      OPENSHELL_LOOPBACK_PROXY_URL: "[::1]:45211",
+      NEMOCLAW_DISCORD_PROXY_PORT: "43129",
+    });
+
+    expect(config.channels.discord.accounts.default.proxy).toBe("http://[::1]:45211");
+  });
+
   it("ignores a non-loopback OpenShell proxy URL for Discord and keeps the fallback", () => {
     const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
     const config = runConfigScript({

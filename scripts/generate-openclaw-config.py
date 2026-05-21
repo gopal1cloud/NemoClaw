@@ -100,13 +100,17 @@ def _valid_loopback_http_proxy_url(raw_url: str) -> str:
     if not value:
         return ""
     try:
-        parsed = urlparse(_normalize_url_for_parse(value))
-        _ = parsed.port
+        normalized = _normalize_url_for_parse(value)
+        parsed = urlparse(normalized)
+        port = parsed.port
     except ValueError:
         return ""
     if parsed.scheme != "http" or not parsed.hostname or not is_loopback(parsed.hostname):
         return ""
-    return value
+    hostname = parsed.hostname.lower()
+    host = f"[{hostname}]" if ":" in hostname and not hostname.startswith("[") else hostname
+    port_suffix = f":{port}" if port is not None else ""
+    return f"http://{host}{port_suffix}"
 
 
 def _validate_dashboard_port(raw: str, env_name: str) -> int:

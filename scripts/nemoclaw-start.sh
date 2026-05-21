@@ -1464,11 +1464,39 @@ fi
 _DISCORD_LOOPBACK_PROXY_SCRIPT="/tmp/nemoclaw-discord-loopback-proxy.js"
 _DISCORD_LOOPBACK_PROXY_SOURCE="/usr/local/lib/nemoclaw/preloads/discord-loopback-proxy.js"
 
+canonical_openshell_loopback_proxy_url() {
+  python3 - "${1:-}" <<'PYOPENSHELLLOOPBACK' 2>/dev/null
+import re
+import sys
+from urllib.parse import urlparse
+
+
+def is_loopback(hostname):
+    normalized = (hostname or "").strip().lower().strip("[]")
+    return normalized == "localhost" or normalized == "::1" or re.match(r"^127(?:\.\d{1,3}){3}$", normalized)
+
+
+value = (sys.argv[1] if len(sys.argv) > 1 else "").strip()
+if not value:
+    sys.exit(1)
+if not re.match(r"^[a-z][a-z0-9+.-]*://", value, re.IGNORECASE):
+    value = f"http://{value}"
+try:
+    parsed = urlparse(value)
+    port = parsed.port
+except ValueError:
+    sys.exit(1)
+if parsed.scheme != "http" or not parsed.hostname or not is_loopback(parsed.hostname):
+    sys.exit(1)
+hostname = parsed.hostname.lower()
+host = f"[{hostname}]" if ":" in hostname and not hostname.startswith("[") else hostname
+port_suffix = f":{port}" if port is not None else ""
+print(f"http://{host}{port_suffix}")
+PYOPENSHELLLOOPBACK
+}
+
 is_openshell_loopback_proxy_url() {
-  case "${1:-}" in
-    http://127.*:* | http://localhost:*) return 0 ;;
-  esac
-  [[ "${1:-}" == http://\[::1\]:* ]]
+  canonical_openshell_loopback_proxy_url "${1:-}" >/dev/null
 }
 
 read_openclaw_discord_proxy_url() {
@@ -1527,18 +1555,21 @@ PYLOOPBACKPROBE
 }
 
 start_discord_loopback_proxy() {
-  local configured_discord_proxy
+  local configured_discord_proxy openshell_loopback_proxy_url
   [ -n "${DISCORD_BOT_TOKEN:-}" ] || return 0
-  if is_openshell_loopback_proxy_url "${OPENSHELL_LOOPBACK_PROXY_URL:-}"; then
+  openshell_loopback_proxy_url="$(canonical_openshell_loopback_proxy_url "${OPENSHELL_LOOPBACK_PROXY_URL:-}" || true)"
+  if [ -n "$openshell_loopback_proxy_url" ]; then
     configured_discord_proxy="$(read_openclaw_discord_proxy_url || true)"
-    if [ "$configured_discord_proxy" = "${OPENSHELL_LOOPBACK_PROXY_URL}" ] && openshell_loopback_proxy_is_reachable "${OPENSHELL_LOOPBACK_PROXY_URL}"; then
-      echo "[channels] Discord loopback proxy provided by OpenShell (${OPENSHELL_LOOPBACK_PROXY_URL}); skipping NemoClaw helper" >&2
+    if [ "$configured_discord_proxy" = "$openshell_loopback_proxy_url" ] && openshell_loopback_proxy_is_reachable "$openshell_loopback_proxy_url"; then
+      echo "[channels] Discord loopback proxy provided by OpenShell (${openshell_loopback_proxy_url}); skipping NemoClaw helper" >&2
       return 0
     fi
-    if [ -n "$configured_discord_proxy" ]; then
-      echo "[channels] OpenShell loopback proxy (${OPENSHELL_LOOPBACK_PROXY_URL}) does not match Discord config (${configured_discord_proxy}); keeping NemoClaw helper fallback" >&2
+    if [ "$configured_discord_proxy" = "$openshell_loopback_proxy_url" ]; then
+      echo "[channels] OpenShell loopback proxy (${openshell_loopback_proxy_url}) is configured for Discord but is not reachable; keeping NemoClaw helper fallback" >&2
+    elif [ -n "$configured_discord_proxy" ]; then
+      echo "[channels] OpenShell loopback proxy (${openshell_loopback_proxy_url}) does not match Discord config (${configured_discord_proxy}); keeping NemoClaw helper fallback" >&2
     else
-      echo "[channels] OpenShell loopback proxy (${OPENSHELL_LOOPBACK_PROXY_URL}) could not be verified against Discord config; keeping NemoClaw helper fallback" >&2
+      echo "[channels] OpenShell loopback proxy (${openshell_loopback_proxy_url}) could not be verified against Discord config; keeping NemoClaw helper fallback" >&2
     fi
   fi
   command -v node >/dev/null 2>&1 || {

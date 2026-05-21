@@ -2047,6 +2047,7 @@ describe("Discord loopback proxy compatibility", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-discord-loopback-"));
     const scriptPath = path.join(tmpDir, "run.sh");
     const fn = [
+      extractShellFunctionFromSource(src, "canonical_openshell_loopback_proxy_url"),
       extractShellFunctionFromSource(src, "is_openshell_loopback_proxy_url"),
       'read_openclaw_discord_proxy_url() { printf "%s\\n" "$OPENSHELL_LOOPBACK_PROXY_URL"; }',
       "openshell_loopback_proxy_is_reachable() { return 0; }",
@@ -2085,6 +2086,7 @@ describe("Discord loopback proxy compatibility", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-discord-loopback-"));
     const scriptPath = path.join(tmpDir, "run.sh");
     const fn = [
+      extractShellFunctionFromSource(src, "canonical_openshell_loopback_proxy_url"),
       extractShellFunctionFromSource(src, "is_openshell_loopback_proxy_url"),
       'read_openclaw_discord_proxy_url() { printf "%s\\n" "http://127.0.0.1:3128"; }',
       "openshell_loopback_proxy_is_reachable() { return 0; }",
@@ -2112,6 +2114,74 @@ describe("Discord loopback proxy compatibility", () => {
       expect(result.status).toBe(0);
       expect(result.stderr).toContain("does not match Discord config");
       expect(result.stderr).toContain("Discord loopback proxy skipped: helper is not installed");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the helper fallback when the matching OpenShell listener is unreachable", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-discord-loopback-"));
+    const scriptPath = path.join(tmpDir, "run.sh");
+    const fn = [
+      extractShellFunctionFromSource(src, "canonical_openshell_loopback_proxy_url"),
+      extractShellFunctionFromSource(src, "is_openshell_loopback_proxy_url"),
+      'read_openclaw_discord_proxy_url() { printf "%s\\n" "http://127.0.0.1:3128"; }',
+      "openshell_loopback_proxy_is_reachable() { return 1; }",
+      extractShellFunctionFromSource(src, "start_discord_loopback_proxy"),
+    ].join("\n");
+
+    try {
+      fs.writeFileSync(
+        scriptPath,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          "DISCORD_BOT_TOKEN=x",
+          "OPENSHELL_LOOPBACK_PROXY_URL=http://127.0.0.1:3128",
+          "DISCORD_LOOPBACK_PROXY_PORT=3128",
+          "_DISCORD_LOOPBACK_PROXY_SOURCE=/missing",
+          "_DISCORD_LOOPBACK_PROXY_SCRIPT=/missing",
+          fn,
+          "start_discord_loopback_proxy",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("is configured for Discord but is not reachable");
+      expect(result.stderr).toContain("Discord loopback proxy skipped: helper is not installed");
+      expect(result.stderr).not.toContain("does not match Discord config");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("recognizes IPv6 loopback OpenShell proxy URLs", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-discord-loopback-"));
+    const scriptPath = path.join(tmpDir, "run.sh");
+    const fn = [
+      extractShellFunctionFromSource(src, "canonical_openshell_loopback_proxy_url"),
+      extractShellFunctionFromSource(src, "is_openshell_loopback_proxy_url"),
+    ].join("\n");
+
+    try {
+      fs.writeFileSync(
+        scriptPath,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          fn,
+          'canonical_openshell_loopback_proxy_url "[::1]:45211"',
+          'is_openshell_loopback_proxy_url "http://[::1]:45211"',
+          'if is_openshell_loopback_proxy_url "http://127.example.com:45211"; then exit 9; fi',
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim()).toBe("http://[::1]:45211");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
