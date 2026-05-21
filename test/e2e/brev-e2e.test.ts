@@ -88,7 +88,7 @@ const BREV_SSH_READY_TIMEOUT_MS =
       ? 1800
       : 900) * 1000;
 const OPENSHELL_GATEWAY_PORT = 8080;
-const DOCKER_BRIDGE_CIDR = "172.16.0.0/12";
+const DOCKER_DEFAULT_BRIDGE_POOL_CIDR = "172.16.0.0/12";
 
 function requireInstanceName(): string {
   if (!INSTANCE_NAME) {
@@ -740,10 +740,12 @@ function gpuDockerRuntimeSetupCommands(): string[] {
     `sudo nvidia-ctk runtime configure --runtime=docker`,
     `sudo systemctl restart docker`,
     `sudo chmod 666 /var/run/docker.sock`,
-    // Brev GPU images can run UFW with Docker bridge traffic denied (#3959). The
-    // OpenShell Docker-driver gateway listens on the host, while sandboxes
-    // reach it through host.openshell.internal on a Docker bridge gateway IP.
-    `if command -v ufw >/dev/null 2>&1; then sudo ufw allow from ${DOCKER_BRIDGE_CIDR} to any port ${OPENSHELL_GATEWAY_PORT} proto tcp >/dev/null || true; fi`,
+    // Brev GPU branch-validation VMs are single-use CI hosts. The
+    // openshell-docker network is created later by gateway startup, so this
+    // setup cannot know the exact future bridge subnet. Allow Docker's default
+    // local bridge pool to the gateway port only; product-side reachability
+    // checks still fail closed if the sandbox route is actually broken (#3959).
+    `if command -v ufw >/dev/null 2>&1; then sudo ufw allow from ${DOCKER_DEFAULT_BRIDGE_POOL_CIDR} to any port ${OPENSHELL_GATEWAY_PORT} proto tcp >/dev/null || echo "warning: could not add UFW Docker bridge allow rule" >&2; fi`,
     `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`,
   ];
 }
@@ -1055,9 +1057,9 @@ describe("Brev GPU runtime setup", () => {
     const setup = gpuDockerRuntimeSetupCommands().join("\n");
 
     expect(setup).toContain(
-      `ufw allow from ${DOCKER_BRIDGE_CIDR} to any port ${OPENSHELL_GATEWAY_PORT} proto tcp`,
+      `ufw allow from ${DOCKER_DEFAULT_BRIDGE_POOL_CIDR} to any port ${OPENSHELL_GATEWAY_PORT} proto tcp`,
     );
-    expect(setup).toContain("|| true");
+    expect(setup).toContain("warning: could not add UFW Docker bridge allow rule");
   });
 });
 
