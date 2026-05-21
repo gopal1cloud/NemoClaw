@@ -1449,7 +1449,7 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 
-DISCORD_LOOPBACK_PROXY_PORT="${NEMOCLAW_DISCORD_PROXY_PORT:-3128}"
+DISCORD_LOOPBACK_PROXY_PORT="${NEMOCLAW_DISCORD_PROXY_PORT:-${NEMOCLAW_PROXY_PORT:-3128}}"
 case "$DISCORD_LOOPBACK_PROXY_PORT" in
   *[!0-9]* | '')
     echo "[channels] Invalid NEMOCLAW_DISCORD_PROXY_PORT='${NEMOCLAW_DISCORD_PROXY_PORT:-}' - using 3128" >&2
@@ -1466,16 +1466,80 @@ _DISCORD_LOOPBACK_PROXY_SOURCE="/usr/local/lib/nemoclaw/preloads/discord-loopbac
 
 is_openshell_loopback_proxy_url() {
   case "${1:-}" in
-    http://127.*:* | http://localhost:* | http://[::1]:*) return 0 ;;
-    *) return 1 ;;
+    http://127.*:* | http://localhost:*) return 0 ;;
   esac
+  [[ "${1:-}" == http://\[::1\]:* ]]
+}
+
+read_openclaw_discord_proxy_url() {
+  local config_file="${OPENCLAW_CONFIG_PATH:-/sandbox/.openclaw/openclaw.json}"
+  [ -f "$config_file" ] || return 1
+  python3 - "$config_file" <<'PYDISCORDPROXY' 2>/dev/null
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        cfg = json.load(f)
+    accounts = cfg.get("channels", {}).get("discord", {}).get("accounts", {}) or {}
+    account = accounts.get("default") or accounts.get("main") or {}
+    proxy = account.get("proxy") or ""
+    if proxy:
+        print(proxy)
+except Exception:
+    sys.exit(1)
+PYDISCORDPROXY
+}
+
+openshell_loopback_proxy_is_reachable() {
+  python3 - "${1:-}" <<'PYLOOPBACKPROBE' 2>/dev/null
+import ipaddress
+import socket
+import sys
+from urllib.parse import urlparse
+
+try:
+    parsed = urlparse(sys.argv[1])
+    if parsed.scheme != "http" or not parsed.hostname or parsed.port is None:
+        sys.exit(1)
+
+    infos = socket.getaddrinfo(parsed.hostname, parsed.port, type=socket.SOCK_STREAM)
+    loopback_addrs = []
+    for info in infos:
+        addr = info[4][0]
+        if ipaddress.ip_address(addr).is_loopback:
+            loopback_addrs.append(info[4])
+    if not loopback_addrs:
+        sys.exit(1)
+
+    last_exc = None
+    for sockaddr in loopback_addrs:
+        try:
+            with socket.create_connection(sockaddr, timeout=0.5):
+                pass
+            sys.exit(0)
+        except OSError as exc:
+            last_exc = exc
+    raise last_exc or OSError("loopback proxy unreachable")
+except Exception:
+    sys.exit(1)
+PYLOOPBACKPROBE
 }
 
 start_discord_loopback_proxy() {
+  local configured_discord_proxy
   [ -n "${DISCORD_BOT_TOKEN:-}" ] || return 0
   if is_openshell_loopback_proxy_url "${OPENSHELL_LOOPBACK_PROXY_URL:-}"; then
-    echo "[channels] Discord loopback proxy provided by OpenShell (${OPENSHELL_LOOPBACK_PROXY_URL}); skipping NemoClaw helper" >&2
-    return 0
+    configured_discord_proxy="$(read_openclaw_discord_proxy_url || true)"
+    if [ "$configured_discord_proxy" = "${OPENSHELL_LOOPBACK_PROXY_URL}" ] && openshell_loopback_proxy_is_reachable "${OPENSHELL_LOOPBACK_PROXY_URL}"; then
+      echo "[channels] Discord loopback proxy provided by OpenShell (${OPENSHELL_LOOPBACK_PROXY_URL}); skipping NemoClaw helper" >&2
+      return 0
+    fi
+    if [ -n "$configured_discord_proxy" ]; then
+      echo "[channels] OpenShell loopback proxy (${OPENSHELL_LOOPBACK_PROXY_URL}) does not match Discord config (${configured_discord_proxy}); keeping NemoClaw helper fallback" >&2
+    else
+      echo "[channels] OpenShell loopback proxy (${OPENSHELL_LOOPBACK_PROXY_URL}) could not be verified against Discord config; keeping NemoClaw helper fallback" >&2
+    fi
   fi
   command -v node >/dev/null 2>&1 || {
     echo "[channels] Discord loopback proxy skipped: node is not available" >&2

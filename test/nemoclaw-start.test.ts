@@ -2043,11 +2043,19 @@ describe("Slack secrets-on-disk tripwire (#2085)", () => {
 describe("Discord loopback proxy compatibility", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
+  it("defaults the helper port to the OpenShell proxy port", () => {
+    expect(src).toContain(
+      'DISCORD_LOOPBACK_PROXY_PORT="${NEMOCLAW_DISCORD_PROXY_PORT:-${NEMOCLAW_PROXY_PORT:-3128}}"',
+    );
+  });
+
   it("skips the NemoClaw helper when OpenShell provides a loopback proxy", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-discord-loopback-"));
     const scriptPath = path.join(tmpDir, "run.sh");
     const fn = [
       extractShellFunctionFromSource(src, "is_openshell_loopback_proxy_url"),
+      'read_openclaw_discord_proxy_url() { printf "%s\\n" "$OPENSHELL_LOOPBACK_PROXY_URL"; }',
+      "openshell_loopback_proxy_is_reachable() { return 0; }",
       extractShellFunctionFromSource(src, "start_discord_loopback_proxy"),
     ].join("\n");
 
@@ -2074,6 +2082,42 @@ describe("Discord loopback proxy compatibility", () => {
       expect(result.status).toBe(0);
       expect(result.stderr).toContain("Discord loopback proxy provided by OpenShell");
       expect(result.stdout).not.toContain("BAD_");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the helper fallback when the OpenShell URL does not match the baked Discord config", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-discord-loopback-"));
+    const scriptPath = path.join(tmpDir, "run.sh");
+    const fn = [
+      extractShellFunctionFromSource(src, "is_openshell_loopback_proxy_url"),
+      'read_openclaw_discord_proxy_url() { printf "%s\\n" "http://127.0.0.1:3128"; }',
+      "openshell_loopback_proxy_is_reachable() { return 0; }",
+      extractShellFunctionFromSource(src, "start_discord_loopback_proxy"),
+    ].join("\n");
+
+    try {
+      fs.writeFileSync(
+        scriptPath,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          "DISCORD_BOT_TOKEN=x",
+          "OPENSHELL_LOOPBACK_PROXY_URL=http://127.0.0.1:45211",
+          "DISCORD_LOOPBACK_PROXY_PORT=3128",
+          "_DISCORD_LOOPBACK_PROXY_SOURCE=/missing",
+          "_DISCORD_LOOPBACK_PROXY_SCRIPT=/missing",
+          fn,
+          "start_discord_loopback_proxy",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("does not match Discord config");
+      expect(result.stderr).toContain("Discord loopback proxy skipped: helper is not installed");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

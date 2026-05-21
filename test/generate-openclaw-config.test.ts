@@ -377,6 +377,16 @@ describe("generate-openclaw-config.py: config generation", () => {
     });
   });
 
+  it("defaults the Discord loopback proxy port to the OpenShell proxy port", () => {
+    const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_PROXY_PORT: "43128",
+    });
+
+    expect(config.channels.discord.accounts.default.proxy).toBe("http://127.0.0.1:43128");
+  });
+
   it("prefers the OpenShell-managed loopback proxy for Discord when present", () => {
     const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
     const config = runConfigScript({

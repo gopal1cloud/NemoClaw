@@ -382,7 +382,7 @@ def build_config(env: dict | None = None) -> dict:
     openshell_loopback_proxy_url = _valid_loopback_http_proxy_url(
         env.get("OPENSHELL_LOOPBACK_PROXY_URL") or ""
     )
-    discord_proxy_port = env.get("NEMOCLAW_DISCORD_PROXY_PORT") or "3128"
+    discord_proxy_port = env.get("NEMOCLAW_DISCORD_PROXY_PORT") or proxy_port
     discord_proxy_url = openshell_loopback_proxy_url or f"http://127.0.0.1:{discord_proxy_port}"
     model = env["NEMOCLAW_MODEL"]
     raw_chat_ui_url = env.get("CHAT_UI_URL") or ""
