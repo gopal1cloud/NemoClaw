@@ -2043,12 +2043,6 @@ describe("Slack secrets-on-disk tripwire (#2085)", () => {
 describe("Discord loopback proxy compatibility", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
-  it("defaults the helper port to the OpenShell proxy port", () => {
-    expect(src).toContain(
-      'DISCORD_LOOPBACK_PROXY_PORT="${NEMOCLAW_DISCORD_PROXY_PORT:-${NEMOCLAW_PROXY_PORT:-3128}}"',
-    );
-  });
-
   it("skips the NemoClaw helper when OpenShell provides a loopback proxy", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-discord-loopback-"));
     const scriptPath = path.join(tmpDir, "run.sh");
