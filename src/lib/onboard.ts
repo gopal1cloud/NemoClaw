@@ -168,8 +168,7 @@ const {
 } = require("./core/ports");
 const localInference: typeof import("./inference/local") = require("./inference/local");
 const {
-  findReachableOllamaHost,
-  getResolvedOllamaHost,
+  findReachableOllamaHost, getResolvedOllamaHost,
   resetOllamaHostCache,
   getDefaultOllamaModel,
   getLocalProviderBaseUrl,
@@ -2146,10 +2145,8 @@ async function validateOpenAiLikeSelection(
   options: {
     authMode?: "bearer" | "query-param";
     requireResponsesToolCalling?: boolean;
-    requireChatCompletionsToolCalling?: boolean;
-    skipResponsesProbe?: boolean;
-    probeStreaming?: boolean;
-    allowHostDockerInternal?: boolean;
+    requireChatCompletionsToolCalling?: boolean; skipResponsesProbe?: boolean;
+    probeStreaming?: boolean; allowHostDockerInternal?: boolean;
   } = {},
 ): Promise<EndpointValidationResult> {
   const apiKey = credentialEnv ? getCredential(credentialEnv) : "";
