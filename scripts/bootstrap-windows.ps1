@@ -359,7 +359,13 @@ function Install-DockerDesktop {
 
     $winget = Resolve-WingetExe
     if (-not $winget) {
-        throw 'winget.exe not found. Install App Installer from the Microsoft Store and re-run.'
+        Write-Status -Level ERROR 'Cannot install Docker Desktop automatically: winget.exe is not available on this machine.'
+        Write-Status -Level ERROR 'This usually means the Windows App Installer package is missing (common on Windows Server or stripped images).'
+        Write-Status -Level INFO  'To finish setup, do one of the following, then re-run scripts\bootstrap-windows.ps1:'
+        Write-Status -Level INFO  '  1) Install "App Installer" from the Microsoft Store (provides winget), or'
+        Write-Status -Level INFO  '  2) Download Docker Desktop manually from https://www.docker.com/products/docker-desktop/ and install it.'
+        Write-Status -Level INFO  'After Docker Desktop is installed, the bootstrap script will skip the install step on the next run.'
+        exit 1
     }
 
     Write-Status 'Installing Docker Desktop with winget...'
