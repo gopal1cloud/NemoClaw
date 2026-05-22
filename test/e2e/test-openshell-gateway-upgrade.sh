@@ -125,6 +125,17 @@ real_docker="${NEMOCLAW_REAL_DOCKER:-/usr/bin/docker}"
 base_ref="${NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF:?}"
 old_openclaw="${NEMOCLAW_OLD_OPENCLAW_VERSION:?}"
 log_file="${NEMOCLAW_OLD_DOCKER_WRAPPER_LOG:-/tmp/nemoclaw-e2e-openshell-gateway-old-docker.log}"
+base_tag="ghcr.io/nvidia/nemoclaw/sandbox-base:latest"
+if [ "${1:-}" = "pull" ]; then
+  for arg in "$@"; do
+    if [ "$arg" = "$base_tag" ]; then
+      printf 'rewrite pull %s -> %s\n' "$base_tag" "$base_ref" >>"$log_file"
+      "$real_docker" pull "$base_ref"
+      "$real_docker" tag "$base_ref" "$base_tag"
+      exit 0
+    fi
+  done
+fi
 if [ "${1:-}" != "build" ]; then
   exec "$real_docker" "$@"
 fi
@@ -522,6 +533,10 @@ run_installer_payload() {
     >"$log_file" 2>&1 || {
     diag "${label} installer log tail:"
     tail -120 "$log_file" 2>/dev/null || true
+    if [ -f "$OLD_DOCKER_WRAPPER_LOG" ]; then
+      diag "old installer docker wrapper activity:"
+      cat "$OLD_DOCKER_WRAPPER_LOG" || true
+    fi
     fail "${label} NemoClaw installer failed"
   }
   load_shell_path
