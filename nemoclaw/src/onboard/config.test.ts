@@ -3,6 +3,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   describeOnboardEndpoint,
   describeOnboardProvider,
@@ -145,32 +146,34 @@ describe("onboard/config", () => {
 
     it("returns parsed config when file exists", () => {
       const config = makeConfig();
-      const configPath = `${homedir()}/.nemoclaw/config.json`;
+      const configPath = join(homedir(), ".nemoclaw", "config.json");
       store.set(configPath, JSON.stringify(config));
       expect(loadOnboardConfig()).toEqual(config);
     });
 
     it("returns null when the parsed JSON root is not a valid onboard config", () => {
-      const configPath = `${homedir()}/.nemoclaw/config.json`;
+      const configPath = join(homedir(), ".nemoclaw", "config.json");
       store.set(configPath, JSON.stringify({ endpointType: "bogus" }));
       expect(loadOnboardConfig()).toBeNull();
     });
 
-    it("returns null when the config file is the Dockerfile zero-byte placeholder (#3999)", () => {
-      const configPath = `${homedir()}/.nemoclaw/config.json`;
+    it("returns null without throwing for an empty (0-byte) config file", () => {
+      const configPath = join(homedir(), ".nemoclaw", "config.json");
       store.set(configPath, "");
+      expect(() => loadOnboardConfig()).not.toThrow();
       expect(loadOnboardConfig()).toBeNull();
     });
 
-    it("returns null when the config file contains only whitespace (#3999)", () => {
-      const configPath = `${homedir()}/.nemoclaw/config.json`;
-      store.set(configPath, "   \n\t  \n");
+    it("returns null without throwing for a whitespace-only config file", () => {
+      const configPath = join(homedir(), ".nemoclaw", "config.json");
+      store.set(configPath, "  \n\t  ");
+      expect(() => loadOnboardConfig()).not.toThrow();
       expect(loadOnboardConfig()).toBeNull();
     });
 
-    it("returns null instead of throwing when the file contains malformed JSON (#3999)", () => {
-      const configPath = `${homedir()}/.nemoclaw/config.json`;
-      store.set(configPath, "{ this is not valid json");
+    it("returns null without throwing for malformed JSON", () => {
+      const configPath = join(homedir(), ".nemoclaw", "config.json");
+      store.set(configPath, "{ not json");
       expect(() => loadOnboardConfig()).not.toThrow();
       expect(loadOnboardConfig()).toBeNull();
     });
