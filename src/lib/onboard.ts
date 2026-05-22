@@ -294,6 +294,7 @@ const { resolveSandboxImageTagFromCreateOutput } =
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
 const { OnboardRuntimeBoundary }: typeof import("./onboard/runtime-boundary") = require("./onboard/runtime-boundary");
+const { handleGatewayState }: typeof import("./onboard/machine/handlers/gateway") = require("./onboard/machine/handlers/gateway");
 const { handlePreflightState }: typeof import("./onboard/machine/handlers/preflight") = require("./onboard/machine/handlers/preflight");
 const policies: typeof import("./policy") = require("./policy");
 const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
@@ -9356,126 +9357,40 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     });
 
     const gatewaySnapshot = selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot());
-    let gatewayReuseState = gatewaySnapshot.gatewayReuseState;
-    gatewayReuseState = await refreshDockerDriverGatewayReuseState(gatewayReuseState);
-
-    // Verify the legacy gateway container is actually running — openshell CLI
-    // metadata can be stale after a manual `docker rm`. See #2020. Newer
-    // package-managed OpenShell gateways do not have an openshell-cluster-*
-    // Docker container, so the live CLI health check is the source of truth.
-    if (gatewayReuseState === "healthy" && gatewayCliSupportsLifecycleCommands(runCaptureOpenshell)) {
-      const containerState = verifyGatewayContainerRunning(GATEWAY_NAME);
-      if (containerState === "missing") {
-        console.log("  Gateway metadata is stale (container not running). Cleaning up...");
-        bestEffortForwardStop(runOpenshell, DASHBOARD_PORT);
-        gatewayReuseState = destroyGatewayForReuse(
-          destroyGateway,
-          "  ✓ Stale gateway metadata cleaned up",
-          "  ! Stale gateway metadata cleanup failed; leaving registry state intact.",
-        );
-      } else if (containerState === "unknown") {
-        // Docker probe failed but cached metadata says healthy. Try the host-level
-        // HTTP probe — it doesn't depend on Docker, so it can confirm the gateway
-        // is genuinely serving even when the daemon is flaky.
-        if (await waitForGatewayHttpReady()) {
-          console.log(
-            "  Warning: could not verify gateway container state (Docker may be unavailable), but the gateway is responding on HTTP. Proceeding with reuse.",
-          );
-        } else {
-          // Docker can't be probed AND the gateway HTTP endpoint isn't
-          // responding. We cannot tell whether the existing gateway is live
-          // (transient `docker inspect` flake + warm-up miss) or genuinely
-          // gone. Per #2020 we must not destroy in this branch, and we must
-          // not downgrade to "missing" either: that would push execution into
-          // `startGatewayWithOptions`, whose retry hook calls
-          // `destroyGateway()` between attempts — which would tear down a
-          // possibly-live gateway. Bail with an actionable error instead.
-          console.log(
-            `  Error: could not verify gateway container state and ${getGatewayLocalEndpoint()}/ is not responding.`,
-          );
-          console.log(
-            "  Refusing to proceed without a clear Docker signal — restarting Docker and re-running onboard is the safe path. See #3258 / #2020.",
-          );
-          process.exit(1);
-        }
-      } else if (!(await waitForGatewayHttpReady())) {
-        // Container is running but the gateway HTTP endpoint is not responding.
-        // Common immediately after a Docker daemon restart — the container comes
-        // back before the OpenShell gateway upstream finishes warming up. Safe to
-        // recreate because Docker is functional. See #3258.
-        console.log(
-          `  Gateway container is running but ${getGatewayLocalEndpoint()}/ is not responding. Recreating...`,
-        );
-        bestEffortForwardStop(runOpenshell, DASHBOARD_PORT);
-        gatewayReuseState = destroyGatewayForReuse(
-          destroyGateway,
-          "  ✓ Stale gateway cleaned up",
-          "  ! Stale gateway cleanup failed; leaving registry state intact.",
-        );
-      } else {
-        const imageDrift = getGatewayClusterImageDrift();
-        if (imageDrift) {
-          console.log(
-            `  Gateway image ${imageDrift.currentVersion} does not match openshell ${imageDrift.expectedVersion}. Recreating...`,
-          );
-          stopAllDashboardForwards();
-          gatewayReuseState = destroyGatewayForReuse(
-            destroyGateway,
-            "  ✓ Previous gateway cleaned up",
-            "  ! Previous gateway cleanup failed; leaving registry state intact.",
-          );
-        }
-      }
-    }
-
-    gatewayReuseState = reconcileGatewayGpuReuseForGpuIntent({
-      gatewayReuseState,
+    const gatewayResult = await handleGatewayState({
+      resume,
+      session,
+      initialGatewayReuseState: gatewaySnapshot.gatewayReuseState,
+      gpu,
       gpuPassthrough,
       gatewayName: GATEWAY_NAME,
-      currentSandboxName: recordedSandboxName || requestedSandboxName,
-      hostGpuPlatform: gpu?.platform ?? null,
+      recordedSandboxName,
+      requestedSandboxName,
       recreateSandbox: isRecreateSandbox(),
-      confirmedDockerDriverGateway:
-        isLinuxDockerDriverGatewayEnabled() &&
-        gatewayReuseState === "healthy" &&
-        !gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
-      stopDashboardForwards: stopAllDashboardForwards,
-      retireLegacyGatewayForDockerDriverUpgrade,
-      destroyGatewayRuntimeForGpuReuse: () => destroyGateway(() => undefined, () => false),
+      deps: {
+        refreshDockerDriverGatewayReuseState,
+        gatewayCliSupportsLifecycleCommands: () => gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
+        verifyGatewayContainerRunning,
+        waitForGatewayHttpReady,
+        getGatewayLocalEndpoint,
+        stopDashboardForward: () => bestEffortForwardStop(runOpenshell, DASHBOARD_PORT),
+        destroyGateway,
+        destroyGatewayForReuse,
+        getGatewayClusterImageDrift,
+        stopAllDashboardForwards,
+        reconcileGatewayGpuReuseForGpuIntent,
+        isLinuxDockerDriverGatewayEnabled,
+        retireLegacyGatewayForDockerDriverUpgrade,
+        destroyGatewayRuntimeForGpuReuse: () => destroyGateway(() => undefined, () => false),
+        skippedStepMessage,
+        note,
+        startRecordedStep,
+        startGateway,
+        recordStepComplete,
+        exitProcess: (code) => process.exit(code),
+      },
     });
-
-    const canReuseHealthyGateway = gatewayReuseState === "healthy";
-
-    const resumeGateway =
-      resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
-    if (resumeGateway) {
-      skippedStepMessage("gateway", "running");
-      await recordStepComplete("gateway");
-    } else if (!resume && canReuseHealthyGateway) {
-      skippedStepMessage("gateway", "running", "reuse");
-      note("  Reusing healthy NemoClaw gateway.");
-      await recordStepComplete("gateway");
-    } else {
-      if (resume && session?.steps?.gateway?.status === "complete") {
-        if (gatewayReuseState === "active-unnamed") {
-          note("  [resume] Gateway is active but named metadata is missing; recreating it safely.");
-        } else if (gatewayReuseState === "foreign-active") {
-          note("  [resume] A different OpenShell gateway is active; NemoClaw will not reuse it.");
-        } else if (gatewayReuseState === "stale") {
-          note("  [resume] Recorded gateway is unhealthy; recreating it.");
-        } else {
-          note("  [resume] Recorded gateway state is unavailable; recreating it.");
-        }
-      }
-      if (isLinuxDockerDriverGatewayEnabled() && gatewayReuseState !== "missing") {
-        note("  Replacing legacy OpenShell gateway metadata with Docker-driver gateway.");
-        retireLegacyGatewayForDockerDriverUpgrade();
-        gatewayReuseState = "missing";
-      }
-      await startRecordedStep("gateway");
-      await startGateway(gpu, { gpuPassthrough });
-      await recordStepComplete("gateway");
-    }
+    session = gatewayResult.session;
 
     // #2753: prefer requestedSandboxName over an unconfirmed session name.
     // A pre-fix session may carry sandboxName even though sandbox creation
