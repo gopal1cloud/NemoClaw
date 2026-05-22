@@ -294,6 +294,9 @@ const { resolveSandboxImageTagFromCreateOutput } =
   require("./domain/sandbox/image-tag") as typeof import("./domain/sandbox/image-tag");
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
+const { OnboardRuntimeBoundary }: typeof import("./onboard/runtime-boundary") = require("./onboard/runtime-boundary");
+const { handleGatewayState }: typeof import("./onboard/machine/handlers/gateway") = require("./onboard/machine/handlers/gateway");
+const { handlePreflightState }: typeof import("./onboard/machine/handlers/preflight") = require("./onboard/machine/handlers/preflight");
 const policies: typeof import("./policy") = require("./policy");
 const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
@@ -7891,7 +7894,7 @@ async function setupMessagingChannels(
       output.write(`    [${i + 1}] ${marker} ${ch.name} — ${ch.description}${status}\n`);
     });
     output.write("\n");
-    output.write(`  Press 1-${availableChannels.length} to toggle, Enter when done: `);
+    output.write(`  Press 1-${availableChannels.length} to toggle, Enter when done (none selected skips): `);
   };
 
   showList();
@@ -8992,27 +8995,15 @@ function toSessionUpdates(
   return normalized;
 }
 
-function startRecordedStep(
-  stepName: string,
-  updates: {
-    sandboxName?: string | null;
-    provider?: string | null;
-    model?: string | null;
-    policyPresets?: string[] | null;
-  } = {},
-): void {
-  onboardSession.markStepStarted(stepName);
-  if (Object.keys(updates).length > 0) {
-    onboardSession.updateSession((session: Session) => {
-      if (updates.sandboxName !== undefined) session.sandboxName = updates.sandboxName;
-      if (updates.provider !== undefined) session.provider = updates.provider;
-      if (updates.model !== undefined) session.model = updates.model;
-      if (updates.policyPresets !== undefined) session.policyPresets = updates.policyPresets;
-      return session;
-    });
-  }
-  maybeForceE2eStepFailure(stepName);
-}
+const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
+  toSessionUpdates,
+  maybeForceE2eStepFailure,
+});
+const startRecordedStep = onboardRuntimeBoundary.startRecordedStep.bind(onboardRuntimeBoundary);
+const recordStepComplete = onboardRuntimeBoundary.recordStepComplete.bind(onboardRuntimeBoundary);
+const recordStepSkipped = onboardRuntimeBoundary.recordStepSkipped.bind(onboardRuntimeBoundary);
+const recordStepFailed = onboardRuntimeBoundary.recordStepFailed.bind(onboardRuntimeBoundary);
+const recordSessionComplete = onboardRuntimeBoundary.recordSessionComplete.bind(onboardRuntimeBoundary);
 
 const ONBOARD_STEP_INDEX: Record<string, { number: number; title: string }> = {
   preflight: { number: 1, title: "Preflight checks" },
@@ -9059,6 +9050,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
   _preflightDashboardPort = opts.controlUiPort || null;
+  onboardRuntimeBoundary.reset();
   delete process.env.OPENSHELL_GATEWAY;
   const resume = opts.resume === true;
   const fresh = opts.fresh === true;
@@ -9381,7 +9373,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
 
     const recordedSandboxName =
       session?.steps?.sandbox?.status === "complete" ? session?.sandboxName || null : null;
-    const resumeSandboxNameForGpu = recordedSandboxName || requestedSandboxName || null;
 
     console.log("");
     console.log(`  ${cliDisplayName()} Onboarding`);
@@ -9390,61 +9381,49 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     console.log("  ===================");
 
     const explicitSandboxGpuFlag = resolveSandboxGpuFlagFromOptions(opts);
-    const resumePreflight = resume && session?.steps?.preflight?.status === "complete";
-    const resumeHasResolvedGpuIntent =
-      resumePreflight &&
-      explicitSandboxGpuFlag === null &&
-      opts.sandboxGpuDevice == null &&
-      process.env.NEMOCLAW_SANDBOX_GPU === undefined &&
-      process.env.NEMOCLAW_SANDBOX_GPU_DEVICE === undefined;
-    const resumedSandboxGpuOverrides = resumeHasResolvedGpuIntent
-      ? getResumeSandboxGpuOverrides(
-          resumeSandboxNameForGpu ? registry.getSandbox(resumeSandboxNameForGpu) : null,
-          session?.gpuPassthrough,
-        )
-      : { flag: null, device: null };
-    const effectiveSandboxGpuFlag = explicitSandboxGpuFlag ?? resumedSandboxGpuOverrides.flag;
-    const effectiveSandboxGpuDevice = opts.sandboxGpuDevice ?? resumedSandboxGpuOverrides.device;
-    let gpu;
-    if (resumePreflight) {
-      skippedStepMessage("preflight", "cached");
-      gpu = nim.detectGpu();
-      const resumeSandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
-        flag: effectiveSandboxGpuFlag,
-        device: effectiveSandboxGpuDevice,
-      });
-      exitOnSandboxGpuConfigErrors(resumeSandboxGpuConfig);
-      // Re-check the CDI spec gap on resume (#3152). The cached preflight
-      // result does not capture host CDI state, and the original onboard
-      // attempt that wrote the cache likely aborted at gateway-start with
-      // exactly this CDI failure — so resuming without re-checking would
-      // walk into the same wall. Honour persisted `gpuPassthrough: false`
-      // from the prior session as an opt-out, since the resume invocation
-      // does not need to re-pass `--no-gpu` to keep that intent (the same
-      // resolution is replayed a few lines below for `gpuPassthrough`).
-      const resumeOptedOutGpuPassthrough =
-        opts.noGpu === true ||
-        (opts.gpu !== true && session?.gpuPassthrough === false) ||
-        !resumeSandboxGpuConfig.sandboxGpuEnabled;
-      assertCdiNvidiaGpuSpecPresent(assessHost(), resumeOptedOutGpuPassthrough);
-      validateSandboxGpuPreflight(resumeSandboxGpuConfig);
-    } else {
-      startRecordedStep("preflight");
-      gpu = await trace.withTraceSpan("nemoclaw.onboard.phase.preflight", {}, () =>
-        preflight({ ...opts, optedOutGpuPassthrough: opts.noGpu === true }),
-      );
-      onboardSession.markStepComplete("preflight");
-    }
-    const sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
-      flag: effectiveSandboxGpuFlag,
-      device: effectiveSandboxGpuDevice,
+    const recordedGpuPassthroughBeforePreflight = session?.gpuPassthrough === true;
+    const preflightResult = await handlePreflightState({
+      resume,
+      session,
+      recordedSandboxName,
+      requestedSandboxName,
+      explicitSandboxGpuFlag,
+      sandboxGpuDevice: opts.sandboxGpuDevice ?? null,
+      gpuRequested: opts.gpu === true,
+      noGpu: opts.noGpu === true,
+      env: process.env,
+      deps: {
+        getSandbox: registry.getSandbox.bind(registry),
+        getResumeSandboxGpuOverrides,
+        detectGpu: nim.detectGpu,
+        runPreflight: (preflightOptions) =>
+          trace.withTraceSpan("nemoclaw.onboard.phase.preflight", {}, () =>
+            preflight({ ...opts, ...preflightOptions }),
+          ),
+        assessHost,
+        assertCdiNvidiaGpuSpecPresent,
+        resolveSandboxGpuConfig,
+        validateSandboxGpuPreflight: (config) => {
+          exitOnSandboxGpuConfigErrors(config);
+          validateSandboxGpuPreflight(config);
+        },
+        skippedStepMessage,
+        startRecordedStep,
+        recordStepComplete,
+        updateSession: onboardSession.updateSession,
+      },
     });
-
-    const requestedGpuPassthrough = opts.gpu === true;
-    const gpuPassthrough = sandboxGpuConfig.sandboxGpuEnabled;
+    session = preflightResult.session;
+    const {
+      sandboxGpuConfig,
+      resumeHasResolvedGpuIntent,
+      requestedGpuPassthrough,
+      gpuPassthrough,
+    } = preflightResult;
+    const gpu = preflightResult.gpu ?? null;
     if (gpuPassthrough) {
       note(
-        resumeHasResolvedGpuIntent && session?.gpuPassthrough === true
+        resumeHasResolvedGpuIntent && recordedGpuPassthroughBeforePreflight
           ? "  [resume] Continuing GPU passthrough from the saved onboarding session."
           : requestedGpuPassthrough || sandboxGpuConfig.mode === "1"
             ? "  GPU passthrough requested; passing --gpu to OpenShell gateway and sandbox creation."
@@ -9463,143 +9442,54 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         /* lspci not available — skip hint */
       }
     }
-    // Persist GPU intent in the session so resume can restore it.
-    if (session && session.gpuPassthrough !== gpuPassthrough) {
-      session = onboardSession.updateSession((current: Session) => {
-        current.gpuPassthrough = gpuPassthrough;
-        return current;
-      });
-    }
     dockerGpuLocalInference.configureLocalInferenceForDockerGpuHostNetwork(sandboxGpuConfig, {
       dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
       note,
     });
 
     const gatewaySnapshot = selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot());
-    let gatewayReuseState = gatewaySnapshot.gatewayReuseState;
-    gatewayReuseState = await refreshDockerDriverGatewayReuseState(gatewayReuseState);
-
-    // Verify the legacy gateway container is actually running — openshell CLI
-    // metadata can be stale after a manual `docker rm`. See #2020. Newer
-    // package-managed OpenShell gateways do not have an openshell-cluster-*
-    // Docker container, so the live CLI health check is the source of truth.
-    if (gatewayReuseState === "healthy" && gatewayCliSupportsLifecycleCommands(runCaptureOpenshell)) {
-      const containerState = verifyGatewayContainerRunning(GATEWAY_NAME);
-      if (containerState === "missing") {
-        console.log("  Gateway metadata is stale (container not running). Cleaning up...");
-        bestEffortForwardStop(runOpenshell, DASHBOARD_PORT);
-        gatewayReuseState = destroyGatewayForReuse(
-          destroyGateway,
-          "  ✓ Stale gateway metadata cleaned up",
-          "  ! Stale gateway metadata cleanup failed; leaving registry state intact.",
-        );
-      } else if (containerState === "unknown") {
-        // Docker probe failed but cached metadata says healthy. Try the host-level
-        // HTTP probe — it doesn't depend on Docker, so it can confirm the gateway
-        // is genuinely serving even when the daemon is flaky.
-        if (await waitForGatewayHttpReady()) {
-          console.log(
-            "  Warning: could not verify gateway container state (Docker may be unavailable), but the gateway is responding on HTTP. Proceeding with reuse.",
-          );
-        } else {
-          // Docker can't be probed AND the gateway HTTP endpoint isn't
-          // responding. We cannot tell whether the existing gateway is live
-          // (transient `docker inspect` flake + warm-up miss) or genuinely
-          // gone. Per #2020 we must not destroy in this branch, and we must
-          // not downgrade to "missing" either: that would push execution into
-          // `startGatewayWithOptions`, whose retry hook calls
-          // `destroyGateway()` between attempts — which would tear down a
-          // possibly-live gateway. Bail with an actionable error instead.
-          console.log(
-            `  Error: could not verify gateway container state and ${getGatewayLocalEndpoint()}/ is not responding.`,
-          );
-          console.log(
-            "  Refusing to proceed without a clear Docker signal — restarting Docker and re-running onboard is the safe path. See #3258 / #2020.",
-          );
-          process.exit(1);
-        }
-      } else if (!(await waitForGatewayHttpReady())) {
-        // Container is running but the gateway HTTP endpoint is not responding.
-        // Common immediately after a Docker daemon restart — the container comes
-        // back before the OpenShell gateway upstream finishes warming up. Safe to
-        // recreate because Docker is functional. See #3258.
-        console.log(
-          `  Gateway container is running but ${getGatewayLocalEndpoint()}/ is not responding. Recreating...`,
-        );
-        bestEffortForwardStop(runOpenshell, DASHBOARD_PORT);
-        gatewayReuseState = destroyGatewayForReuse(
-          destroyGateway,
-          "  ✓ Stale gateway cleaned up",
-          "  ! Stale gateway cleanup failed; leaving registry state intact.",
-        );
-      } else {
-        const imageDrift = getGatewayClusterImageDrift();
-        if (imageDrift) {
-          console.log(
-            `  Gateway image ${imageDrift.currentVersion} does not match openshell ${imageDrift.expectedVersion}. Recreating...`,
-          );
-          stopAllDashboardForwards();
-          gatewayReuseState = destroyGatewayForReuse(
-            destroyGateway,
-            "  ✓ Previous gateway cleaned up",
-            "  ! Previous gateway cleanup failed; leaving registry state intact.",
-          );
-        }
-      }
-    }
-
-    gatewayReuseState = reconcileGatewayGpuReuseForGpuIntent({
-      gatewayReuseState,
+    const gatewayResult = await handleGatewayState({
+      resume,
+      session,
+      initialGatewayReuseState: gatewaySnapshot.gatewayReuseState,
+      gpu,
       gpuPassthrough,
       gatewayName: GATEWAY_NAME,
-      currentSandboxName: recordedSandboxName || requestedSandboxName,
-      hostGpuPlatform: gpu?.platform ?? null,
+      recordedSandboxName,
+      requestedSandboxName,
       recreateSandbox: isRecreateSandbox(),
-      confirmedDockerDriverGateway:
-        isLinuxDockerDriverGatewayEnabled() &&
-        gatewayReuseState === "healthy" &&
-        !gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
-      stopDashboardForwards: stopAllDashboardForwards,
-      retireLegacyGatewayForDockerDriverUpgrade,
-      destroyGatewayRuntimeForGpuReuse: () => destroyGateway(() => undefined, () => false),
+      deps: {
+        refreshDockerDriverGatewayReuseState,
+        gatewayCliSupportsLifecycleCommands: () => gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
+        verifyGatewayContainerRunning,
+        waitForGatewayHttpReady,
+        getGatewayLocalEndpoint,
+        stopDashboardForward: () => bestEffortForwardStop(runOpenshell, DASHBOARD_PORT),
+        destroyGateway,
+        destroyGatewayForReuse,
+        getGatewayClusterImageDrift,
+        stopAllDashboardForwards,
+        reconcileGatewayGpuReuseForGpuIntent,
+        isLinuxDockerDriverGatewayEnabled,
+        retireLegacyGatewayForDockerDriverUpgrade,
+        destroyGatewayRuntimeForGpuReuse: () => destroyGateway(() => undefined, () => false),
+        skippedStepMessage,
+        note,
+        startRecordedStep,
+        startGateway: (gatewayGpu, gatewayOptions) =>
+          trace.withTraceSpan(
+            "nemoclaw.onboard.phase.gateway",
+            {
+              reuse_state: gatewaySnapshot.gatewayReuseState,
+              gpu_passthrough: gatewayOptions.gpuPassthrough,
+            },
+            () => startGateway(gatewayGpu, gatewayOptions),
+          ),
+        recordStepComplete,
+        exitProcess: (code) => process.exit(code),
+      },
     });
-
-    const canReuseHealthyGateway = gatewayReuseState === "healthy";
-
-    const resumeGateway =
-      resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
-    if (resumeGateway) {
-      skippedStepMessage("gateway", "running");
-      onboardSession.markStepComplete("gateway");
-    } else if (!resume && canReuseHealthyGateway) {
-      skippedStepMessage("gateway", "running", "reuse");
-      note("  Reusing healthy NemoClaw gateway.");
-      onboardSession.markStepComplete("gateway");
-    } else {
-      if (resume && session?.steps?.gateway?.status === "complete") {
-        if (gatewayReuseState === "active-unnamed") {
-          note("  [resume] Gateway is active but named metadata is missing; recreating it safely.");
-        } else if (gatewayReuseState === "foreign-active") {
-          note("  [resume] A different OpenShell gateway is active; NemoClaw will not reuse it.");
-        } else if (gatewayReuseState === "stale") {
-          note("  [resume] Recorded gateway is unhealthy; recreating it.");
-        } else {
-          note("  [resume] Recorded gateway state is unavailable; recreating it.");
-        }
-      }
-      if (isLinuxDockerDriverGatewayEnabled() && gatewayReuseState !== "missing") {
-        note("  Replacing legacy OpenShell gateway metadata with Docker-driver gateway.");
-        retireLegacyGatewayForDockerDriverUpgrade();
-        gatewayReuseState = "missing";
-      }
-      startRecordedStep("gateway");
-      await trace.withTraceSpan(
-        "nemoclaw.onboard.phase.gateway",
-        { reuse_state: gatewayReuseState, gpu_passthrough: gpuPassthrough },
-        () => startGateway(gpu, { gpuPassthrough }),
-      );
-      onboardSession.markStepComplete("gateway");
-    }
+    session = gatewayResult.session;
 
     // #2753: prefer requestedSandboxName over an unconfirmed session name.
     // A pre-fix session may carry sandboxName even though sandbox creation
@@ -9649,7 +9539,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         // below). A SIGINT between any earlier step and createSandbox would
         // otherwise leave a phantom that `nemoclaw list` resurrects until
         // manually destroyed.
-        startRecordedStep("provider_selection");
+        await startRecordedStep("provider_selection");
         const selection = await trace.withTraceSpan(
           "nemoclaw.onboard.phase.provider_selection",
           { sandbox_name: sandboxName, agent: agent?.name ?? null },
@@ -9663,7 +9553,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         hermesToolGateways = selection.hermesToolGateways;
         preferredInferenceApi = selection.preferredInferenceApi;
         nimContainer = selection.nimContainer;
-        onboardSession.markStepComplete(
+        await recordStepComplete(
           "provider_selection",
           toSessionUpdates({
             provider,
@@ -9698,10 +9588,15 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           if (!sandboxName) {
             sandboxName = await promptValidatedSandboxName(agent);
           }
-          startRecordedStep("inference", { provider: selectedProvider, model: selectedModel });
+          await startRecordedStep("inference", { provider: selectedProvider, model: selectedModel });
           const inferenceResult = await trace.withTraceSpan(
             "nemoclaw.onboard.phase.inference",
-            { sandbox_name: sandboxName, provider: selectedProvider, model: selectedModel, credential_env: credentialEnv },
+            {
+              sandbox_name: sandboxName,
+              provider: selectedProvider,
+              model: selectedModel,
+              credential_env: credentialEnv,
+            },
             () =>
               setupInference(
                 sandboxName,
@@ -9717,7 +9612,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             forceProviderSelection = true;
             continue;
           }
-          onboardSession.markStepComplete(
+          await recordStepComplete(
             "inference",
             toSessionUpdates({ provider: selectedProvider, model: selectedModel, hermesAuthMethod, nimContainer, hermesToolGateways }),
           );
@@ -9737,7 +9632,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         if (nimContainer && sandboxName) {
           registry.updateSandbox(sandboxName, { nimContainer });
         }
-        onboardSession.markStepComplete(
+        await recordStepComplete(
           "inference",
           toSessionUpdates({ provider: selectedProvider, model: selectedModel, hermesAuthMethod, nimContainer, hermesToolGateways }),
         );
@@ -9776,10 +9671,15 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         }
       }
 
-      startRecordedStep("inference", { provider, model });
+      await startRecordedStep("inference", { provider, model });
       const inferenceResult = await trace.withTraceSpan(
         "nemoclaw.onboard.phase.inference",
-        { sandbox_name: sandboxName, provider: selectedProvider, model: selectedModel, credential_env: credentialEnv },
+        {
+          sandbox_name: sandboxName,
+          provider: selectedProvider,
+          model: selectedModel,
+          credential_env: credentialEnv,
+        },
         () =>
           setupInference(
             sandboxName,
@@ -9799,7 +9699,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       if (nimContainer && sandboxName) {
         registry.updateSandbox(sandboxName, { nimContainer });
       }
-      onboardSession.markStepComplete(
+      await recordStepComplete(
         "inference",
         toSessionUpdates({ provider, model, hermesAuthMethod, nimContainer, hermesToolGateways }),
       );
@@ -9941,7 +9841,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       } else {
         nextWebSearchConfig = await configureWebSearch(null, agent, webSearchSupportProbePath);
       }
-      startRecordedStep("sandbox", { provider, model });
+      await startRecordedStep("sandbox", { provider, model });
       const recordedMessagingChannels = getRecordedMessagingChannelsForResume(resume, session, sandboxName);
       if (recordedMessagingChannels) {
         selectedMessagingChannels = recordedMessagingChannels;
@@ -10000,7 +9900,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         ...getSandboxAgentRegistryFields(agent, !fromDockerfile),
       });
       registry.setDefault(sandboxName);
-      onboardSession.markStepComplete(
+      await recordStepComplete(
         "sandbox",
         toSessionUpdates({
           sandboxName,
@@ -10030,10 +9930,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         openshellShellCommand,
         openshellBinary: getOpenshellBinary(),
         startRecordedStep,
+        recordStepComplete,
+        recordStepFailed,
         skippedStepMessage,
       });
       ensureAgentDashboardForward(sandboxName, agent);
-      onboardSession.markStepSkipped("openclaw");
+      await recordStepSkipped("openclaw");
     } else {
       const resumeOpenclaw = resume && sandboxName && isOpenclawReady(sandboxName);
       if (resumeOpenclaw) {
@@ -10042,19 +9944,19 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         // zero-byte placeholder; re-sync to avoid loadOnboardConfig
         // SyntaxError. Fixes #3999.
         syncNemoClawConfigInSandbox(sandboxName, provider, model);
-        onboardSession.markStepComplete(
+        await recordStepComplete(
           "openclaw",
           toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
         );
       } else {
-        startRecordedStep("openclaw", { sandboxName, provider, model });
+        await startRecordedStep("openclaw", { sandboxName, provider, model });
         await setupOpenclaw(sandboxName, model, provider);
-        onboardSession.markStepComplete(
+        await recordStepComplete(
           "openclaw",
           toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
         );
       }
-      onboardSession.markStepSkipped("agent_setup");
+      await recordStepSkipped("agent_setup");
     }
 
     const latestSession = onboardSession.loadSession();
@@ -10114,7 +10016,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       arePolicyPresetsApplied(sandboxName, recordedPolicyPresetsForSupport);
     if (resumePolicies) {
       skippedStepMessage("policies", recordedPolicyPresetsForSupport.join(", "));
-      onboardSession.markStepComplete(
+      await recordStepComplete(
         "policies",
         toSessionUpdates({
           sandboxName,
@@ -10124,7 +10026,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         }),
       );
     } else {
-      startRecordedStep("policies", {
+      await startRecordedStep("policies", {
         sandboxName,
         provider,
         model,
@@ -10150,7 +10052,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           });
         },
       });
-      onboardSession.markStepComplete(
+      await recordStepComplete(
         "policies",
         toSessionUpdates({ sandboxName, provider, model, policyPresets: appliedPolicyPresets }),
       );
@@ -10160,7 +10062,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       ensureAgentDashboardForward(sandboxName, agent);
     }
 
-    onboardSession.completeSession(
+    await recordSessionComplete(
       toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
     );
     completed = true;
@@ -10241,6 +10143,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     traceCompleted = true;
   } finally {
     releaseOnboardLock();
+    onboardRuntimeBoundary.clear();
     if (onboardTraceSpan) {
       traceCollector?.endSpan(onboardTraceSpan, traceCompleted ? "OK" : "ERROR");
       trace.flushTrace(traceCompleted ? "OK" : "ERROR");

@@ -7,7 +7,9 @@ import {
   createSession,
   filterSafeUpdates,
   normalizeSession,
+  sanitizeFailure,
   type Session,
+  type SessionUpdates,
 } from "../../state/onboard-session";
 import type { OnboardMachineEvent } from "./events";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
@@ -21,6 +23,12 @@ function createHarness(initialSession: Session | null = createSession()) {
   let session = initialSession ? cloneSession(initialSession) : null;
   const events: OnboardMachineEvent[] = [];
   let tick = 0;
+  const updateSession = (mutator: (value: Session) => Session | void): Session => {
+    const current = session ? cloneSession(session) : createSession();
+    const next = mutator(current) ?? current;
+    session = cloneSession(next);
+    return cloneSession(session);
+  };
   const deps: OnboardRuntimeDeps = {
     loadSession: () => (session ? cloneSession(session) : null),
     createSession: (overrides) => createSession(overrides),
@@ -28,12 +36,48 @@ function createHarness(initialSession: Session | null = createSession()) {
       session = cloneSession(next);
       return cloneSession(session);
     },
-    updateSession: (mutator) => {
-      const current = session ? cloneSession(session) : createSession();
-      const next = mutator(current) ?? current;
-      session = cloneSession(next);
-      return cloneSession(session);
-    },
+    updateSession,
+    markStepStarted: (stepName) =>
+      updateSession((current) => {
+        const step = current.steps[stepName];
+        if (!step) return current;
+        step.status = "in_progress";
+        current.lastStepStarted = stepName;
+        current.status = "in_progress";
+        return current;
+      }),
+    markStepComplete: (stepName, updates: SessionUpdates = {}) =>
+      updateSession((current) => {
+        const step = current.steps[stepName];
+        if (!step) return current;
+        step.status = "complete";
+        current.lastCompletedStep = stepName;
+        Object.assign(current, filterSafeUpdates(updates));
+        return current;
+      }),
+    markStepSkipped: (stepName) =>
+      updateSession((current) => {
+        const step = current.steps[stepName];
+        if (!step) return current;
+        step.status = "skipped";
+        return current;
+      }),
+    markStepFailed: (stepName, message) =>
+      updateSession((current) => {
+        const step = current.steps[stepName];
+        if (!step) return current;
+        step.status = "failed";
+        current.status = "failed";
+        current.failure = sanitizeFailure({ step: stepName, message, recordedAt: "now" });
+        return current;
+      }),
+    completeSession: (updates: SessionUpdates = {}) =>
+      updateSession((current) => {
+        Object.assign(current, filterSafeUpdates(updates));
+        current.status = "complete";
+        current.resumable = false;
+        return current;
+      }),
     filterSafeUpdates,
     emitEvent: (event) => events.push(event),
     now: () => `2026-05-19T00:00:${String(tick++).padStart(2, "0")}.000Z`,

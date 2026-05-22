@@ -21,6 +21,11 @@ export interface OnboardRuntimeDeps {
   createSession(overrides?: Partial<Session>): Session;
   saveSession(session: Session): Session;
   updateSession(mutator: (session: Session) => Session | void): Session;
+  markStepStarted(stepName: string): Session;
+  markStepComplete(stepName: string, updates?: SessionUpdates): Session;
+  markStepSkipped(stepName: string): Session;
+  markStepFailed(stepName: string, message?: string | null): Session;
+  completeSession(updates?: SessionUpdates): Session;
   filterSafeUpdates(updates: SessionUpdates): Partial<Session>;
   emitEvent(event: OnboardMachineEvent): void;
   now(): string;
@@ -46,6 +51,11 @@ function defaultDeps(): OnboardRuntimeDeps {
     createSession: onboardSession.createSession,
     saveSession: onboardSession.saveSession,
     updateSession: onboardSession.updateSession,
+    markStepStarted: onboardSession.markStepStarted,
+    markStepComplete: onboardSession.markStepComplete,
+    markStepSkipped: onboardSession.markStepSkipped,
+    markStepFailed: onboardSession.markStepFailed,
+    completeSession: onboardSession.completeSession,
     filterSafeUpdates: onboardSession.filterSafeUpdates,
     emitEvent: emitOnboardMachineEvent,
     now: () => new Date().toISOString(),
@@ -89,6 +99,26 @@ export class OnboardRuntime {
       metadata: options.metadata,
     });
     return session;
+  }
+
+  async markStepStarted(stepName: string): Promise<Session> {
+    return this.deps.markStepStarted(stepName);
+  }
+
+  async markStepComplete(stepName: string, updates: SessionUpdates = {}): Promise<Session> {
+    return this.deps.markStepComplete(stepName, updates);
+  }
+
+  async markStepSkipped(stepName: string): Promise<Session> {
+    return this.deps.markStepSkipped(stepName);
+  }
+
+  async markStepFailed(stepName: string, message: string | null = null): Promise<Session> {
+    return this.deps.markStepFailed(stepName, message);
+  }
+
+  async completeSession(updates: SessionUpdates = {}): Promise<Session> {
+    return this.deps.completeSession(updates);
   }
 
   async transition(
