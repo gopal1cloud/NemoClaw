@@ -245,6 +245,22 @@ describe("#2666 — subprocess regression: simulated (container-stopped + foreig
     };
   }
 
+  function writeFakeDocker(lines: string[]): void {
+    fs.writeFileSync(path.join(binDir, "docker"), lines.join("\n"), { mode: 0o755 });
+  }
+
+  function writeFakeOpenshell(lines: string[]): void {
+    fs.writeFileSync(path.join(binDir, "openshell"), lines.join("\n"), { mode: 0o755 });
+  }
+
+  function expectLayerBefore(combined: string, layer: string, laterText: string): void {
+    const layerIndex = combined.indexOf(`Failure layer: ${layer}`);
+    const laterIndex = combined.indexOf(laterText);
+    expect(layerIndex).toBeGreaterThanOrEqual(0);
+    expect(laterIndex).toBeGreaterThanOrEqual(0);
+    expect(layerIndex).toBeLessThan(laterIndex);
+  }
+
   it("nemoclaw list never produces silent empty output when openshell is broken", () => {
     const { code, stdout, stderr } = runCli(["list"]);
     const combined = `${stdout}\n${stderr}`;
@@ -269,6 +285,78 @@ describe("#2666 — subprocess regression: simulated (container-stopped + foreig
     expect(code).not.toBe(0);
   });
 
+  it("nemoclaw <name> status prints the classifier header before gateway_unreachable_after_restart guidance", () => {
+    writeFakeDocker([
+      "#!/usr/bin/env bash",
+      "if [ \"$1\" = info ]; then echo 'Server Version: 24.0.0'; exit 0; fi",
+      "if [ \"$1\" = ps ]; then echo 'openshell-cluster-nemoclaw'; exit 0; fi",
+      "exit 0",
+    ]);
+    writeFakeOpenshell([
+      "#!/usr/bin/env bash",
+      "case \"$*\" in",
+      '  "sandbox get my-assist")',
+      "    echo 'Error: sandbox not found' >&2",
+      "    exit 1",
+      "    ;;",
+      "  status)",
+      "    cat <<'EOF'",
+      "Status: Disconnected",
+      "  Gateway: nemoclaw",
+      "  client error (Connect): tcp connect error: Connection refused (os error 61)",
+      "EOF",
+      "    exit 1",
+      "    ;;",
+      '  "gateway info -g nemoclaw")',
+      "    echo 'Gateway: nemoclaw'",
+      "    exit 0",
+      "    ;;",
+      "  *)",
+      "    exit 0",
+      "    ;;",
+      "esac",
+    ]);
+
+    const { code, stdout, stderr } = runCli(["my-assist", "status"]);
+    const combined = `${stdout}\n${stderr}`;
+    expectLayerBefore(combined, "gateway_unreachable", "still refusing connections after restart");
+    expect(code).not.toBe(0);
+  });
+
+  it("nemoclaw <name> status prints the classifier header before gateway_missing_after_restart guidance", () => {
+    writeFakeDocker([
+      "#!/usr/bin/env bash",
+      "if [ \"$1\" = info ]; then echo 'Server Version: 24.0.0'; exit 0; fi",
+      "if [ \"$1\" = ps ]; then exit 0; fi",
+      "exit 0",
+    ]);
+    writeFakeOpenshell([
+      "#!/usr/bin/env bash",
+      "case \"$*\" in",
+      '  "sandbox get my-assist")',
+      "    echo 'Error: sandbox not found' >&2",
+      "    exit 1",
+      "    ;;",
+      "  status)",
+      "    echo 'No gateway configured'",
+      "    exit 1",
+      "    ;;",
+      '  "gateway info -g nemoclaw")',
+      "    echo 'No gateway configured'",
+      "    exit 1",
+      "    ;;",
+      "  *)",
+      "    exit 0",
+      "    ;;",
+      "esac",
+    ]);
+
+    const { code, stdout, stderr } = runCli(["my-assist", "status"]);
+    const combined = `${stdout}\n${stderr}`;
+    expectLayerBefore(combined, "container_missing", "gateway is no longer configured");
+    expect(code).not.toBe(0);
+  });
+
   it("nemoclaw <name> status prints the container_exited_port_conflict layer header (#3271)", async () => {
     // Simulate the AC #2 scenario from #3271: docker daemon up, container
     // exists in `docker ps -a` but is NOT in `docker ps` (i.e. exited), AND
@@ -285,41 +373,33 @@ describe("#2666 — subprocess regression: simulated (container-stopped + foreig
     try {
       // Fake docker: info OK, ps shows nothing running, ps -a shows the
       // openshell-cluster-nemoclaw container (i.e. it exited cleanly).
-      fs.writeFileSync(
-        path.join(binDir, "docker"),
-        [
-          "#!/usr/bin/env bash",
-          "if [ \"$1\" = info ]; then echo 'Server Version: 24.0.0'; exit 0; fi",
-          "if [ \"$1\" = ps ] && [ \"$2\" = -a ]; then echo 'openshell-cluster-nemoclaw'; exit 0; fi",
-          "if [ \"$1\" = ps ]; then exit 0; fi",
-          "exit 0",
-        ].join("\n"),
-        { mode: 0o755 },
-      );
+      writeFakeDocker([
+        "#!/usr/bin/env bash",
+        "if [ \"$1\" = info ]; then echo 'Server Version: 24.0.0'; exit 0; fi",
+        "if [ \"$1\" = ps ] && [ \"$2\" = -a ]; then echo 'openshell-cluster-nemoclaw'; exit 0; fi",
+        "if [ \"$1\" = ps ]; then exit 0; fi",
+        "exit 0",
+      ]);
 
       // Override the default fake openshell with one that returns a generic
       // unrecognized failure, so status.ts falls through to the final else
       // branch where the classifier runs (rather than a recovery-hint branch).
-      fs.writeFileSync(
-        path.join(binDir, "openshell"),
-        [
-          "#!/usr/bin/env bash",
-          "case \"$*\" in",
-          '  "sandbox get my-assist")',
-          "    echo 'transport error: unexpected EOF' >&2",
-          "    exit 1",
-          "    ;;",
-          "  status)",
-          "    echo 'Status: Unknown'",
-          "    exit 1",
-          "    ;;",
-          "  *)",
-          "    exit 0",
-          "    ;;",
-          "esac",
-        ].join("\n"),
-        { mode: 0o755 },
-      );
+      writeFakeOpenshell([
+        "#!/usr/bin/env bash",
+        "case \"$*\" in",
+        '  "sandbox get my-assist")',
+        "    echo 'transport error: unexpected EOF' >&2",
+        "    exit 1",
+        "    ;;",
+        "  status)",
+        "    echo 'Status: Unknown'",
+        "    exit 1",
+        "    ;;",
+        "  *)",
+        "    exit 0",
+        "    ;;",
+        "esac",
+      ]);
 
       const result = spawnSync(process.execPath, [CLI, "my-assist", "status"], {
         encoding: "utf-8",
