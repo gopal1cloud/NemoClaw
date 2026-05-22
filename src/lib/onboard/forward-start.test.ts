@@ -98,6 +98,26 @@ describe("runDetachedForwardStartWithDiagnostics", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it("surfaces persistent fetchForwardList failures in the timeout diagnostic", () => {
+    const fetchList = vi.fn().mockImplementation(() => {
+      throw new Error("gateway transport: connection refused");
+    });
+    const spawn = vi.fn().mockReturnValue({ pid: 42 });
+    const sleep = vi.fn();
+
+    const result = runDetachedForwardStartWithDiagnostics(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      { overallTimeoutMs: 30, pollIntervalMs: 10, sleepMs: sleep },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("timeout");
+    expect(result.diagnostic).toMatch(/openshell forward list failed/);
+    expect(result.diagnostic).toMatch(/connection refused/);
+  });
+
   it("treats fetchForwardList exceptions as transient and keeps polling", () => {
     const fetchList = vi
       .fn()

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawn as spawnChild } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -67,12 +68,41 @@ function blockingSleepMs(ms: number): void {
   // Synchronous sleep — onboard's forward-start sits in a sync code path,
   // so we cannot await. spawnSync of `node -e setTimeout` is the same
   // primitive `sleepMs` in core/wait uses, but we keep the call site
-  // injectable so tests can stub it without spawning subprocesses.
+  // injectable so tests can stub it without spawning subprocesses. We
+  // intentionally do NOT `.unref()` the timer in the child: an unref'd
+  // timer lets the child's event loop drain immediately, so spawnSync
+  // returns instantly and the caller spins through the poll loop without
+  // actually waiting.
   const { spawnSync } = require("node:child_process");
-  spawnSync(process.execPath, ["-e", `setTimeout(() => {}, ${ms}).unref();`], {
+  spawnSync(process.execPath, ["-e", `setTimeout(() => {}, ${ms});`], {
     stdio: "ignore",
     timeout: ms + 5_000,
   });
+}
+
+/**
+ * Build a `DetachedForwardSpawnRunner` that spawns the given argv as a
+ * detached child, writing stdio to the file descriptors supplied by
+ * `runDetachedForwardStartWithDiagnostics`. Kept in this module so the
+ * onboard call site stays a thin wire-up and the spawn-on-Node detail
+ * (`detached: true` + `unref()`) lives next to the consumer that relies
+ * on it.
+ */
+export function buildDetachedForwardStartSpawn(
+  argv: readonly string[],
+): DetachedForwardSpawnRunner {
+  return ({ stdout, stderr }) => {
+    try {
+      const child = spawnChild(argv[0], argv.slice(1), {
+        stdio: ["ignore", stdout, stderr],
+        detached: true,
+      });
+      child.unref();
+      return { pid: child.pid };
+    } catch (e) {
+      return { error: e instanceof Error ? e : new Error(String(e)) };
+    }
+  };
 }
 
 function isForwardConfirmed(
@@ -135,11 +165,13 @@ export function runDetachedForwardStartWithDiagnostics(
     }
   }
 
+  let lastFetchError: string | null = null;
   const readDiag = (): string => {
     const stderr = readDiagnosticFile(forwardErrPath);
     const stdout = readDiagnosticFile(forwardDiagPath);
     const message = spawnError instanceof Error ? spawnError.message : "";
-    return compactText(redact(`${stderr} ${stdout} ${message}`));
+    const fetchSuffix = lastFetchError ? ` openshell forward list failed: ${lastFetchError}` : "";
+    return compactText(redact(`${stderr} ${stdout} ${message}${fetchSuffix}`));
   };
 
   try {
@@ -150,11 +182,11 @@ export function runDetachedForwardStartWithDiagnostics(
     const start = Date.now();
     const deadline = start + overallTimeoutMs;
     while (Date.now() < deadline) {
-      let list: string;
+      let list = "";
       try {
         list = fetchForwardList() || "";
-      } catch {
-        list = "";
+      } catch (err) {
+        lastFetchError = err instanceof Error ? err.message : String(err);
       }
       if (isForwardConfirmed(list, expect)) {
         return { ok: true, diagnostic: readDiag(), pid, reason: "ok" };

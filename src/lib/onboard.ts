@@ -18,7 +18,7 @@ const {
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
 const { bestEffortForwardStop } = require("./onboard/forward-cleanup");
-const { looksLikeForwardPortConflict, runDetachedForwardStartWithPortReleaseRetries }: typeof import("./onboard/forward-start") = require("./onboard/forward-start");
+const { buildDetachedForwardStartSpawn, looksLikeForwardPortConflict, runDetachedForwardStartWithPortReleaseRetries }: typeof import("./onboard/forward-start") = require("./onboard/forward-start");
 const {
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
@@ -8644,33 +8644,12 @@ function ensureDashboardForward(
   parsedUrl.port = String(actualPort);
   const actualTarget = getDashboardForwardTarget(parsedUrl.toString());
   bestEffortForwardStop(runOpenshell, actualPort);
-  const forwardStartArgv = openshellArgv([
-    "forward",
-    "start",
-    "--background",
-    actualTarget,
-    sandboxName,
-  ]);
+  // Detached spawn + forward-list poll (#4064) so the openshell CLI's
+  // inherited stdio cannot trip spawnSync's timeout on Docker-compat hosts.
   const fwdOutcome = runDetachedForwardStartWithPortReleaseRetries(
-    // `openshell forward start --background` daemonises the actual forward
-    // process. On the Docker compatibility gateway (host glibc older than
-    // the openshell-gateway requirement) the daemon inherits the parent's
-    // stdio, so spawnSync on the CLI would block for minutes and trip the
-    // 30s ETIMEDOUT seen in #4064. Spawn detached, hand the daemon its own
-    // file descriptors, and confirm via `openshell forward list` instead
-    // of the CLI's exit code.
-    ({ stdout, stderr }) => {
-      try {
-        const child = spawn(forwardStartArgv[0], forwardStartArgv.slice(1), {
-          stdio: ["ignore", stdout, stderr],
-          detached: true,
-        });
-        child.unref();
-        return { pid: child.pid };
-      } catch (e) {
-        return { error: e instanceof Error ? e : new Error(String(e)) };
-      }
-    },
+    buildDetachedForwardStartSpawn(
+      openshellArgv(["forward", "start", "--background", actualTarget, sandboxName]),
+    ),
     () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
     { port: actualPort, sandboxName },
     () => {
