@@ -10125,7 +10125,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
 module.exports = {
   buildOrphanedSandboxRollbackMessage,
   buildProviderArgs,
-  resumeProviderShimDeps: { isRoutedInferenceProvider, replaceNamedCredential },
   buildGatewayBootstrapSecretsScript,
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
@@ -10258,4 +10257,5 @@ module.exports = {
   checkTelegramReachability,
   TELEGRAM_NETWORK_CURL_CODES,
   verifyCompatibleEndpointSandboxSmoke,
+  resumeProviderShimDeps: { isRoutedInferenceProvider, replaceNamedCredential },
 };
