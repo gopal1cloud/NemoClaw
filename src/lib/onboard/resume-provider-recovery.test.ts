@@ -68,18 +68,21 @@ describe("ensureResumeProviderReady", () => {
     const { deps } = makeDeps({ providerExists: false });
     const result = await ensureResumeProviderReady(null, null, deps);
     expect(result.forceInferenceSetup).toBe(false);
+    expect(result.credentialEnv).toBeNull();
   });
 
   it("returns false-forced when the provider is unknown and not a routed provider", async () => {
     const { deps } = makeDeps({ providerExists: false });
     const result = await ensureResumeProviderReady("mystery-provider", null, deps);
     expect(result.forceInferenceSetup).toBe(false);
+    expect(result.credentialEnv).toBeNull();
   });
 
   it("returns false-forced when the provider still exists in the gateway", async () => {
     const { deps } = makeDeps({ providerExists: true });
     const result = await ensureResumeProviderReady("compatible-endpoint", "COMPATIBLE_API_KEY", deps);
     expect(result.forceInferenceSetup).toBe(false);
+    expect(result.credentialEnv).toBe("COMPATIBLE_API_KEY");
   });
 
   it("emits a [resume] note and forces inference setup when credential is already hydrated", async () => {
@@ -93,8 +96,19 @@ describe("ensureResumeProviderReady", () => {
       recorder.deps,
     );
     expect(result.forceInferenceSetup).toBe(true);
+    expect(result.credentialEnv).toBe("COMPATIBLE_API_KEY");
     expect(recorder.note.join("\n")).toContain("[resume]");
     expect(recorder.replaceCalls).toHaveLength(0);
+  });
+
+  it("returns the config credential env when the resumed session did not record one", async () => {
+    const recorder = makeDeps({
+      providerExists: false,
+      credentialValue: "already-hydrated-key",
+    });
+    const result = await ensureResumeProviderReady("compatible-endpoint", null, recorder.deps);
+    expect(result.forceInferenceSetup).toBe(true);
+    expect(result.credentialEnv).toBe("COMPATIBLE_API_KEY");
   });
 
   it("re-prompts for credentials when the provider was reset and credential is missing (#3278)", async () => {
@@ -108,6 +122,7 @@ describe("ensureResumeProviderReady", () => {
       recorder.deps,
     );
     expect(result.forceInferenceSetup).toBe(true);
+    expect(result.credentialEnv).toBe("COMPATIBLE_API_KEY");
     expect(recorder.replaceCalls).toEqual([
       { env: "COMPATIBLE_API_KEY", label: "Compatible Endpoint API key" },
     ]);

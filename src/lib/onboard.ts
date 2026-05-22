@@ -1502,8 +1502,6 @@ const {
   shouldForceCompletionsApi,
 } = validation;
 
-// validateNvidiaApiKeyValue — see validation import above
-
 async function replaceNamedCredential(
   envName: string,
   label: string,
@@ -9515,7 +9513,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         typeof provider === "string" &&
         typeof model === "string";
       if (resumeProviderSelection) {
-        ({ forceInferenceSetup } = await ensureResumeProviderReady(provider, credentialEnv));
+        ({ forceInferenceSetup, credentialEnv } = await ensureResumeProviderReady(provider, credentialEnv));
         skippedStepMessage("provider_selection", `${provider} / ${model}`);
         hydrateCredentialEnv(credentialEnv);
         repairLocalInferenceSystemdOverrideOrExit(provider, isNonInteractive);
@@ -10181,7 +10179,6 @@ module.exports = {
   recoverGatewayRuntime,
   buildChain,
   buildControlUiUrls,
-
   startGateway,
   findAvailableDashboardPort,
   findDashboardForwardOwner,

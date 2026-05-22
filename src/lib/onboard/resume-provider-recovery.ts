@@ -42,6 +42,11 @@ export type ResumeProviderRecoveryDeps = {
   validateNvidiaApiKeyValue: (key: string, credentialEnv: string) => string | null;
 };
 
+export type ResumeProviderRecoveryResult = {
+  forceInferenceSetup: boolean;
+  credentialEnv: string | null;
+};
+
 /**
  * Resolve a persisted OpenShell provider name back to its onboard provider config.
  */
@@ -74,10 +79,9 @@ export function getResumeProviderCredentialEnv(
  * Ensure a resumed remote provider still exists in the gateway, re-prompting
  * for credentials when needed.
  *
- * Returns `{ forceInferenceSetup: true }` when the caller must re-run the
+ * Returns `forceInferenceSetup: true` when the caller must re-run the
  * inference setup step (provider was missing and credential was hydrated or
- * just re-entered). Returns `{ forceInferenceSetup: false }` when no action
- * is needed.
+ * just re-entered). `credentialEnv` is the env var resolved for that recovery.
  *
  * In non-interactive mode with a missing credential, calls `deps.exit(1)`.
  */
@@ -85,12 +89,14 @@ export async function ensureResumeProviderReady(
   provider: string | null | undefined,
   credentialEnv: string | null | undefined,
   deps: ResumeProviderRecoveryDeps,
-): Promise<{ forceInferenceSetup: boolean }> {
+): Promise<ResumeProviderRecoveryResult> {
   const config = getRemoteProviderConfigForName(provider, deps.remoteProviderConfig);
   if (!provider || (!config && !deps.isRoutedInferenceProvider(provider))) {
-    return { forceInferenceSetup: false };
+    return { forceInferenceSetup: false, credentialEnv: credentialEnv ?? null };
   }
-  if (deps.providerExistsInGateway(provider)) return { forceInferenceSetup: false };
+  if (deps.providerExistsInGateway(provider)) {
+    return { forceInferenceSetup: false, credentialEnv: credentialEnv ?? null };
+  }
 
   const resolvedCredentialEnv = getResumeProviderCredentialEnv(provider, config, credentialEnv, deps);
   const credentialValue = deps.hydrateCredentialEnv(resolvedCredentialEnv);
@@ -105,7 +111,7 @@ export async function ensureResumeProviderReady(
         `  Re-run without --non-interactive to enter it, or set ${resolvedCredentialEnv} and retry.`,
       );
       deps.exit(1);
-      return { forceInferenceSetup: false };
+      return { forceInferenceSetup: false, credentialEnv: resolvedCredentialEnv };
     }
     deps.log("");
     deps.log(`  [resume] Provider '${provider}' is missing from the gateway.`);
@@ -119,5 +125,5 @@ export async function ensureResumeProviderReady(
   } else {
     deps.note(`  [resume] Provider '${provider}' is missing from the gateway; recreating it.`);
   }
-  return { forceInferenceSetup: true };
+  return { forceInferenceSetup: true, credentialEnv: resolvedCredentialEnv };
 }

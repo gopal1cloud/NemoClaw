@@ -12,6 +12,7 @@ import { D, R } from "../cli/terminal-style";
 import {
   ensureResumeProviderReady as ensureResumeProviderReadyImpl,
   type ResumeProviderRecoveryDeps,
+  type ResumeProviderRecoveryResult,
 } from "./resume-provider-recovery";
 
 const onboardProviders = require("./providers") as {
@@ -34,7 +35,7 @@ type OnboardLazy = {
 export async function ensureResumeProviderReady(
   provider: string | null | undefined,
   credentialEnv: string | null | undefined,
-): Promise<{ forceInferenceSetup: boolean }> {
+): Promise<ResumeProviderRecoveryResult> {
   const o = require("../onboard") as OnboardLazy;
   return ensureResumeProviderReadyImpl(provider, credentialEnv, {
     remoteProviderConfig: onboardProviders.REMOTE_PROVIDER_CONFIG,
