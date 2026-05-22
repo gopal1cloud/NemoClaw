@@ -898,6 +898,8 @@ Check the gateway logs and blocked-request output with `openshell term`, and loo
 
 Bot tokens for Telegram (`getUpdates`), Discord (gateway), and Slack (Socket Mode) only allow one active consumer per token. If two NemoClaw sandboxes are configured with the same bot token, each one kicks the other off its polling connection and neither delivers messages. `nemoclaw status` still reports the bridge as running because the gateway process itself is alive.
 
+For Telegram group chats, first check BotFather privacy mode. New Telegram bots default to privacy mode enabled, which prevents group messages from reaching `getUpdates` even when the user mentions the bot. In @BotFather, run `/setprivacy`, choose the bot, and choose **Disable**. Then remove the bot from the affected group and add it back; Telegram applies the privacy-mode change to group delivery only after the bot rejoins.
+
 To diagnose, open a shell in the sandbox and inspect the gateway log:
 
 ```console
