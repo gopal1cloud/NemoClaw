@@ -17,6 +17,7 @@ const {
 }: typeof import("./onboard/branding") = require("./onboard/branding");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
+const { bestEffortForwardStop } = require("./onboard/forward-cleanup");
 const { looksLikeForwardPortConflict, runBackgroundForwardStartWithPortReleaseRetries }: typeof import("./onboard/forward-start") = require("./onboard/forward-start");
 const {
   ensureOllamaLoopbackSystemdOverride,
@@ -35,6 +36,7 @@ const {
 const {
   buildSandboxConfigSyncScript,
   writeSandboxConfigSyncFile,
+  runSandboxConfigSync,
 }: typeof import("./onboard/config-sync") = require("./onboard/config-sync");
 const dockerGpuPatch: typeof import("./onboard/docker-gpu-patch") = require("./onboard/docker-gpu-patch");
 const dockerGpuLocalInference: typeof import("./onboard/docker-gpu-local-inference") = require("./onboard/docker-gpu-local-inference");
@@ -99,6 +101,9 @@ const {
   stopModelRouterProcess,
   stopTrackedModelRouterForAgentChange,
 }: typeof import("./onboard/model-router-process") = require("./onboard/model-router-process");
+const {
+  detectWindowsHostOllama,
+}: typeof import("./onboard/windows-host-ollama") = require("./onboard/windows-host-ollama");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -390,9 +395,9 @@ import { getSuggestedPolicyPresets } from "./onboard/policy-presets";
 import {
   computeSetupPresetSuggestions as computeSetupPresetSuggestionsImpl,
   isStaleBuiltinBravePolicyPreset,
-  setupPoliciesWithSelection as setupPoliciesWithSelectionImpl,
   type SetupPolicySelectionOptions,
   type SetupPresetSuggestionOptions,
+  setupPoliciesWithSelection as setupPoliciesWithSelectionImpl,
 } from "./onboard/policy-selection";
 import {
   getResumeSandboxGpuOverrides,
@@ -400,6 +405,11 @@ import {
   type SandboxGpuConfig,
   type SandboxGpuFlag,
 } from "./onboard/sandbox-gpu-mode";
+import {
+  exitOnSandboxGpuConfigErrors,
+  sandboxGpuRemediationLines,
+  validateSandboxGpuPreflight,
+} from "./onboard/sandbox-gpu-preflight";
 import type { SelectionDrift } from "./onboard/selection-drift";
 import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "./onboard/summary";
 import type {
@@ -623,7 +633,7 @@ function getSandboxReuseState(sandboxName: string | null) {
 function repairRecordedSandbox(sandboxName: string | null): void {
   if (!sandboxName) return;
   note(`  [resume] Cleaning up recorded sandbox '${sandboxName}' before recreating it.`);
-  runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+  bestEffortForwardStop(runOpenshell, DASHBOARD_PORT);
   runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
   registry.removeSandbox(sandboxName);
 }
@@ -1196,35 +1206,6 @@ function resolveSandboxGpuFlagFromOptions(
   if (requestedGpuPassthrough) return "enable";
   if (optedOutGpuPassthrough) return "disable";
   return null;
-}
-
-function sandboxGpuRemediationLines(): string[] {
-  return [
-    "Install/configure NVIDIA Container Toolkit CDI, then restart Docker:",
-    "  sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml",
-    "  sudo systemctl restart docker",
-    "Or force CPU sandbox behavior with NEMOCLAW_SANDBOX_GPU=0.",
-  ];
-}
-
-function validateSandboxGpuPreflight(config: SandboxGpuConfig): void {
-  if (config.errors.length > 0) {
-    console.error("");
-    for (const error of config.errors) console.error(`  ✗ ${error}`);
-    process.exit(1);
-  }
-  if (!config.sandboxGpuEnabled) return;
-  if (process.platform !== "linux") return;
-
-  const cdiSpecDirs = getDockerCdiSpecDirs();
-  const cdiSpecFiles = findReadableNvidiaCdiSpecFiles(cdiSpecDirs);
-  if (cdiSpecFiles.length === 0) {
-    console.error("");
-    console.error("  ✗ Docker CDI GPU support was not detected.");
-    for (const line of sandboxGpuRemediationLines()) console.error(`    ${line}`);
-    process.exit(1);
-  }
-  console.log(`  ✓ Docker CDI GPU support detected (${cdiSpecFiles.join(", ")})`);
 }
 
 // ── Base image resolution ───────────────────────────────────────
@@ -2588,7 +2569,7 @@ function stopLegacyGatewayClusterContainer(): boolean {
 }
 
 function retireLegacyGatewayForDockerDriverUpgrade(): void {
-  runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+  bestEffortForwardStop(runOpenshell, DASHBOARD_PORT);
   stopDockerDriverGatewayProcess();
   const stoppedLegacyContainer = stopLegacyGatewayClusterContainer();
   removeDockerDriverGatewayRegistration();
@@ -2867,7 +2848,7 @@ function getOpenShellDockerSupervisorImage(versionOutput: string | null = null):
   if (shouldUseOpenshellDevChannel() || isOpenshellDevVersion(versionOutput)) {
     return "ghcr.io/nvidia/openshell/supervisor:dev";
   }
-  const supportedVersion = installedVersion ?? getBlueprintMaxOpenshellVersion() ?? "0.0.39";
+  const supportedVersion = installedVersion ?? getBlueprintMaxOpenshellVersion() ?? "0.0.44";
   return `ghcr.io/nvidia/openshell/supervisor:${supportedVersion}`;
 }
 
@@ -3304,8 +3285,16 @@ async function preflight(
   }
   console.log("  ✓ Docker is running");
   require("./onboard/http-proxy-preflight").warnIfHostProxyMissesLoopback();
+  const gpu = nim.detectGpu();
+  const sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
+    flag: resolveSandboxGpuFlagFromOptions(preflightOpts),
+    device: preflightOpts.sandboxGpuDevice ?? null,
+  });
+  exitOnSandboxGpuConfigErrors(sandboxGpuConfig);
   const optedOutGpuPassthrough =
-    preflightOpts.optedOutGpuPassthrough === true || preflightOpts.noGpu === true;
+    preflightOpts.optedOutGpuPassthrough === true ||
+    preflightOpts.noGpu === true ||
+    !sandboxGpuConfig.sandboxGpuEnabled;
   assertCdiNvidiaGpuSpecPresent(host, optedOutGpuPassthrough);
 
   // DNS resolution from inside containers (#2101). A corp firewall that
@@ -3555,7 +3544,7 @@ async function preflight(
     const containerState = verifyGatewayContainerRunning(GATEWAY_NAME);
     if (containerState === "missing") {
       console.log("  Gateway metadata is stale (container not running). Cleaning up...");
-      runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+      bestEffortForwardStop(runOpenshell, DASHBOARD_PORT);
       gatewayReuseState = destroyGatewayForReuse(
         destroyGateway,
         "  ✓ Stale gateway metadata cleaned up",
@@ -3589,7 +3578,7 @@ async function preflight(
       console.log(
         `  Gateway container is running but ${getGatewayLocalEndpoint()}/ is not responding. Recreating...`,
       );
-      runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+      bestEffortForwardStop(runOpenshell, DASHBOARD_PORT);
       gatewayReuseState = destroyGatewayForReuse(
         destroyGateway,
         "  ✓ Stale gateway cleaned up",
@@ -3618,7 +3607,7 @@ async function preflight(
       gatewayReuseState = "missing";
       console.log("  ✓ Previous session cleaned up");
     } else {
-      runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+      bestEffortForwardStop(runOpenshell, DASHBOARD_PORT);
       gatewayReuseState = destroyGatewayForReuse(
         destroyGateway,
         "  ✓ Previous session cleaned up",
@@ -3764,7 +3753,6 @@ async function preflight(
   dockerDriverGatewayEnv.warnIfGatewayWildcardBindAddress();
 
   // GPU
-  const gpu = nim.detectGpu();
   if (gpu && gpu.type === "nvidia") {
     const lines = nim.formatNvidiaGpuPreflightLines(gpu);
     console.log(`  ✓ ${lines[0]}`);
@@ -3783,10 +3771,6 @@ async function preflight(
     console.log("  ⓘ Local NIM unavailable — no GPU detected");
   }
 
-  const sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
-    flag: resolveSandboxGpuFlagFromOptions(preflightOpts),
-    device: preflightOpts.sandboxGpuDevice ?? null,
-  });
   validateSandboxGpuPreflight(sandboxGpuConfig);
   if (sandboxGpuConfig.sandboxGpuEnabled) {
     console.log(
@@ -4117,7 +4101,7 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
   }
   if (!gatewayBin) {
     console.error("  OpenShell Docker-driver gateway binary not found.");
-    console.error("  Install OpenShell v0.0.39, or set NEMOCLAW_OPENSHELL_GATEWAY_BIN.");
+    console.error("  Install OpenShell v0.0.44, or set NEMOCLAW_OPENSHELL_GATEWAY_BIN.");
     if (exitOnFailure) process.exit(1);
     throw new Error("OpenShell gateway binary not found");
   }
@@ -5371,14 +5355,14 @@ async function createSandbox(
   // Pull the base image and resolve its digest so the Dockerfile is pinned to
   // exactly what we just fetched. This prevents stale :latest tags from
   // silently reusing a cached old image after NemoClaw upgrades (#1904).
-  const resolved = pullAndResolveBaseImageDigest({
+  const resolved = agent && !fromDockerfile ? null : pullAndResolveBaseImageDigest({
     requireOpenshellSandboxAbi: isLinuxDockerDriverGatewayEnabled(),
   });
   if (resolved?.digest) {
     console.log(`  Pinning base image to ${resolved.digest.slice(0, 19)}...`);
   } else if (resolved) {
     console.log(`  Using sandbox base image ${resolved.ref}`);
-  } else {
+  } else if (!(agent && !fromDockerfile)) {
     // Check if the image exists locally before falling back to unpinned :latest.
     // On a first-time install behind a firewall with no cached image, warn early
     // so the user knows the build will likely fail.
@@ -6054,7 +6038,7 @@ async function setupNim(
   preferredInferenceApi: string | null;
   nimContainer: string | null;
 }> {
-  step(3, 8, "Configuring inference (NIM)");
+  step(3, 8, "Configuring inference provider");
 
   let model: string | null = null;
   let provider: string = REMOTE_PROVIDER_CONFIG.build.providerName;
@@ -6086,43 +6070,15 @@ async function setupNim(
     docker.dockerCapture(["images", "-q", vllmProfile.image], { ignoreError: true }).trim()
   );
   // Probed even when WSL has its own Ollama: users may prefer the Windows
-  // instance for GPU access and a unified model cache.
-  let hasWindowsOllama = false;
-  if (isWsl()) {
-    const winOllamaPath = runCapture(
-      [
-        "powershell.exe",
-        "-Command",
-        "Get-Command ollama.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source",
-      ],
-      { ignoreError: true },
-    ).trim();
-    hasWindowsOllama = winOllamaPath.length > 0;
-  }
-
-  let winOllamaLoopbackOnly = false;
-  if (isWsl() && hasWindowsOllama) {
-    const winPid = runCapture(
-      [
-        "powershell.exe",
-        "-Command",
-        "Get-Process ollama -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id",
-      ],
-      { ignoreError: true },
-    ).trim();
-    if (winPid) {
-      const listenAddrs = runCapture(
-        [
-          "powershell.exe",
-          "-Command",
-          "Get-NetTCPConnection -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalAddress",
-        ],
-        { ignoreError: true },
-      );
-      winOllamaLoopbackOnly =
-        /127\.0\.0\.1/.test(listenAddrs) && !/0\.0\.0\.0|^::\s*$/m.test(listenAddrs);
-    }
-  }
+  // instance for GPU access and a unified model cache. See
+  // src/lib/onboard/windows-host-ollama.ts for the probe semantics, in
+  // particular the Get-Process fallback for service-style installs
+  // (#3949) and the strict path-recovery requirement before flagging
+  // the install as restartable.
+  const winOllamaState = detectWindowsHostOllama();
+  const hasWindowsOllama = winOllamaState.installed;
+  const winOllamaInstalledPath = winOllamaState.installedPath;
+  const winOllamaLoopbackOnly = winOllamaState.loopbackOnly;
 
   // Independent of findReachableOllamaHost: when WSL Ollama wins the cache
   // on 127.0.0.1, Windows-host may also be running on 0.0.0.0 and we want
@@ -7062,7 +7018,16 @@ async function setupNim(
           }
           console.log(`  ✓ Using Ollama on host.docker.internal:${OLLAMA_PORT}`);
         } else {
-          if (!setupWindowsOllamaWith0000Binding({ announceStop: isRestart })) {
+          // Pass the verified executable path so windows.ts can target
+          // it directly instead of falling back to the calling shell's
+          // Windows PATH — which is the broken case for service-style
+          // installs that #3949 surfaces.
+          if (
+            !setupWindowsOllamaWith0000Binding({
+              announceStop: isRestart,
+              installedPath: winOllamaInstalledPath || undefined,
+            })
+          ) {
             printWindowsOllamaTimeoutDiagnostics();
             if (isNonInteractive()) process.exit(1);
             continue selectionLoop;
@@ -7966,28 +7931,21 @@ async function setupMessagingChannels(
 
 // ── Step 7: OpenClaw ─────────────────────────────────────────────
 
-async function setupOpenclaw(sandboxName: string, model: string, provider: string): Promise<void> {
-  step(7, 8, `Setting up ${agentProductName()} inside sandbox`);
-
-  const selectionConfig = getProviderSelectionConfig(provider, model);
-  if (selectionConfig) {
-    const sandboxConfig = {
-      ...selectionConfig,
-      onboardedAt: new Date().toISOString(),
-    };
-    const script = buildSandboxConfigSyncScript(sandboxConfig);
-    const scriptFile = writeSandboxConfigSyncFile(script);
-    try {
-      const scriptContent = fs.readFileSync(scriptFile, "utf-8");
-      run(openshellArgv(["sandbox", "connect", sandboxName]), {
+function syncNemoClawConfigInSandbox(sandboxName: string, provider: string, model: string): void {
+  runSandboxConfigSync(sandboxName, {
+    getSelectionConfig: () => getProviderSelectionConfig(provider, model),
+    runConnectScript: (name, scriptContent) => {
+      run(openshellArgv(["sandbox", "connect", name]), {
         stdio: ["pipe", "ignore", "inherit"],
         input: scriptContent,
       });
-    } finally {
-      cleanupTempDir(scriptFile, "nemoclaw-sync");
-    }
-  }
+    },
+  });
+}
 
+async function setupOpenclaw(sandboxName: string, model: string, provider: string): Promise<void> {
+  step(7, 8, `Setting up ${agentProductName()} inside sandbox`);
+  syncNemoClawConfigInSandbox(sandboxName, provider, model);
   console.log(`  ✓ ${agentProductName()} gateway launched inside sandbox`);
 }
 
@@ -8561,10 +8519,9 @@ function getRunningForwardPorts(forwardListOutput: string | null | undefined): s
 function stopAllDashboardForwards(): void {
   const forwardList = runCaptureOpenshell(["forward", "list"], { ignoreError: true });
   for (const port of getRunningForwardPorts(forwardList)) {
-    runOpenshell(["forward", "stop", port], { ignoreError: true });
+    bestEffortForwardStop(runOpenshell, port);
   }
 }
-
 
 /**
  * Build the actionable error lines printed when the just-created openshell
@@ -8616,7 +8573,7 @@ function ensureDashboardForward(
     preferredEntry &&
     (preferredEntry.sandboxName === sandboxName || !isLiveForwardStatus(preferredEntry.status))
   ) {
-    runOpenshell(["forward", "stop", String(preferredPort)], { ignoreError: true });
+    bestEffortForwardStop(runOpenshell, preferredPort);
     existingForwards = runCaptureOpenshell(["forward", "list"], { ignoreError: true });
   }
   let actualPort: number;
@@ -8672,7 +8629,7 @@ function ensureDashboardForward(
   const occupied = getOccupiedPorts(existingForwards);
   for (const [port, owner] of occupied.entries()) {
     if (owner === sandboxName && Number(port) !== actualPort) {
-      runOpenshell(["forward", "stop", port], { ignoreError: true });
+      bestEffortForwardStop(runOpenshell, port);
     }
   }
 
@@ -8680,14 +8637,14 @@ function ensureDashboardForward(
   const parsedUrl = new URL(chatUiUrl.includes("://") ? chatUiUrl : `http://${chatUiUrl}`);
   parsedUrl.port = String(actualPort);
   const actualTarget = getDashboardForwardTarget(parsedUrl.toString());
-  runOpenshell(["forward", "stop", String(actualPort)], { ignoreError: true });
+  bestEffortForwardStop(runOpenshell, actualPort);
   const { result: fwdResult, diagnostic: fwdDiagnostic } = runBackgroundForwardStartWithPortReleaseRetries(
     (stdio, timeout) =>
       runOpenshell(
         ["forward", "start", "--background", actualTarget, sandboxName],
         { ignoreError: true, suppressOutput: true, stdio, timeout },
       ),
-    () => { sleep(1); runOpenshell(["forward", "stop", String(actualPort)], { ignoreError: true }); },
+    () => { sleep(1); bestEffortForwardStop(runOpenshell, actualPort); },
   );
   if (fwdResult && fwdResult.status !== 0) {
     const looksLikePortConflict = looksLikeForwardPortConflict(fwdDiagnostic);
@@ -8983,7 +8940,7 @@ function startRecordedStep(
 const ONBOARD_STEP_INDEX: Record<string, { number: number; title: string }> = {
   preflight: { number: 1, title: "Preflight checks" },
   gateway: { number: 2, title: "Starting OpenShell gateway" },
-  provider_selection: { number: 3, title: "Configuring inference (NIM)" },
+  provider_selection: { number: 3, title: "Configuring inference provider" },
   inference: { number: 4, title: "Setting up inference provider" },
   messaging: { number: 5, title: "Messaging channels" },
   sandbox: { number: 6, title: "Creating sandbox" },
@@ -9364,6 +9321,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     if (resumePreflight) {
       skippedStepMessage("preflight", "cached");
       gpu = nim.detectGpu();
+      const resumeSandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
+        flag: effectiveSandboxGpuFlag,
+        device: effectiveSandboxGpuDevice,
+      });
+      exitOnSandboxGpuConfigErrors(resumeSandboxGpuConfig);
       // Re-check the CDI spec gap on resume (#3152). The cached preflight
       // result does not capture host CDI state, and the original onboard
       // attempt that wrote the cache likely aborted at gateway-start with
@@ -9373,14 +9335,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       // does not need to re-pass `--no-gpu` to keep that intent (the same
       // resolution is replayed a few lines below for `gpuPassthrough`).
       const resumeOptedOutGpuPassthrough =
-        opts.noGpu === true || (opts.gpu !== true && session?.gpuPassthrough === false);
+        opts.noGpu === true ||
+        (opts.gpu !== true && session?.gpuPassthrough === false) ||
+        !resumeSandboxGpuConfig.sandboxGpuEnabled;
       assertCdiNvidiaGpuSpecPresent(assessHost(), resumeOptedOutGpuPassthrough);
-      validateSandboxGpuPreflight(
-        resolveSandboxGpuConfig(gpu, {
-          flag: effectiveSandboxGpuFlag,
-          device: effectiveSandboxGpuDevice,
-        }),
-      );
+      validateSandboxGpuPreflight(resumeSandboxGpuConfig);
     } else {
       startRecordedStep("preflight");
       gpu = await preflight({ ...opts, optedOutGpuPassthrough: opts.noGpu === true });
@@ -9438,7 +9397,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       const containerState = verifyGatewayContainerRunning(GATEWAY_NAME);
       if (containerState === "missing") {
         console.log("  Gateway metadata is stale (container not running). Cleaning up...");
-        runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+        bestEffortForwardStop(runOpenshell, DASHBOARD_PORT);
         gatewayReuseState = destroyGatewayForReuse(
           destroyGateway,
           "  ✓ Stale gateway metadata cleaned up",
@@ -9477,7 +9436,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         console.log(
           `  Gateway container is running but ${getGatewayLocalEndpoint()}/ is not responding. Recreating...`,
         );
-        runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+        bestEffortForwardStop(runOpenshell, DASHBOARD_PORT);
         gatewayReuseState = destroyGatewayForReuse(
           destroyGateway,
           "  ✓ Stale gateway cleaned up",
@@ -9504,6 +9463,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       gpuPassthrough,
       gatewayName: GATEWAY_NAME,
       currentSandboxName: recordedSandboxName || requestedSandboxName,
+      hostGpuPlatform: gpu?.platform ?? null,
       recreateSandbox: isRecreateSandbox(),
       confirmedDockerDriverGateway:
         isLinuxDockerDriverGatewayEnabled() &&
@@ -9954,9 +9914,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         runCaptureOpenshell,
         openshellShellCommand,
         openshellBinary: getOpenshellBinary(),
-        buildSandboxConfigSyncScript,
-        writeSandboxConfigSyncFile,
-        cleanupTempDir,
         startRecordedStep,
         skippedStepMessage,
       });
@@ -9966,6 +9923,10 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       const resumeOpenclaw = resume && sandboxName && isOpenclawReady(sandboxName);
       if (resumeOpenclaw) {
         skippedStepMessage("openclaw", sandboxName);
+        // Rebuild leaves /sandbox/.nemoclaw/config.json as Dockerfile's
+        // zero-byte placeholder; re-sync to avoid loadOnboardConfig
+        // SyntaxError. Fixes #3999.
+        syncNemoClawConfigInSandbox(sandboxName, provider, model);
         onboardSession.markStepComplete(
           "openclaw",
           toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
