@@ -713,9 +713,11 @@ function Install-WslDistro {
 function Ensure-UbuntuWsl {
     $wsl = Resolve-WslExe
 
+    $installedDistro = $false
     $distros = Get-WslDistros
     if ($distros -notcontains $DistroName) {
         Install-WslDistro -Name $DistroName
+        $installedDistro = $true
         $distros = Get-WslDistros
         if ($distros -notcontains $DistroName) {
             Write-WslUbuntuRequiredNotice -Name $DistroName
@@ -723,7 +725,11 @@ function Ensure-UbuntuWsl {
         }
     }
 
-    Write-Status "WSL distro already registered: $DistroName"
+    if ($installedDistro) {
+        Write-Status "WSL distro registered: $DistroName"
+    } else {
+        Write-Status "WSL distro already registered: $DistroName"
+    }
 
     Ensure-WslDistroVersion2 -Name $DistroName
 
@@ -891,4 +897,6 @@ function Invoke-Main {
     Write-InstallerHandoff
 }
 
-Invoke-Main
+if ($env:NEMOCLAW_BOOTSTRAP_WINDOWS_SOURCE_ONLY -ne '1') {
+    Invoke-Main
+}
