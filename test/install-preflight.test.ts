@@ -95,7 +95,7 @@ function writeNpmStub(fakeBin: string, installSnippet: string = "exit 0") {
 set -euo pipefail
 if [ "$1" = "--version" ]; then echo "10.9.2"; exit 0; fi
 if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then echo "$NPM_PREFIX"; exit 0; fi
-if [ "$1" = "install" ] || [ "$1" = "link" ] || [ "$1" = "uninstall" ] || [ "$1" = "pack" ] || [ "$1" = "run" ]; then
+if [ "$1" = "ci" ] || [ "$1" = "install" ] || [ "$1" = "link" ] || [ "$1" = "uninstall" ] || [ "$1" = "pack" ] || [ "$1" = "run" ]; then
   ${installSnippet}
 fi
 echo "unexpected npm invocation: $*" >&2; exit 98`,
@@ -552,7 +552,7 @@ exit 98
     expect(output).not.toMatch(/0\.1\.0/);
   });
 
-  it("uses npm install + npm link for a source checkout (no -g)", { timeout: 20000 }, () => {
+  it("uses npm ci + npm link for a source checkout (no -g)", { timeout: 20000 }, () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-source-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
@@ -594,8 +594,16 @@ if [ "$1" = "pack" ]; then
   tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
   exit 0
 fi
+if [ "$1" = "ci" ]; then rm -rf node_modules; exit 0; fi
 if [ "$1" = "install" ]; then exit 0; fi
-if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" = "--if-present" ]; }; then exit 0; fi
+if [ "$1" = "run" ] && [ "$2" = "--if-present" ] && [ "$3" = "build:cli" ]; then
+  test -d node_modules/openclaw || { echo "missing root openclaw before build:cli" >&2; exit 70; }
+  exit 0
+fi
+if [ "$1" = "run" ] && [ "$2" = "build" ]; then
+  test -d ../node_modules/openclaw || { echo "missing root openclaw before plugin build" >&2; exit 71; }
+  exit 0
+fi
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
@@ -619,6 +627,9 @@ fi`,
       path.join(tmp, "nemoclaw", "package.json"),
       JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
     );
+    fs.mkdirSync(path.join(tmp, "bin", "lib"), { recursive: true });
+    fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.js"), "process.exit(0);\n");
+    fs.writeFileSync(path.join(tmp, "Dockerfile.base"), "ARG OPENCLAW_VERSION=2026.3.11\n");
     fs.mkdirSync(path.join(tmp, "nemoclaw-blueprint", "router", "llm-router"), {
       recursive: true,
     });
@@ -637,6 +648,7 @@ fi`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         NPM_PREFIX: prefix,
+        NEMOCLAW_REPO_ROOT: tmp,
         NPM_LOG_PATH: npmLog,
         PYTHON_LOG_PATH: pythonLog,
         GIT_LOG_PATH: gitLog,
@@ -645,8 +657,19 @@ fi`,
 
     expect(result.status).toBe(0);
     const log = fs.readFileSync(npmLog, "utf-8");
-    // install (no -g) and link must both have been called
-    expect(log).toMatch(/^install(?!\s+-g)/m);
+    // Root and sandbox payload installs must use npm ci so host installs do not rewrite lockfiles.
+    const npmCalls = log.trim().split("\n");
+    const ciIndexes = npmCalls.flatMap((line, index) => (line === "ci --ignore-scripts" ? [index] : []));
+    const packIndexes = npmCalls.flatMap((line, index) =>
+      line.startsWith("pack openclaw@2026.3.11 --pack-destination ") ? [index] : [],
+    );
+    expect(ciIndexes).toHaveLength(2);
+    expect(packIndexes).toHaveLength(2);
+    expect(ciIndexes[0] ?? -1).toBeLessThan(packIndexes[0] ?? -1);
+    expect(ciIndexes[1] ?? -1).toBeLessThan(packIndexes[1] ?? -1);
+    expect(packIndexes[0] ?? -1).toBeLessThan(npmCalls.indexOf("run --if-present build:cli"));
+    expect(packIndexes[1] ?? -1).toBeLessThan(npmCalls.indexOf("run build"));
+    expect(log).not.toMatch(/^install(?!\s+-g)/m);
     expect(log).toMatch(/^link/m);
     // the GitHub URL must NOT appear — this is a local install
     expect(log).not.toMatch(new RegExp(GITHUB_INSTALL_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
