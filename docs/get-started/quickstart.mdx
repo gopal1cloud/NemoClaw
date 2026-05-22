@@ -17,6 +17,18 @@ Follow these steps to get started with NemoClaw and your first sandboxed OpenCla
 Make sure you have completed reviewing the [Prerequisites](/get-started/prerequisites) before following this guide.
 </Note>
 
+## Windows PowerShell Users
+
+On Windows, run the [Windows bootstrap](/get-started/windows-preparation) from PowerShell before the Linux installer.
+Do not run `curl.exe -fsSL https://www.nvidia.com/nemoclaw.sh | bash` directly in PowerShell.
+If WSL is enabled but no Linux distro is registered, Windows `bash.exe` exits before NemoClaw can run or print guidance.
+
+```powershell
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/scripts/bootstrap-windows.ps1' -OutFile "$env:TEMP\bootstrap-windows.ps1"; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\bootstrap-windows.ps1"
+```
+
+The bootstrap enables WSL 2 when needed, installs or opens Ubuntu, prepares Docker Desktop, and then prints the standard installer command to run inside Ubuntu.
+
 ## Install NemoClaw and Onboard OpenClaw Agent
 
 Download and run the installer script.

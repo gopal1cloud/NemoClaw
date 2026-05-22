@@ -32,6 +32,9 @@ Open Windows PowerShell on the Windows host and run the bootstrap script:
 $ Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/scripts/bootstrap-windows.ps1' -OutFile "$env:TEMP\bootstrap-windows.ps1"; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\bootstrap-windows.ps1"
 ```
 
+Use this PowerShell command instead of running the Linux `curl | bash` installer from PowerShell.
+On a fresh Windows machine with WSL enabled but no registered Linux distro, Windows `bash.exe` exits before the NemoClaw installer can run or print guidance.
+
 The command downloads the script to a temporary file before running it.
 `-ExecutionPolicy Bypass` applies only to that PowerShell process and avoids local policy blocking the downloaded script.
 Run it from Windows, not from inside WSL.
@@ -76,6 +79,8 @@ After reboot, open an elevated PowerShell again:
 ```console
 $ wsl --install -d Ubuntu
 ```
+
+If your Windows image requires the explicit Ubuntu 24.04 package, use `wsl --install -d Ubuntu-24.04` instead, or pass `-DistroName Ubuntu-24.04` to the bootstrap script.
 
 Let the distribution launch and complete first-run setup (pick a Unix username and password), then type `exit` to return to PowerShell.
 

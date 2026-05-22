@@ -12,6 +12,12 @@
 
         curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
+    This is the Windows host entry point. Do not run
+    curl.exe -fsSL https://www.nvidia.com/nemoclaw.sh | bash directly in
+    Windows PowerShell. On a fresh machine with WSL enabled but no registered
+    Linux distro, Windows bash.exe exits before NemoClaw's Linux installer can
+    run or print guidance.
+
     This script intentionally does not duplicate the full Windows installer.
     It leaves Node.js, NemoClaw CLI installation, Ollama/provider setup, and
     onboarding to scripts/install.sh and nemoclaw onboard.
@@ -659,7 +665,8 @@ function Ensure-UbuntuWsl {
 
     $distros = Get-WslDistros
     if ($distros -notcontains $DistroName) {
-        Write-Status "$DistroName is not registered yet. It will be installed during the final Ubuntu handoff."
+        Write-Status "$DistroName is not registered yet. The bootstrap will install it during the final Ubuntu handoff."
+        Write-Status "Do not run the Linux curl|bash installer from Windows PowerShell before first-run setup completes; Windows bash.exe will exit before NemoClaw can run."
         $script:InstallDistroAtHandoff = $true
         return
     }
@@ -815,7 +822,7 @@ function Write-InstallerHandoff {
     Write-Host 'Windows preparation is complete.' -ForegroundColor Green
     Write-Host ''
     if ($script:InstallDistroAtHandoff) {
-        Write-Host "Ubuntu will install and launch now. After first-run setup completes, run this command inside Ubuntu to install NemoClaw:" -ForegroundColor Cyan
+        Write-Host "Ubuntu will install and launch now. Complete first-run setup, then run this command inside Ubuntu to install NemoClaw:" -ForegroundColor Cyan
     } else {
         Write-Host "An Ubuntu window is opening. Run this command inside Ubuntu to install NemoClaw:" -ForegroundColor Cyan
     }

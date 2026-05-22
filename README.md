@@ -89,6 +89,18 @@ The script installs Node.js if it is not already present, then runs the guided o
 > It installs Node.js via nvm and NemoClaw via npm, both into user-local directories.
 > Docker must be installed and running before you run the installer. Installing Docker may require elevated privileges on Linux.
 
+#### Windows PowerShell
+
+On Windows, run the Windows bootstrap from PowerShell before the Linux installer.
+Do not run `curl.exe -fsSL https://www.nvidia.com/nemoclaw.sh | bash` directly in PowerShell.
+If WSL is enabled but no Linux distro is registered, Windows `bash.exe` exits before NemoClaw can run or print guidance.
+
+```powershell
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/scripts/bootstrap-windows.ps1' -OutFile "$env:TEMP\bootstrap-windows.ps1"; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\bootstrap-windows.ps1"
+```
+
+The bootstrap enables WSL 2 when needed, installs or opens Ubuntu, prepares Docker Desktop, and then prints the standard installer command to run inside Ubuntu.
+
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
