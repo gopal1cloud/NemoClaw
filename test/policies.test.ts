@@ -74,6 +74,7 @@ policies.listPresets = () => [
 policies.getAppliedPresets = () => [];
 policies.applyPreset = (sandboxName, presetName) => {
   calls.push({ type: "apply", sandboxName, presetName });
+  return true;
 };
 process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-add", ...${JSON.stringify(extraArgs)}];
 Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
