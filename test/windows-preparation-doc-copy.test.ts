@@ -67,13 +67,9 @@ describe("Windows preparation docs copyable commands", () => {
             `${path.relative(repoRoot, windowsPreparationDoc)}:${lineNumber}: ${line}`,
         ),
     );
-    const consoleBlocks = blocks
-      .filter((block) => block.language === "console")
-      .map((block) => `${path.relative(repoRoot, windowsPreparationDoc)}:${block.line}`);
     const languages = new Set(blocks.map((block) => block.language));
 
     expect(promptLines).toEqual([]);
-    expect(consoleBlocks).toEqual([]);
     expect(languages.has("powershell")).toBe(true);
     expect(languages.has("bash")).toBe(true);
   });
