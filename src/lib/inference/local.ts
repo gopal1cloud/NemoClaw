@@ -19,7 +19,11 @@ const { shellQuote, runCapture, runCaptureEx } = require("../runner");
 
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
-import { fittableOllamaModelTags } from "./ollama-model-registry";
+import {
+  fittableOllamaModelTags,
+  largestFittableOllamaModelTag,
+  modelFitsAvailableMemory,
+} from "./ollama-model-registry";
 
 const { containerCanReachHostLoopback, inferContainerRuntime, isWsl } = require("../platform");
 const { dockerInfo } = require("../adapters/docker/info");
@@ -131,7 +135,7 @@ export interface GpuInfo {
   // Used by the bootstrap-model selector so an idle 128 GiB Spark and a
   // 128 GiB Spark with another GPU workload eating 116 GiB do not get the
   // same model recommendation. Absent => the selector falls back to
-  // `totalMemoryMB`, preserving the pre-#4113 behaviour.
+  // `totalMemoryMB`, preserving the previous behaviour.
   availableMemoryMB?: number;
 }
 
@@ -744,11 +748,39 @@ export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
 
 export function getBootstrapOllamaModelOptions(gpu: GpuInfo | null): string[] {
   // Delegate to the registry so the menu reflects what the host can
-  // actually load right now (#4113). Only confirmed-NVIDIA and
-  // Apple-Silicon devices get larger options; ambiguous types fall back to
-  // the smallest model so we never download a 22 GB model onto a host
-  // whose acceleration is unconfirmed (#3510).
+  // actually load right now. Only confirmed-NVIDIA and Apple-Silicon
+  // devices get larger options; ambiguous types fall back to the smallest
+  // model so a partial detection cannot promote a host to a 22 GB model
+  // (see #3510 for the historical context behind the device-type guard).
   return fittableOllamaModelTags(gpu);
+}
+
+/**
+ * Resolve the non-interactive Ollama model selection. When the caller has
+ * passed an explicit `NEMOCLAW_MODEL` / recovered-session model that the
+ * registry knows is too big for the host's currently available memory,
+ * log a warning and fall back to the largest fittable registry entry so
+ * onboarding does not pull a model the runner will crash on. Unknown
+ * model tags (user-supplied values the registry has never seen) are
+ * respected as-is — the runner's own validation surfaces the failure if
+ * the choice was wrong.
+ */
+export function resolveNonInteractiveOllamaModel(
+  requestedModel: string | null,
+  recoveredModel: string | null,
+  gpu: GpuInfo | null,
+  log: (message: string) => void = (m) => console.warn(m),
+): string {
+  const explicit = requestedModel || recoveredModel;
+  if (explicit && !modelFitsAvailableMemory(explicit, gpu)) {
+    const fallback = largestFittableOllamaModelTag(gpu);
+    log(
+      `  ! Requested Ollama model '${explicit}' is unlikely to fit currently available GPU memory; ` +
+        `falling back to '${fallback}'. Override by freeing memory and re-running, or unset NEMOCLAW_MODEL.`,
+    );
+    return fallback;
+  }
+  return explicit || getDefaultOllamaModel(gpu);
 }
 
 export function getDefaultOllamaModel(
@@ -758,12 +790,22 @@ export function getDefaultOllamaModel(
   const models = getOllamaModelOptions(runCaptureImpl);
   if (models.length === 0) {
     // No installed models — pick the largest registry entry that fits the
-    // host's currently available memory (the last element of the
-    // smallest-first list returned by fittableOllamaModelTags).
-    const fittable = fittableOllamaModelTags(gpu);
-    return fittable[fittable.length - 1];
+    // host's currently available memory.
+    return largestFittableOllamaModelTag(gpu);
   }
-  return models.includes(DEFAULT_OLLAMA_MODEL) ? DEFAULT_OLLAMA_MODEL : models[0];
+  // Filter the installed list to entries we either don't know (unmanaged
+  // user pulls — let the runner validate) or that fit the registry's
+  // memory requirement at probe time. If everything has been filtered out,
+  // fall back to the largest registry entry that fits so the wizard never
+  // suggests a model the host can't load.
+  const fittingInstalled = models.filter((tag) => modelFitsAvailableMemory(tag, gpu));
+  const pool = fittingInstalled.length > 0 ? fittingInstalled : null;
+  if (pool === null) {
+    return largestFittableOllamaModelTag(gpu);
+  }
+  return pool.includes(DEFAULT_OLLAMA_MODEL) && modelFitsAvailableMemory(DEFAULT_OLLAMA_MODEL, gpu)
+    ? DEFAULT_OLLAMA_MODEL
+    : pool[0];
 }
 
 export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string[] {

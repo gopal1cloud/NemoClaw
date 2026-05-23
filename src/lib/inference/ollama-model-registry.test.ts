@@ -7,6 +7,9 @@ import {
   effectiveGpuMemoryMB,
   findOllamaModelEntry,
   fittableOllamaModelTags,
+  largestFittableOllamaModelTag,
+  modelFitsAvailableMemory,
+  OLLAMA_DOWNLOAD_SIZE_FALLBACK_BYTES,
   OLLAMA_MODEL_REGISTRY,
   SMALLEST_OLLAMA_MODEL_TAG,
 } from "../../../dist/lib/inference/ollama-model-registry";
@@ -85,10 +88,10 @@ describe("fittableOllamaModelTags", () => {
     }
   });
 
-  it("falls back to the smallest tag when nothing in the registry fits available memory (#4113)", () => {
-    // DGX Spark host with another GPU workload eating the system pool:
-    // 128 GiB total, ~12 GiB currently available. Nothing in the registry
-    // requires <= 12 GiB except the smallest model.
+  it("falls back to the smallest tag when nothing in the registry fits available memory", () => {
+    // Unified-memory host with another GPU workload eating the system
+    // pool: 128 GiB total, ~12 GiB currently available. Nothing in the
+    // registry requires <= 12 GiB except the smallest model.
     expect(
       fittableOllamaModelTags({
         type: "nvidia",
@@ -103,8 +106,73 @@ describe("fittableOllamaModelTags", () => {
       fittableOllamaModelTags({ type: "nvidia", totalMemoryMB: 131_072 }).length,
     ).toBe(OLLAMA_MODEL_REGISTRY.length);
   });
+});
 
-  it("treats apple silicon the same as nvidia for fittability", () => {
+describe("modelFitsAvailableMemory", () => {
+  it("returns true for unknown tags so user-supplied model names are respected", () => {
+    expect(
+      modelFitsAvailableMemory("definitely-not-a-real-model:99b", {
+        type: "nvidia",
+        totalMemoryMB: 16_384,
+        availableMemoryMB: 4_000,
+      }),
+    ).toBe(true);
+  });
+
+  it("returns true when GPU memory is unknown so capacity gating does not fire blind", () => {
+    expect(modelFitsAvailableMemory(OLLAMA_MODEL_REGISTRY[0].tag, null)).toBe(true);
+  });
+
+  it("returns false when a known model exceeds the host's currently available memory", () => {
+    expect(
+      modelFitsAvailableMemory("qwen3.6:35b", {
+        type: "nvidia",
+        totalMemoryMB: 131_072,
+        availableMemoryMB: 12_000,
+      }),
+    ).toBe(false);
+  });
+
+  it("returns true when a known model fits", () => {
+    expect(
+      modelFitsAvailableMemory("qwen2.5:7b", {
+        type: "nvidia",
+        totalMemoryMB: 131_072,
+        availableMemoryMB: 12_000,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("OLLAMA_DOWNLOAD_SIZE_FALLBACK_BYTES", () => {
+  it("mirrors the registry's downloadSizeBytes for every entry", () => {
+    for (const entry of OLLAMA_MODEL_REGISTRY) {
+      expect(OLLAMA_DOWNLOAD_SIZE_FALLBACK_BYTES[entry.tag]).toBe(entry.downloadSizeBytes);
+    }
+  });
+
+  it("exposes the largest fittable tag via largestFittableOllamaModelTag", () => {
+    expect(
+      largestFittableOllamaModelTag({
+        type: "nvidia",
+        totalMemoryMB: 131_072,
+        availableMemoryMB: 12_000,
+      }),
+    ).toBe(SMALLEST_OLLAMA_MODEL_TAG);
+    const allFit = largestFittableOllamaModelTag({
+      type: "nvidia",
+      totalMemoryMB: 131_072,
+      availableMemoryMB: 131_072,
+    });
+    expect(allFit).toBe(OLLAMA_MODEL_REGISTRY[0].tag);
+  });
+
+  it("treats apple silicon the same as nvidia when availableMemoryMB is supplied", () => {
+    // The registry filter is identical across confirmed types — given the
+    // same availableMemoryMB it returns the same set of fittable tags. The
+    // macOS detection path does not currently populate availableMemoryMB
+    // (no vm_stat probe yet), so in practice an apple host falls through to
+    // the totalMemoryMB-only behaviour.
     expect(
       fittableOllamaModelTags({ type: "apple", totalMemoryMB: 131_072, availableMemoryMB: 12_000 }),
     ).toEqual([SMALLEST_OLLAMA_MODEL_TAG]);

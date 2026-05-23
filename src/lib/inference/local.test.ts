@@ -579,11 +579,11 @@ describe("local inference helpers", () => {
     ).toBe(QWEN3_6_OLLAMA_MODEL);
   });
 
-  it("downgrades the bootstrap menu when currently available memory is low (#4113)", () => {
-    // DGX Spark with another GPU workload eating the system pool: 128 GiB
-    // total, ~12 GiB currently free. The 23 GiB qwen3.6:35b model would
-    // crash the runner mid-load, so the bootstrap menu must only offer the
-    // small model.
+  it("downgrades the bootstrap menu when currently available memory is low", () => {
+    // Unified-memory host (e.g. DGX Spark) with another GPU workload eating
+    // the system pool: 128 GiB total, ~12 GiB currently free. The 23 GiB
+    // qwen3.6:35b model would crash the runner mid-load, so the bootstrap
+    // menu must only offer the small model.
     expect(
       getBootstrapOllamaModelOptions({
         type: "nvidia",
@@ -597,6 +597,58 @@ describe("local inference helpers", () => {
         () => "",
       ),
     ).toBe("qwen2.5:7b");
+  });
+
+  it("filters installed-model selection by memory fit", async () => {
+    const { getDefaultOllamaModel: gdom } = await import("../../../dist/lib/inference/local");
+    // Even though nemotron-3-nano:30b is installed, it does not fit a host
+    // with only 12 GiB available — the selector must downgrade to a fitting
+    // installed model rather than blindly returning DEFAULT_OLLAMA_MODEL.
+    const installed = () => "qwen2.5:7b  abc  4 GB  now\nnemotron-3-nano:30b  def  19 GB  now";
+    expect(
+      gdom({ type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 12_000 }, installed),
+    ).toBe("qwen2.5:7b");
+  });
+
+  it("resolveNonInteractiveOllamaModel respects unknown tags and downgrades known oversize ones", async () => {
+    const { resolveNonInteractiveOllamaModel } = await import(
+      "../../../dist/lib/inference/local"
+    );
+    const messages: string[] = [];
+    const log = (m: string) => messages.push(m);
+
+    // Known model that does not fit → fallback + warning.
+    expect(
+      resolveNonInteractiveOllamaModel(
+        "qwen3.6:35b",
+        null,
+        { type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 12_000 },
+        log,
+      ),
+    ).toBe("qwen2.5:7b");
+    expect(messages.some((m) => m.includes("qwen3.6:35b"))).toBe(true);
+
+    // Unknown tag → respected as-is.
+    messages.length = 0;
+    expect(
+      resolveNonInteractiveOllamaModel(
+        "some-custom:model",
+        null,
+        { type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 12_000 },
+        log,
+      ),
+    ).toBe("some-custom:model");
+    expect(messages).toEqual([]);
+
+    // No explicit choice → falls through to getDefaultOllamaModel.
+    expect(
+      resolveNonInteractiveOllamaModel(
+        null,
+        null,
+        { type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 131_072 },
+        log,
+      ),
+    ).toBe(QWEN3_6_OLLAMA_MODEL);
   });
 
   it("offers the large Ollama model on Apple Silicon with sufficient unified memory", () => {

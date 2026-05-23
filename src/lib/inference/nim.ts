@@ -77,10 +77,11 @@ export interface GpuDetection {
   count: number;
   totalMemoryMB: number;
   // Currently free GPU memory at probe time. NVIDIA: summed from
-  // `nvidia-smi memory.free`. Unified-memory (Spark/Jetson) and macOS:
-  // approximated from host `MemAvailable` / `vm_stat` since GPU memory is
-  // the system pool. Absent when no probe was able to produce a usable
-  // figure; downstream callers fall back to `totalMemoryMB` (#4113).
+  // `nvidia-smi memory.free`. Unified-memory (Spark/Jetson): approximated
+  // from host `MemAvailable` since GPU memory is the system pool. Absent
+  // when no probe was able to produce a usable figure (notably macOS,
+  // which currently only reports total memory); downstream callers fall
+  // back to `totalMemoryMB`.
   availableMemoryMB?: number;
   perGpuMB: number;
   cores?: number | null;
@@ -189,9 +190,9 @@ function readHostMemoryMB(): number {
 // `free -m` columns: total used free shared buff/cache available.
 // "available" (column 6) is the kernel's estimate of memory that can be
 // reclaimed without swapping — the right signal for "is there room for a
-// 22 GB Ollama load right now?" on unified-memory hosts (#4113). Returns 0
-// when the column cannot be parsed; the caller treats 0 as "unknown" and
-// falls back to total memory.
+// 22 GB Ollama load right now?" on unified-memory hosts. Returns 0 when
+// the column cannot be parsed; the caller treats 0 as "unknown" and falls
+// back to total memory.
 function readHostAvailableMemoryMB(): number {
   try {
     const freeOut = runCapture(["free", "-m"], { ignoreError: true });
@@ -310,7 +311,7 @@ export function detectGpu(): GpuDetection | null {
   // Try NVIDIA first — query name, total, and free VRAM in a single call so
   // the preflight line can show the GPU model alongside the memory size and
   // the bootstrap-model selector can pick a model that fits currently
-  // available memory (#4113), not just the headline total.
+  // available memory, not just the headline total.
   try {
     const output = runCapture(
       [
@@ -438,7 +439,7 @@ export function detectGpu(): GpuDetection | null {
       // Approximation, but the only number nvidia-smi gives us in this path.
       // `availableMemoryMB` mirrors that approximation using MemAvailable so
       // the bootstrap-model selector reacts to concurrent GPU workloads
-      // eating into the shared system pool (#4113).
+      // eating into the shared system pool.
       const availableMemoryMB = readHostAvailableMemoryMB();
       return {
         type: "nvidia",

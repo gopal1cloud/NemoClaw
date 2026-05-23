@@ -4,20 +4,23 @@
 /**
  * Memory-aware Ollama bootstrap-model registry.
  *
- * Bootstrap model selection cannot rely on `totalMemoryMB` alone — on
- * unified-memory devices (DGX Spark, Apple Silicon) total VRAM equals total
- * system memory and another GPU workload can eat most of it before
- * onboarding starts. Issue #4113: a Spark host with 128 GiB total reported
- * only 12 GiB free, but the bootstrap path picked the 23 GiB
- * `qwen3.6:35b` model and the runner crashed during load.
+ * Central metadata for the bootstrap-model list. Every onboard path that
+ * cares about a known Ollama model — the menu, the non-interactive
+ * default, the requested-model capacity guard, and the download-size
+ * fallback table — reads from this single source so model facts are not
+ * duplicated across the codebase.
  *
- * Each entry names a model and the GPU memory footprint we expect it to
- * need at load time (set slightly above the raw on-disk size so we account
- * for KV cache + context overhead — Ollama itself adds about 10–20 % at
- * default context length). New models go here, in descending size order;
- * the selector keeps every entry whose `requiredMemoryMB` fits the host's
- * currently available memory and falls back to the smallest model when
- * nothing else fits.
+ * Each entry pairs a tag with:
+ *
+ * - `requiredMemoryMB`: the GPU memory the runner needs to load the model
+ *   at default context, set slightly above the on-disk weight size to
+ *   leave headroom for the KV cache + context tokens.
+ * - `downloadSizeBytes`: the approximate compressed tarball size, used as
+ *   a fallback when the live Ollama registry manifest probe fails.
+ *
+ * New models go here, in descending size order; the selector walks the
+ * list top-down and keeps every entry whose `requiredMemoryMB` fits the
+ * host's currently available memory.
  */
 
 import type { GpuInfo } from "./local";
@@ -25,15 +28,15 @@ import type { GpuInfo } from "./local";
 export interface OllamaModelEntry {
   tag: string;
   requiredMemoryMB: number;
+  downloadSizeBytes: number;
 }
 
 // Largest first. The selector walks this list, filters by available memory,
-// and reverses the result so menus render smallest-first (matching the
-// pre-registry ordering callers and existing tests expect).
+// and reverses the result so menus render smallest-first.
 export const OLLAMA_MODEL_REGISTRY: readonly OllamaModelEntry[] = [
-  { tag: "qwen3.6:35b", requiredMemoryMB: 26_000 },
-  { tag: "nemotron-3-nano:30b", requiredMemoryMB: 22_000 },
-  { tag: "qwen2.5:7b", requiredMemoryMB: 6_500 },
+  { tag: "qwen3.6:35b", requiredMemoryMB: 26_000, downloadSizeBytes: 24_000_000_000 },
+  { tag: "nemotron-3-nano:30b", requiredMemoryMB: 22_000, downloadSizeBytes: 19_000_000_000 },
+  { tag: "qwen2.5:7b", requiredMemoryMB: 8_000, downloadSizeBytes: 4_683_073_184 },
 ];
 
 export const SMALLEST_OLLAMA_MODEL_TAG =
@@ -47,9 +50,9 @@ export function findOllamaModelEntry(tag: string): OllamaModelEntry | null {
  * Effective GPU memory for capacity decisions: prefer the currently
  * available figure (from `nvidia-smi memory.free` or `MemAvailable`) and
  * fall back to total when the host could not produce a usable free-memory
- * reading. Total is a worse signal — it ignores the concurrent workload
- * footprint that motivated #4113 — but it preserves the pre-registry
- * behaviour on hosts where `availableMemoryMB` is missing.
+ * reading. Total is a worse signal — it ignores concurrent workload
+ * footprints — but keeps the pre-registry behaviour on hosts where
+ * `availableMemoryMB` is missing.
  */
 export function effectiveGpuMemoryMB(gpu: GpuInfo | null): number | null {
   if (!gpu) return null;
@@ -63,12 +66,30 @@ export function effectiveGpuMemoryMB(gpu: GpuInfo | null): number | null {
 }
 
 /**
+ * `true` when the registered tag fits the host's currently available
+ * memory. Unknown tags (e.g. user-supplied `NEMOCLAW_MODEL` values that
+ * the registry has never seen) and unknown memory both return `true` so
+ * the caller does not refuse to proceed when we have nothing to compare
+ * against — the runner's own validation is the final authority in that
+ * case.
+ */
+export function modelFitsAvailableMemory(tag: string, gpu: GpuInfo | null): boolean {
+  const entry = findOllamaModelEntry(tag);
+  if (!entry) return true;
+  const memory = effectiveGpuMemoryMB(gpu);
+  if (memory == null) return true;
+  return entry.requiredMemoryMB <= memory;
+}
+
+/**
  * Bootstrap model tags the host can plausibly load right now. Always
- * includes `SMALLEST_OLLAMA_MODEL_TAG` so the menu has at least one fallback
- * even when capacity probing returns nothing useful.
+ * includes `SMALLEST_OLLAMA_MODEL_TAG` so the menu has at least one
+ * fallback even when capacity probing returns nothing useful.
  *
  * Output is smallest-first so menu indices stay stable as registry entries
- * are added.
+ * are added. Only confirmed-NVIDIA and Apple-Silicon devices are eligible
+ * for larger entries; ambiguous device types fall back to the smallest
+ * model so a partial detection does not promote a host to a 22 GB model.
  */
 export function fittableOllamaModelTags(gpu: GpuInfo | null): string[] {
   const fallback = [SMALLEST_OLLAMA_MODEL_TAG];
@@ -83,3 +104,24 @@ export function fittableOllamaModelTags(gpu: GpuInfo | null): string[] {
   if (fitting.length === 0) return fallback;
   return [SMALLEST_OLLAMA_MODEL_TAG, ...fitting.map((entry) => entry.tag).reverse()];
 }
+
+/**
+ * Largest tag in the smallest-first `fittableOllamaModelTags` output. Used
+ * by callers that want a single recommended default rather than the
+ * whole menu.
+ */
+export function largestFittableOllamaModelTag(gpu: GpuInfo | null): string {
+  const tags = fittableOllamaModelTags(gpu);
+  return tags[tags.length - 1];
+}
+
+/**
+ * Registry-derived download-size fallback table. Used by `model-size.ts`
+ * when the live `https://registry.ollama.ai` manifest probe fails.
+ */
+export const OLLAMA_DOWNLOAD_SIZE_FALLBACK_BYTES: Readonly<Record<string, number>> =
+  Object.freeze(
+    Object.fromEntries(
+      OLLAMA_MODEL_REGISTRY.map((entry) => [entry.tag, entry.downloadSizeBytes]),
+    ),
+  );

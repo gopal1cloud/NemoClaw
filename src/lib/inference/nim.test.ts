@@ -199,7 +199,7 @@ describe("nim", () => {
       // Primary path returns name+memory.total+memory.free in a single CSV
       // line per GPU. Regression guard for #2669: the GB300 preflight line
       // was missing the GPU model because only memory.total was being
-      // queried. memory.free was added in #4113 so the bootstrap-model
+      // queried. memory.free is also captured so the bootstrap-model
       // selector can size against currently free memory, not just total.
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
