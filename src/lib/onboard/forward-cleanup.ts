@@ -64,10 +64,14 @@ export function bestEffortForwardStopForSandbox(
   port: string | number,
   sandboxName: string,
 ): "stopped" | "owned-other" | "no-entry" | "list-failed" {
+  // Let runCaptureOpenshell throw on failure/timeout so the catch branch
+  // returns "list-failed". With ignoreError: true the runner would swallow
+  // the error and return "", which getOccupiedPorts parses as an empty map
+  // and the "no-entry" branch below would still run the stop — exactly the
+  // collateral-damage case this helper exists to avoid.
   let listOutput = "";
   try {
     listOutput = runCaptureOpenshell(["forward", "list"], {
-      ignoreError: true,
       timeout: OPENSHELL_PROBE_TIMEOUT_MS,
     });
   } catch {

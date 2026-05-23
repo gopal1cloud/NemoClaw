@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -250,10 +252,9 @@ describe("runDetachedForwardStartWithDiagnostics", () => {
   it("SIGTERMs the detached child on a port-conflict diagnostic", () => {
     // Spawn writes an EADDRINUSE line to the stderr file descriptor so the
     // first poll iteration reads it back and trips the conflict branch.
-    const realFs = require("node:fs");
     const fetchList = vi.fn().mockReturnValue("");
     const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
-      realFs.writeSync(stderr, "listen tcp 0.0.0.0:18789: bind: address already in use\n");
+      fs.writeSync(stderr, "listen tcp 0.0.0.0:18789: bind: address already in use\n");
       return { pid: 8888 };
     });
     const sleep = vi.fn();
