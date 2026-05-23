@@ -66,11 +66,7 @@ function patchChatSendFile(file) {
   if (!source.includes("suppressing empty final event")) {
     const next = source.replace(
       /\n(\s*)broadcastChatFinal\(\{\n(\s*)context,\n\s*runId: clientRunId,\n\s*sessionKey,\n\s*message\n\s*\}\);/,
-      (
-        _match,
-        outerIndent,
-        innerIndent,
-      ) =>
+      (_match, outerIndent, innerIndent) =>
         `\n${outerIndent}if (message) broadcastChatFinal({\n` +
         `${innerIndent}context,\n` +
         `${innerIndent}runId: clientRunId,\n` +
@@ -80,6 +76,30 @@ function patchChatSendFile(file) {
     );
     if (next === source) {
       fail(`OpenClaw chat.send empty-final shape not recognized in ${file}`);
+    }
+    source = next;
+  }
+
+  if (source !== original) {
+    fs.writeFileSync(file, source);
+    return true;
+  }
+  return false;
+}
+
+function patchFollowupRunnerFile(file) {
+  let source = fs.readFileSync(file, "utf8");
+  const original = source;
+
+  if (!source.includes("preserve chat.send run ids in followup queue")) {
+    const next = source.replace(
+      /(replyOperation = createReplyOperation\(\{\n\s*sessionId: run\.sessionId,\n\s*sessionKey: replySessionKey \?\? "",\n\s*resetTriggered: false,\n\s*upstreamAbortSignal: queued\.abortSignal \?\? opts\?\.abortSignal\n\s*\}\);\n\s*)const runId = crypto\.randomUUID\(\);/,
+      (_match, prefix) =>
+        `${prefix}const runId = opts?.runId ?? crypto.randomUUID(); ` +
+        `// nemoclaw: preserve chat.send run ids in followup queue (#2603, #3145)`,
+    );
+    if (next === source) {
+      fail(`OpenClaw followup runner run-id shape not recognized in ${file}`);
     }
     source = next;
   }
@@ -103,6 +123,25 @@ if (candidates.length !== 1) {
 const chatFile = candidates[0];
 patchChatSendFile(chatFile);
 
+const followupCandidates = listJsFiles(distDir).filter((file) => {
+  const source = fs.readFileSync(file, "utf8");
+  return (
+    source.includes("function createFollowupRunner") &&
+    source.includes("replyOperation = createReplyOperation") &&
+    (source.includes("const runId = crypto.randomUUID();") ||
+      source.includes("preserve chat.send run ids in followup queue"))
+  );
+});
+
+if (followupCandidates.length !== 1) {
+  fail(
+    `expected exactly one OpenClaw followup runner runtime file, found ${followupCandidates.length}`,
+  );
+}
+
+const followupFile = followupCandidates[0];
+patchFollowupRunnerFile(followupFile);
+
 const patched = fs.readFileSync(chatFile, "utf8");
 if (!patched.includes("nemoclaw: correlate chat.send run ids")) {
   fail("chat.send run-id correlation patch did not apply");
@@ -114,4 +153,11 @@ if (!patched.includes("suppressing empty final event")) {
   fail("chat.send empty-final suppression patch did not apply");
 }
 
-console.log(`INFO: patched OpenClaw chat.send compatibility in ${path.basename(chatFile)}`);
+const patchedFollowup = fs.readFileSync(followupFile, "utf8");
+if (!patchedFollowup.includes("preserve chat.send run ids in followup queue")) {
+  fail("followup runner run-id patch did not apply");
+}
+
+console.log(
+  `INFO: patched OpenClaw chat.send compatibility in ${path.basename(chatFile)} and ${path.basename(followupFile)}`,
+);

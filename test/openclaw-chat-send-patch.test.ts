@@ -65,6 +65,34 @@ function writeChatSendFixture(dist: string): string {
   return fixture;
 }
 
+function writeFollowupRunnerFixture(dist: string): string {
+  const fixture = path.join(dist, "agent-runner.fixture.js");
+  fs.writeFileSync(
+    fixture,
+    [
+      "function createFollowupRunner(params) {",
+      "  return async function runQueuedFollowup(queued, opts, run) {",
+      "    let replyOperation;",
+      "    replyOperation = createReplyOperation({",
+      "      sessionId: run.sessionId,",
+      '      sessionKey: replySessionKey ?? "",',
+      "      resetTriggered: false,",
+      "      upstreamAbortSignal: queued.abortSignal ?? opts?.abortSignal",
+      "    });",
+      "    const runId = crypto.randomUUID();",
+      "    if (run.sessionKey) registerAgentRunContext(runId, {",
+      "      sessionKey: run.sessionKey,",
+      "      verboseLevel: run.verboseLevel",
+      "    });",
+      "    return runId;",
+      "  }",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  return fixture;
+}
+
 function runPatch(dist: string) {
   return spawnSync(process.execPath, [PATCH_SCRIPT, dist], {
     encoding: "utf-8",
@@ -77,14 +105,15 @@ describe("OpenClaw chat.send compatibility patch", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-chat-send-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
-    const fixture = writeChatSendFixture(dist);
+    const chatFixture = writeChatSendFixture(dist);
+    const followupFixture = writeFollowupRunnerFixture(dist);
 
     try {
       const patch = runPatch(dist);
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain("patched OpenClaw chat.send compatibility");
 
-      const patched = fs.readFileSync(fixture, "utf-8");
+      const patched = fs.readFileSync(chatFixture, "utf-8");
       expect(patched).toContain(
         "context.addChatRun(runId, { sessionKey, clientRunId }); // nemoclaw: correlate chat.send run ids (#2603, #3145)",
       );
@@ -92,12 +121,21 @@ describe("OpenClaw chat.send compatibility patch", () => {
       expect(patched).toContain("if (message) broadcastChatFinal({");
       expect(patched).toContain("suppressing empty final event");
 
+      const patchedFollowup = fs.readFileSync(followupFixture, "utf-8");
+      expect(patchedFollowup).toContain(
+        "const runId = opts?.runId ?? crypto.randomUUID(); // nemoclaw: preserve chat.send run ids in followup queue (#2603, #3145)",
+      );
+
       const rerun = runPatch(dist);
       expect(rerun.status, `${rerun.stdout}${rerun.stderr}`).toBe(0);
-      const rerunPatched = fs.readFileSync(fixture, "utf-8");
+      const rerunPatched = fs.readFileSync(chatFixture, "utf-8");
       expect(rerunPatched.match(/context\.addChatRun\(runId/g)).toHaveLength(1);
       expect(rerunPatched.match(/idempotencyKey: clientRunId/g)).toHaveLength(1);
       expect(rerunPatched.match(/suppressing empty final event/g)).toHaveLength(1);
+      const rerunPatchedFollowup = fs.readFileSync(followupFixture, "utf-8");
+      expect(rerunPatchedFollowup.match(/preserve chat\.send run ids in followup queue/g)).toHaveLength(
+        1,
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

@@ -136,11 +136,15 @@ function analyzeIssue2603Trace({ sentRuns, events, historyMessages }: Issue2603T
   );
 
   const uncorrelatedReplies: UncorrelatedReply[] = [];
-  const replyCounts = new Map<string, number>();
+  const visibleReplyCounts = new Map<string, number>();
+  const finalReplyCounts = new Map<string, number>();
   for (const [replyToken, expectedRunId] of expectedRunByReplyToken) {
     for (const event of chatEvents) {
       if (!event.text.includes(replyToken)) continue;
-      replyCounts.set(replyToken, (replyCounts.get(replyToken) ?? 0) + 1);
+      visibleReplyCounts.set(replyToken, (visibleReplyCounts.get(replyToken) ?? 0) + 1);
+      if (event.state === "final") {
+        finalReplyCounts.set(replyToken, (finalReplyCounts.get(replyToken) ?? 0) + 1);
+      }
       if (event.runId !== expectedRunId) {
         uncorrelatedReplies.push({
           replyToken,
@@ -153,11 +157,11 @@ function analyzeIssue2603Trace({ sentRuns, events, historyMessages }: Issue2603T
   }
   const missingReplies = sentRuns
     .map((entry) => entry.replyToken)
-    .filter((replyToken) => !replyCounts.has(replyToken));
+    .filter((replyToken) => !visibleReplyCounts.has(replyToken));
   const duplicateReplies = sentRuns
     .map((entry) => ({
       replyToken: entry.replyToken,
-      count: replyCounts.get(entry.replyToken) ?? 0,
+      count: finalReplyCounts.get(entry.replyToken) ?? 0,
     }))
     .filter((entry) => entry.count > 1);
 
@@ -516,6 +520,49 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
       { promptToken: "B2603", count: 2 },
       { promptToken: "C2603", count: 2 },
     ]);
+  });
+
+  it("does not classify a streamed delta plus final for the same run as a duplicate reply", () => {
+    const analysis = analyzeIssue2603Trace({
+      sentRuns: [
+        {
+          promptToken: "B2603",
+          replyToken: "B2603-REPLY",
+          runId: "a32dc5a4-9b45-4109-9b17-2fcd35787d0c",
+          message: "B2603: Second task. Reply exactly B2603-REPLY and nothing else.",
+        },
+      ],
+      events: [
+        {
+          event: "chat",
+          payload: {
+            runId: "a32dc5a4-9b45-4109-9b17-2fcd35787d0c",
+            state: "delta",
+            message: { role: "assistant", content: [{ type: "text", text: "B2603-REPLY" }] },
+          },
+        },
+        {
+          event: "chat",
+          payload: {
+            runId: "a32dc5a4-9b45-4109-9b17-2fcd35787d0c",
+            state: "final",
+            message: { role: "assistant", content: [{ type: "text", text: "B2603-REPLY" }] },
+          },
+        },
+      ],
+      historyMessages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "B2603: Second task. Reply exactly B2603-REPLY and nothing else." },
+          ],
+        },
+      ],
+    });
+
+    expect(analysis.missingReplies).toEqual([]);
+    expect(analysis.duplicateReplies).toEqual([]);
+    expect(analysis.uncorrelatedReplies).toEqual([]);
   });
 
   it.runIf(process.env[LIVE_REPRO_ENV] === "1")(
