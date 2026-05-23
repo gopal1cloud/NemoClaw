@@ -468,9 +468,22 @@ jobs:
           const fs = require('node:fs');
           const source = fs.readFileSync('src/lib/onboard.ts', 'utf8');
           const start = source.indexOf('function verifyDirectSandboxGpu');
-          const end = source.indexOf('\n}\n\nfunction upsertMessagingProviders', start) + 2;
-          if (start < 0 || end < 2) {
+          if (start < 0) {
             throw new Error('verifyDirectSandboxGpu function not found');
+          }
+          const bodyStart = source.indexOf('{', start);
+          let depth = 0;
+          let end = -1;
+          for (let i = bodyStart; i < source.length; i += 1) {
+            if (source[i] === '{') depth += 1;
+            if (source[i] === '}') depth -= 1;
+            if (depth === 0) {
+              end = i + 1;
+              break;
+            }
+          }
+          if (bodyStart < 0 || end < 0) {
+            throw new Error('verifyDirectSandboxGpu function body not found');
           }
           const fn = source.slice(start, end);
           const optional = fn.indexOf('if (proof.optional === true) return;');
