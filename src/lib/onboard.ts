@@ -301,7 +301,10 @@ const { resolveSandboxImageTagFromCreateOutput } =
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
 const { OnboardRuntimeBoundary }: typeof import("./onboard/runtime-boundary") = require("./onboard/runtime-boundary");
+const { handleAgentSetupState }: typeof import("./onboard/machine/handlers/agent-setup") = require("./onboard/machine/handlers/agent-setup");
+const { handleFinalizationState }: typeof import("./onboard/machine/handlers/finalization") = require("./onboard/machine/handlers/finalization");
 const { handleGatewayState }: typeof import("./onboard/machine/handlers/gateway") = require("./onboard/machine/handlers/gateway");
+const { handlePoliciesState }: typeof import("./onboard/machine/handlers/policies") = require("./onboard/machine/handlers/policies");
 const { handlePreflightState }: typeof import("./onboard/machine/handlers/preflight") = require("./onboard/machine/handlers/preflight");
 const { handleProviderInferenceState }: typeof import("./onboard/machine/handlers/provider-inference") = require("./onboard/machine/handlers/provider-inference");
 const { handleSandboxState }: typeof import("./onboard/machine/handlers/sandbox") = require("./onboard/machine/handlers/sandbox");
@@ -8897,11 +8900,7 @@ const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
   toSessionUpdates,
   maybeForceE2eStepFailure,
 });
-const startRecordedStep = onboardRuntimeBoundary.startRecordedStep.bind(onboardRuntimeBoundary);
-const recordStepComplete = onboardRuntimeBoundary.recordStepComplete.bind(onboardRuntimeBoundary);
-const recordStepSkipped = onboardRuntimeBoundary.recordStepSkipped.bind(onboardRuntimeBoundary);
-const recordStepFailed = onboardRuntimeBoundary.recordStepFailed.bind(onboardRuntimeBoundary);
-const recordSessionComplete = onboardRuntimeBoundary.recordSessionComplete.bind(onboardRuntimeBoundary);
+const onboardRuntimeRecorders = onboardRuntimeBoundary.recorders();
 
 const ONBOARD_STEP_INDEX: Record<string, { number: number; title: string }> = {
   preflight: { number: 1, title: "Preflight checks" },
@@ -9289,8 +9288,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         resolveSandboxGpuConfig,
         validateSandboxGpuPreflight,
         skippedStepMessage,
-        startRecordedStep,
-        recordStepComplete,
+        ...onboardRuntimeRecorders,
         updateSession: onboardSession.updateSession,
       },
     });
@@ -9357,10 +9355,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         retireLegacyGatewayForDockerDriverUpgrade,
         destroyGatewayRuntimeForGpuReuse: () => destroyGateway(() => undefined, () => false),
         skippedStepMessage,
+        ...onboardRuntimeRecorders,
         note,
-        startRecordedStep,
         startGateway,
-        recordStepComplete,
         exitProcess: (code) => process.exit(code),
       },
     });
@@ -9408,8 +9405,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         normalizeHermesAuthMethod,
         setupNim,
         setupInference,
-        startRecordedStep,
-        recordStepComplete,
+        ...onboardRuntimeRecorders,
         toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         skippedStepMessage,
         ensureResumeProviderReady,
@@ -9492,7 +9488,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         ensureValidatedBraveSearchCredential,
         isBackToSelection,
         configureWebSearch,
-        startRecordedStep,
+        ...onboardRuntimeRecorders,
         getRecordedMessagingChannelsForResume,
         getSandboxMessagingChannels: (name) => registry.getSandbox(name)?.messagingChannels,
         setupMessagingChannels,
@@ -9504,7 +9500,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
         setDefaultSandbox: registry.setDefault,
         getSandboxAgentRegistryFields,
-        recordStepComplete,
         toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         skippedStepMessage,
         error: (message) => console.error(message),
@@ -9517,216 +9512,121 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     selectedMessagingChannels = sandboxStateResult.selectedMessagingChannels;
     const webSearchSupported = sandboxStateResult.webSearchSupported;
 
-    if (agent) {
-      await agentOnboard.handleAgentSetup(sandboxName, model, provider, agent, resume, session, {
-        step,
-        runCaptureOpenshell,
-        openshellShellCommand,
-        openshellBinary: getOpenshellBinary(),
-        startRecordedStep,
-        recordStepComplete,
-        recordStepFailed,
+    const agentSetupResult = await handleAgentSetupState({
+      agent,
+      sandboxName,
+      model,
+      provider,
+      resume,
+      session,
+      hermesAuthMethod,
+      hermesToolGateways,
+      deps: {
+        handleAgentSetup: agentOnboard.handleAgentSetup,
+        agentSetupContext: () => ({
+          step,
+          runCaptureOpenshell,
+          openshellShellCommand,
+          openshellBinary: getOpenshellBinary(),
+          ...onboardRuntimeRecorders,
+          skippedStepMessage,
+        }),
+        ensureAgentDashboardForward,
+        ...onboardRuntimeRecorders,
+        isOpenclawReady,
         skippedStepMessage,
-      });
-      ensureAgentDashboardForward(sandboxName, agent);
-      await recordStepSkipped("openclaw");
-    } else {
-      const resumeOpenclaw = resume && sandboxName && isOpenclawReady(sandboxName);
-      if (resumeOpenclaw) {
-        skippedStepMessage("openclaw", sandboxName);
-        // Rebuild leaves /sandbox/.nemoclaw/config.json as Dockerfile's
-        // zero-byte placeholder; re-sync to avoid loadOnboardConfig
-        // SyntaxError. Fixes #3999.
-        syncNemoClawConfigInSandbox(sandboxName, provider, model);
-        await recordStepComplete(
-          "openclaw",
-          toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
-        );
-      } else {
-        await startRecordedStep("openclaw", { sandboxName, provider, model });
-        await setupOpenclaw(sandboxName, model, provider);
-        await recordStepComplete(
-          "openclaw",
-          toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
-        );
-      }
-      await recordStepSkipped("agent_setup");
-    }
+        setupOpenclaw,
+        syncNemoClawConfigInSandbox,
+        toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+      },
+    });
+    session = agentSetupResult.session;
 
-    const latestSession = onboardSession.loadSession();
-    const recordedPolicyPresets = Array.isArray(latestSession?.policyPresets)
-      ? latestSession.policyPresets
-      : null;
-    const recordedMessagingChannels = Array.isArray(latestSession?.messagingChannels)
-      ? latestSession.messagingChannels
-      : [];
-    const activeSandbox = registry.getSandbox(sandboxName);
-    const activeMessagingChannels = activeSandbox?.messagingChannels;
-    const policyMessagingChannels = mergePolicyMessagingChannels(
-      selectedMessagingChannels,
-      recordedMessagingChannels,
-      activeMessagingChannels,
-      activeSandbox?.disabledChannels,
-    );
-    verifyCompatibleEndpointSandboxSmoke({
+    const policiesResult = await handlePoliciesState({
+      resume,
       sandboxName,
       provider,
       model,
-      runOpenshell,
-      redact,
       endpointUrl,
       credentialEnv,
-      messagingChannels: policyMessagingChannels,
+      selectedMessagingChannels,
+      webSearchConfig,
+      webSearchSupported,
+      hermesToolGateways,
       agent,
-    });
-    const policyResumeSelection = preparePolicyPresetResumeSelection(
-      { policies },
-      sandboxName,
-      {
-        recordedPolicyPresets,
-        disabledChannels: activeSandbox?.disabledChannels,
-        enabledChannels: policyMessagingChannels,
-        hermesToolGateways,
-        webSearchConfig,
-        webSearchSupported,
+      deps: {
+        loadSession: onboardSession.loadSession,
+        getActiveSandbox: (name) => registry.getSandbox(name),
+        mergePolicyMessagingChannels,
+        verifyCompatibleEndpointSandboxSmoke: (options) =>
+          verifyCompatibleEndpointSandboxSmoke({
+            ...options,
+            runOpenshell,
+            redact,
+          }),
+        preparePolicyPresetResumeSelection: (name, options) =>
+          preparePolicyPresetResumeSelection({ policies }, name, options),
+        arePolicyPresetsApplied,
+        skippedStepMessage,
+        ...onboardRuntimeRecorders,
+        setupPoliciesWithSelection,
+        updateSession: onboardSession.updateSession,
+        toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
       },
-    );
-    const recordedPolicyPresetsForSupport = policyResumeSelection.policyPresets;
-    const resumePolicies =
-      resume &&
-      sandboxName &&
-      !policyResumeSelection.recordedPolicyPresetsNeedReconcile &&
-      !policyResumeSelection.disabledMessagingPolicyPresetApplied &&
-      arePolicyPresetsApplied(sandboxName, recordedPolicyPresetsForSupport);
-    if (resumePolicies) {
-      skippedStepMessage("policies", recordedPolicyPresetsForSupport.join(", "));
-      await recordStepComplete(
-        "policies",
-        toSessionUpdates({
-          sandboxName,
-          provider,
-          model,
-          policyPresets: recordedPolicyPresetsForSupport,
-        }),
-      );
-    } else {
-      await startRecordedStep("policies", {
-        sandboxName,
-        provider,
-        model,
-        policyPresets: recordedPolicyPresetsForSupport,
-      });
-      const setupAppliedPolicyPresets = await setupPoliciesWithSelection(sandboxName, {
-        selectedPresets:
-          Array.isArray(recordedPolicyPresets)
-            ? recordedPolicyPresetsForSupport
-            : null,
-        enabledChannels: policyMessagingChannels,
-        disabledChannels: activeSandbox?.disabledChannels,
-        webSearchConfig,
-        provider,
-        webSearchSupported,
-        hermesToolGateways,
-        onSelection: (policyPresets) => {
-          onboardSession.updateSession((current: Session) => {
-            current.policyPresets = policyPresets;
-            return current;
+    });
+    session = policiesResult.session;
+
+    await handleFinalizationState({
+      sandboxName,
+      model,
+      provider,
+      nimContainer,
+      agent,
+      hermesAuthMethod,
+      hermesToolGateways,
+      stagedLegacyKeys,
+      migratedLegacyKeys,
+      deps: {
+        ensureAgentDashboardForward,
+        ...onboardRuntimeRecorders,
+        toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+        removeLegacyCredentialsFile,
+        cleanupStaleHostFiles,
+        checkAndRecoverSandboxProcesses: (name, options) => {
+          const processRecovery: typeof import("./actions/sandbox/process-recovery") =
+            require("./actions/sandbox/process-recovery");
+          processRecovery.checkAndRecoverSandboxProcesses(name, options);
+        },
+        getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
+        buildVerifyChain: (chatUiUrl) =>
+          buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress() }),
+        verifyDeployment: async (name, chain) => {
+          const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
+          return verifyDeploymentModule.verifyDeployment(name, chain, {
+            executeSandboxCommand: (sandbox: string, script: string) =>
+              executeSandboxCommandForVerification(sandbox, script),
+            probeHostPort: (port: number, probePath: string) => {
+              const result = runCapture(
+                ["curl", "-so", "/dev/null", "-w", "%{http_code}", "--max-time", "3", `http://127.0.0.1:${port}${probePath}`],
+                { ignoreError: true },
+              );
+              return parseInt(result.trim(), 10) || 0;
+            },
+            captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
+            getMessagingChannels: () => selectedMessagingChannels || [],
+            providerExistsInGateway: (providerName: string) => providerExistsInGateway(providerName),
           });
         },
-      });
-      await recordStepComplete(
-        "policies",
-        toSessionUpdates({
-          sandboxName,
-          provider,
-          model,
-          policyPresets: setupAppliedPolicyPresets,
-        }),
-      );
-    }
-
-    if (agent) {
-      ensureAgentDashboardForward(sandboxName, agent);
-    }
-
-    await recordSessionComplete(
-      toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
-    );
-    completed = true;
-    // Onboarding finished successfully. Delete the legacy plaintext
-    // credentials.json only when every staged *value* was actually pushed
-    // to the gateway in this run. A successful upsert under the same
-    // env-key name with a different value (e.g. vllm-local upserting
-    // `OPENAI_API_KEY: "dummy"` while the legacy file held a real
-    // `sk-…` cloud key) does not count as a migration — the gateway
-    // never received the legacy secret, so unlinking the file would
-    // strand the user's only copy.
-    const allStagedMigrated =
-      stagedLegacyKeys.length > 0 && stagedLegacyKeys.every((k) => migratedLegacyKeys.has(k));
-    if (allStagedMigrated) {
-      removeLegacyCredentialsFile();
-    } else if (stagedLegacyKeys.length > 0) {
-      const unmigrated = stagedLegacyKeys.filter((k) => !migratedLegacyKeys.has(k));
-      console.error(
-        `  Kept ~/.nemoclaw/credentials.json: ${String(unmigrated.length)} ` +
-          `legacy credential(s) were not migrated verbatim to the gateway in this run ` +
-          `(${unmigrated.join(", ")}). Re-run onboard with the relevant ` +
-          `providers/channels enabled to migrate them, then the file is removed automatically.`,
-      );
-    }
-    // Sweep stale host files left over from older NemoClaw versions —
-    // e.g. an empty/orphaned ~/.nemoclaw/credentials.json from upgrades
-    // before the credentials-gateway move (issue #3105). Each registered
-    // entry enforces its own safety guards; this call is a no-op when
-    // every target is already clean.
-    cleanupStaleHostFiles();
-
-    // Step [8/8] policy-apply restarts the sandbox container; the OpenClaw
-    // gateway inside the new container is launched lazily (normally by the
-    // first `nemoclaw <name> connect`). Bring it up explicitly here so the
-    // verifyDeployment block below does not race the post-policy startup and
-    // surface a false "gateway crashed during startup" warning. The helper
-    // is a no-op when the gateway is already running. Fixes #3573.
-    const processRecovery: typeof import("./actions/sandbox/process-recovery") =
-      require("./actions/sandbox/process-recovery");
-    processRecovery.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
-
-    // Post-deployment verification — confirm the full delivery chain is
-    // operational before telling the user "YOUR AGENT IS LIVE". Fixes #2342.
-    const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
-    const _verifyChatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`;
-    const verifyChain = buildChain({ chatUiUrl: _verifyChatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress() });
-    const verificationResult = await verifyDeploymentModule.verifyDeployment(
-      sandboxName,
-      verifyChain,
-      {
-        executeSandboxCommand: (name: string, script: string) => {
-          return executeSandboxCommandForVerification(name, script);
+        formatVerificationDiagnostics: (result) => {
+          const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
+          return verifyDeploymentModule.formatVerificationDiagnostics(result);
         },
-        probeHostPort: (port: number, probePath: string) => {
-          const result = runCapture(
-            ["curl", "-so", "/dev/null", "-w", "%{http_code}", "--max-time", "3",
-              `http://127.0.0.1:${port}${probePath}`],
-            { ignoreError: true },
-          );
-          return parseInt(result.trim(), 10) || 0;
-        },
-        captureForwardList: () => {
-          const output = runCaptureOpenshell(["forward", "list"], { ignoreError: true });
-          return output || null;
-        },
-        getMessagingChannels: (_name: string) => selectedMessagingChannels || [],
-        providerExistsInGateway: (providerName: string) => providerExistsInGateway(providerName),
+        printDashboard,
+        error: (message) => console.error(message),
+        log: (message) => console.log(message),
       },
-    );
-
-    // Print verification diagnostics
-    const diagLines = verifyDeploymentModule.formatVerificationDiagnostics(verificationResult);
-    for (const line of diagLines) {
-      console.log(line);
-    }
-
-    printDashboard(sandboxName, model, provider, nimContainer, agent);
+    });
+    completed = true;
   } finally {
     releaseOnboardLock();
     onboardRuntimeBoundary.clear();
