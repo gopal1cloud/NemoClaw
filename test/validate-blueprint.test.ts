@@ -360,6 +360,16 @@ describe("base sandbox policy", () => {
     ]);
   });
 
+  it("regression #4104: openclaw_api mirrors Node binary paths used by OpenClaw flows", () => {
+    const np = policy.network_policies ?? {};
+    const binaries = (np.openclaw_api?.binaries ?? []).map((b) => b.path).sort();
+    expect(binaries).toEqual([
+      "/usr/bin/node",
+      "/usr/local/bin/node",
+      "/usr/local/bin/openclaw",
+    ]);
+  });
+
   it("does not reference the absent Claude CLI binary", () => {
     const serialized = JSON.stringify(policy.network_policies ?? {});
     expect(serialized).not.toContain("/usr/local/bin/claude");
@@ -439,8 +449,8 @@ describe("base sandbox policy", () => {
     expect(Array.isArray(binaries)).toBe(true);
     const paths = (binaries ?? []).map((b) => b.path).sort();
     // `openclaw plugins install <package>` shells out through npm's Node
-    // entrypoint, so the default plugin-install path needs these helper
-    // binaries even when the broader npm preset is not selected.
+    // entrypoint. Keep this baseline L4 tunnel limited to the registry host;
+    // broader package-manager access still requires the opt-in npm preset.
     expect(paths).toEqual([
       "/usr/bin/node*",
       "/usr/bin/npm*",
