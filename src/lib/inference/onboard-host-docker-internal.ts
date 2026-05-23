@@ -39,6 +39,7 @@ function getHostDockerInternalProbeFailure() {
 
 module.exports = {
   HOST_DOCKER_INTERNAL,
+  OLLAMA_PROXY_URL,
   isHijackedDockerInternalUrl,
   getHostDockerInternalProbeFailure,
 };

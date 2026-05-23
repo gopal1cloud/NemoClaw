@@ -168,7 +168,7 @@ const {
 } = require("./core/ports");
 const localInference: typeof import("./inference/local") = require("./inference/local");
 const {
-  findReachableOllamaHost, getResolvedOllamaHost,
+  findReachableOllamaHost,
   resetOllamaHostCache,
   getDefaultOllamaModel,
   getLocalProviderBaseUrl,
@@ -2120,9 +2120,6 @@ function verifyWebSearchInsideSandbox(
   });
 }
 
-// getSandboxInferenceConfig — moved to onboard-providers.ts
-
-// Inference probes — moved to inference/onboard-probes.ts
 const {
   hasResponsesToolCall,
   hasChatCompletionsToolCall,
@@ -2145,8 +2142,10 @@ async function validateOpenAiLikeSelection(
   options: {
     authMode?: "bearer" | "query-param";
     requireResponsesToolCalling?: boolean;
-    requireChatCompletionsToolCalling?: boolean; skipResponsesProbe?: boolean;
-    probeStreaming?: boolean; allowHostDockerInternal?: boolean;
+    requireChatCompletionsToolCalling?: boolean;
+    skipResponsesProbe?: boolean;
+    probeStreaming?: boolean;
+    allowHostDockerInternal?: boolean;
   } = {},
 ): Promise<EndpointValidationResult> {
   const apiKey = credentialEnv ? getCredential(credentialEnv) : "";
@@ -6024,7 +6023,8 @@ async function selectAndValidateOllamaModel(
       {
         skipResponsesProbe: true,
         requireChatCompletionsToolCalling: true,
-        allowHostDockerInternal: getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL,
+        allowHostDockerInternal:
+          localInference.getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL,
       },
     );
     if (validation.retry === "selection") return { outcome: "back-to-selection" };
