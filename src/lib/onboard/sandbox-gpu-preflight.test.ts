@@ -10,6 +10,7 @@ vi.mock("../adapters/docker", () => ({
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
   dockerNvidiaRuntimeAvailable,
+  formatSandboxGpuPassthroughNote,
   parseDockerRuntimeNames,
   validateSandboxGpuPreflight,
 } from "./sandbox-gpu-preflight";
@@ -27,6 +28,21 @@ function sandboxGpuConfig(overrides: Partial<SandboxGpuConfig> = {}): SandboxGpu
 }
 
 describe("sandbox GPU preflight", () => {
+  it("formats Jetson sandbox GPU notes around the NVIDIA runtime backend", () => {
+    expect(formatSandboxGpuPassthroughNote({ hostGpuPlatform: "jetson" })).toContain(
+      "Docker NVIDIA runtime",
+    );
+    expect(
+      formatSandboxGpuPassthroughNote({
+        resumeHasResolvedGpuIntent: true,
+        recordedGpuPassthroughBeforePreflight: true,
+      }),
+    ).toContain("Continuing GPU passthrough");
+    expect(formatSandboxGpuPassthroughNote({ requestedGpuPassthrough: true })).toContain(
+      "GPU passthrough requested",
+    );
+  });
+
   it("parses Docker runtime names from JSON and plain-text output", () => {
     expect(parseDockerRuntimeNames('{"io.containerd.runc.v2":{},"nvidia":{}}')).toContain(
       "nvidia",

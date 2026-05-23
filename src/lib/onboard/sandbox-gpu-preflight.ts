@@ -31,6 +31,25 @@ export function exitOnSandboxGpuConfigErrors(config: SandboxGpuConfig): void {
   }
 }
 
+export function formatSandboxGpuPassthroughNote(options: {
+  hostGpuPlatform?: string | null;
+  resumeHasResolvedGpuIntent?: boolean;
+  recordedGpuPassthroughBeforePreflight?: boolean;
+  requestedGpuPassthrough?: boolean;
+  sandboxGpuMode?: string | null;
+}): string {
+  if (options.hostGpuPlatform === "jetson") {
+    return "  NVIDIA Jetson/Tegra GPU detected; enabling sandbox GPU through Docker NVIDIA runtime. Use --no-gpu to opt out.";
+  }
+  if (options.resumeHasResolvedGpuIntent && options.recordedGpuPassthroughBeforePreflight) {
+    return "  [resume] Continuing GPU passthrough from the saved onboarding session.";
+  }
+  if (options.requestedGpuPassthrough || options.sandboxGpuMode === "1") {
+    return "  GPU passthrough requested; passing --gpu to OpenShell gateway and sandbox creation.";
+  }
+  return "  NVIDIA GPU detected; enabling OpenShell GPU passthrough. Use --no-gpu to opt out.";
+}
+
 export function parseDockerRuntimeNames(value: string | null | undefined): string[] {
   const raw = String(value || "").trim();
   if (!raw || raw === "<no value>") return [];
