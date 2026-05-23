@@ -98,6 +98,36 @@ describe("runDetachedForwardStartWithDiagnostics", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it("surfaces async spawn errors fired after the runner returned", () => {
+    const fetchList = vi.fn().mockReturnValue("");
+    let asyncErrorCallback: ((err: Error) => void) | undefined;
+    const spawn = vi.fn().mockImplementation((_stdio, onAsyncError) => {
+      asyncErrorCallback = onAsyncError;
+      return { pid: 4242 };
+    });
+    // The sleep stub is the only synchronous yield point in the helper's
+    // poll loop. Simulate Node's `error` event firing during that pause so
+    // the next iteration observes `asyncSpawnError` and returns spawn-error.
+    let sleepCalls = 0;
+    const sleep = vi.fn().mockImplementation(() => {
+      sleepCalls += 1;
+      if (sleepCalls === 1 && asyncErrorCallback) {
+        asyncErrorCallback(new Error("spawn ENOENT"));
+      }
+    });
+
+    const result = runDetachedForwardStartWithDiagnostics(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      { overallTimeoutMs: 1_000, pollIntervalMs: 5, sleepMs: sleep },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("spawn-error");
+    expect(result.diagnostic).toMatch(/spawn ENOENT/);
+  });
+
   it("surfaces persistent fetchForwardList failures in the timeout diagnostic", () => {
     const fetchList = vi.fn().mockImplementation(() => {
       throw new Error("gateway transport: connection refused");

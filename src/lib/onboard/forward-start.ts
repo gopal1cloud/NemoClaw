@@ -25,10 +25,15 @@ import { cleanupTempDir, secureTempFile } from "./temp-files";
 
 export type ForwardListFetcher = () => string;
 
-export type DetachedForwardSpawnRunner = (stdio: {
-  stdout: number;
-  stderr: number;
-}) => { pid?: number; error?: Error };
+export type DetachedForwardSpawnRunner = (
+  stdio: { stdout: number; stderr: number },
+  // Invoked when the underlying child process emits an asynchronous `error`
+  // event (e.g. ENOENT or EACCES at execve time — these fire after `spawn`
+  // already returned a child object with `pid === undefined`). The helper
+  // wires this to a closure variable so the next forward-list poll iteration
+  // surfaces the failure in the outcome diagnostic.
+  onAsyncError?: (err: Error) => void,
+) => { pid?: number; error?: Error };
 
 export interface DetachedForwardStartOutcome {
   ok: boolean;
@@ -91,12 +96,20 @@ function blockingSleepMs(ms: number): void {
 export function buildDetachedForwardStartSpawn(
   argv: readonly string[],
 ): DetachedForwardSpawnRunner {
-  return ({ stdout, stderr }) => {
+  return ({ stdout, stderr }, onAsyncError) => {
     try {
       const child = spawnChild(argv[0], argv.slice(1), {
         stdio: ["ignore", stdout, stderr],
         detached: true,
       });
+      // Async failures (ENOENT/EACCES at execve, signal during spawn) arrive
+      // via `error` after `spawn` already returned. Without a listener they
+      // bubble to the process and crash onboard.
+      if (onAsyncError) {
+        child.on("error", onAsyncError);
+      } else {
+        child.on("error", () => {});
+      }
       child.unref();
       return { pid: child.pid };
     } catch (e) {
@@ -148,8 +161,14 @@ export function runDetachedForwardStartWithDiagnostics(
 
   let pid: number | undefined;
   let spawnError: Error | undefined;
+  let asyncSpawnError: Error | undefined;
   try {
-    const spawnResult = runDetachedSpawn({ stdout: outFd, stderr: errFd });
+    const spawnResult = runDetachedSpawn(
+      { stdout: outFd, stderr: errFd },
+      (err) => {
+        if (!asyncSpawnError) asyncSpawnError = err;
+      },
+    );
     pid = spawnResult.pid;
     spawnError = spawnResult.error;
   } finally {
@@ -170,8 +189,9 @@ export function runDetachedForwardStartWithDiagnostics(
     const stderr = readDiagnosticFile(forwardErrPath);
     const stdout = readDiagnosticFile(forwardDiagPath);
     const message = spawnError instanceof Error ? spawnError.message : "";
+    const asyncMsg = asyncSpawnError instanceof Error ? ` ${asyncSpawnError.message}` : "";
     const fetchSuffix = lastFetchError ? ` openshell forward list failed: ${lastFetchError}` : "";
-    return compactText(redact(`${stderr} ${stdout} ${message}${fetchSuffix}`));
+    return compactText(redact(`${stderr} ${stdout} ${message}${asyncMsg}${fetchSuffix}`));
   };
 
   try {
@@ -190,6 +210,9 @@ export function runDetachedForwardStartWithDiagnostics(
       }
       if (isForwardConfirmed(list, expect)) {
         return { ok: true, diagnostic: readDiag(), pid, reason: "ok" };
+      }
+      if (asyncSpawnError) {
+        return { ok: false, diagnostic: readDiag(), pid, reason: "spawn-error" };
       }
       const diagSoFar = readDiag();
       if (looksLikeForwardPortConflict(diagSoFar)) {

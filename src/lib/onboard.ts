@@ -8638,21 +8638,13 @@ function ensureDashboardForward(
   parsedUrl.port = String(actualPort);
   const actualTarget = getDashboardForwardTarget(parsedUrl.toString());
   bestEffortForwardStop(runOpenshell, actualPort);
-  // Detached spawn + forward-list poll (#4064) so the openshell CLI's
-  // inherited stdio cannot trip spawnSync's timeout on Docker-compat hosts.
-  const fwdOutcome = runDetachedForwardStartWithPortReleaseRetries(
-    buildDetachedForwardStartSpawn(
-      openshellArgv(["forward", "start", "--background", actualTarget, sandboxName]),
-    ),
-    () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
+  const { ok: fwdOk, diagnostic: fwdDiagnostic } = runDetachedForwardStartWithPortReleaseRetries(
+    buildDetachedForwardStartSpawn(openshellArgv(["forward", "start", "--background", actualTarget, sandboxName])),
+    () => runCaptureOpenshell(["forward", "list"]),
     { port: actualPort, sandboxName },
-    () => {
-      sleep(1);
-      bestEffortForwardStop(runOpenshell, actualPort);
-    },
+    () => { sleep(1); bestEffortForwardStop(runOpenshell, actualPort); },
   );
-  const fwdDiagnostic = fwdOutcome.diagnostic;
-  if (!fwdOutcome.ok) {
+  if (!fwdOk) {
     const looksLikePortConflict = looksLikeForwardPortConflict(fwdDiagnostic);
     if (rollbackSandboxOnFailure) {
       // The sandbox was just created, committed to actualPort via its
