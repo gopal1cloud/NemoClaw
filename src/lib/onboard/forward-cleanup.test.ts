@@ -40,11 +40,11 @@ describe("bestEffortForwardStopForSandbox", () => {
     expect(run).not.toHaveBeenCalled();
     expect(fetch).toHaveBeenCalledWith(
       ["forward", "list"],
-      expect.objectContaining({ ignoreError: true, timeout: 5_000 }),
+      expect.objectContaining({ ignoreError: true, timeout: 15_000 }),
     );
   });
 
-  it("returns stopped and runs forward stop when the port belongs to the same sandbox", () => {
+  it("returns stopped and uses the sandbox-scoped forward stop form when ownership matches", () => {
     const run = vi.fn();
     const fetch = vi
       .fn()
@@ -53,23 +53,29 @@ describe("bestEffortForwardStopForSandbox", () => {
     const outcome = bestEffortForwardStopForSandbox(run, fetch, 18789, "my-sandbox");
 
     expect(outcome).toBe("stopped");
+    // Sandbox-scoped stop closes the TOCTOU window between list and stop:
+    // even if another sandbox bound the port in the meantime, openshell
+    // forward stop with both args will refuse to kill it.
     expect(run).toHaveBeenCalledWith(
-      ["forward", "stop", "18789"],
+      ["forward", "stop", "18789", "my-sandbox"],
       { ignoreError: true, suppressOutput: true },
     );
   });
 
-  it("returns no-entry and runs stop defensively when no live forward is on that port", () => {
+  it("returns no-entry and runs a sandbox-scoped stop when no live forward is on that port", () => {
     const run = vi.fn();
     const fetch = vi.fn().mockReturnValue(forwardListWith([]));
 
     const outcome = bestEffortForwardStopForSandbox(run, fetch, 18789, "my-sandbox");
 
     expect(outcome).toBe("no-entry");
-    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith(
+      ["forward", "stop", "18789", "my-sandbox"],
+      { ignoreError: true, suppressOutput: true },
+    );
   });
 
-  it("falls through to a defensive stop when `forward list` itself throws", () => {
+  it("skips the stop entirely when `forward list` itself throws (owner unknown)", () => {
     const run = vi.fn();
     const fetch = vi.fn().mockImplementation(() => {
       throw new Error("gateway timed out");
@@ -78,7 +84,10 @@ describe("bestEffortForwardStopForSandbox", () => {
     const outcome = bestEffortForwardStopForSandbox(run, fetch, 18789, "my-sandbox");
 
     expect(outcome).toBe("list-failed");
-    expect(run).toHaveBeenCalledTimes(1);
+    // Without ownership data, a port-only stop could kill another
+    // sandbox's forward — better to leave the port alone and let the
+    // helper's retry / next poll observe the real state.
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("ignores forwards with non-live status when deciding ownership", () => {

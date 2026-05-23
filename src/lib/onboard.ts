@@ -272,6 +272,7 @@ const {
   shouldFrontOllamaWithProxy,
 }: typeof import("./onboard/local-inference-topology") = require("./onboard/local-inference-topology");
 const { resolveOpenshell } = require("./adapters/openshell/resolve");
+const { OPENSHELL_PROBE_TIMEOUT_MS } = require("./adapters/openshell/timeouts");
 const credentials: typeof import("./credentials/store") = require("./credentials/store");
 const {
   prompt,
@@ -8622,7 +8623,7 @@ function ensureDashboardForward(
   bestEffortForwardStopForSandbox(runOpenshell, runCaptureOpenshell, actualPort, sandboxName);
   const { ok: fwdOk, diagnostic: fwdDiagnostic } = runDetachedForwardStartWithPortReleaseRetries(
     buildDetachedForwardStartSpawn(openshellArgv(["forward", "start", "--background", actualTarget, sandboxName])),
-    () => runCaptureOpenshell(["forward", "list"], { timeout: 5_000 }),
+    () => runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }),
     { port: actualPort, sandboxName },
     () => { sleep(1); bestEffortForwardStopForSandbox(runOpenshell, runCaptureOpenshell, actualPort, sandboxName); },
     { onProgress: buildForwardStartProgressLogger(actualPort) },

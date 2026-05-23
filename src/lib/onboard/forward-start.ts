@@ -27,12 +27,6 @@ export type ForwardListFetcher = () => string;
 
 export type DetachedForwardSpawnRunner = (
   stdio: { stdout: number; stderr: number },
-  // Invoked when the underlying child process emits an asynchronous `error`
-  // event (e.g. ENOENT or EACCES at execve time — these fire after `spawn`
-  // already returned a child object with `pid === undefined`). The helper
-  // wires this to a closure variable so the next forward-list poll iteration
-  // surfaces the failure in the outcome diagnostic.
-  onAsyncError?: (err: Error) => void,
 ) => { pid?: number; error?: Error };
 
 export interface DetachedForwardStartOutcome {
@@ -104,7 +98,7 @@ function blockingSleepMs(ms: number): void {
 export function buildDetachedForwardStartSpawn(
   argv: readonly string[],
 ): DetachedForwardSpawnRunner {
-  return ({ stdout, stderr }, onAsyncError) => {
+  return ({ stdout, stderr }) => {
     // Preflight: the helper polls synchronously, so a Node `error` event
     // dispatched after `spawn` returns cannot reach the poll loop while it
     // is sleeping on a `spawnSync` child. Catch the obvious ENOENT/EACCES
@@ -120,15 +114,9 @@ export function buildDetachedForwardStartSpawn(
         stdio: ["ignore", stdout, stderr],
         detached: true,
       });
-      // Belt-and-braces: register the `error` listener in case a runtime
-      // execve failure still slips through the preflight (race against
-      // permission changes, NFS mounts going stale, etc.). The poll loop
-      // checks `asyncSpawnError` between iterations.
-      if (onAsyncError) {
-        child.on("error", onAsyncError);
-      } else {
-        child.on("error", () => {});
-      }
+      // Swallow any belated `error` event so a race between accessSync and
+      // execve does not crash the process via an unhandled emitter.
+      child.on("error", () => {});
       child.unref();
       return { pid: child.pid };
     } catch (e) {
@@ -142,6 +130,23 @@ function isForwardConfirmed(
   expect: { port: number; sandboxName: string },
 ): boolean {
   return getOccupiedPorts(forwardListOutput).get(String(expect.port)) === expect.sandboxName;
+}
+
+/**
+ * Best-effort SIGTERM of the detached `openshell forward start --background`
+ * process when the helper gives up. Without this, a slow gateway handshake
+ * can still register a forward minutes after onboard already rolled the
+ * sandbox back, causing the next onboard attempt on the same port to race
+ * an orphan CLI for the dashboard. `kill` swallows ESRCH so a child that
+ * already exited is a no-op.
+ */
+function terminateDetachedForwardChild(pid: number | undefined): void {
+  if (!pid || pid <= 0) return;
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    /* already exited or out of our reach */
+  }
 }
 
 /**
@@ -201,14 +206,8 @@ export function runDetachedForwardStartWithDiagnostics(
 
   let pid: number | undefined;
   let spawnError: Error | undefined;
-  let asyncSpawnError: Error | undefined;
   try {
-    const spawnResult = runDetachedSpawn(
-      { stdout: outFd, stderr: errFd },
-      (err) => {
-        if (!asyncSpawnError) asyncSpawnError = err;
-      },
-    );
+    const spawnResult = runDetachedSpawn({ stdout: outFd, stderr: errFd });
     pid = spawnResult.pid;
     spawnError = spawnResult.error;
   } finally {
@@ -229,9 +228,8 @@ export function runDetachedForwardStartWithDiagnostics(
     const stderr = readDiagnosticFile(forwardErrPath);
     const stdout = readDiagnosticFile(forwardDiagPath);
     const message = spawnError instanceof Error ? spawnError.message : "";
-    const asyncMsg = asyncSpawnError instanceof Error ? ` ${asyncSpawnError.message}` : "";
     const fetchSuffix = lastFetchError ? ` openshell forward list failed: ${lastFetchError}` : "";
-    return compactText(redact(`${stderr} ${stdout} ${message}${asyncMsg}${fetchSuffix}`));
+    return compactText(redact(`${stderr} ${stdout} ${message}${fetchSuffix}`));
   };
 
   try {
@@ -253,11 +251,9 @@ export function runDetachedForwardStartWithDiagnostics(
       if (isForwardConfirmed(list, expect)) {
         return { ok: true, diagnostic: readDiag(), pid, reason: "ok" };
       }
-      if (asyncSpawnError) {
-        return { ok: false, diagnostic: readDiag(), pid, reason: "spawn-error" };
-      }
       const diagSoFar = readDiag();
       if (looksLikeForwardPortConflict(diagSoFar)) {
+        terminateDetachedForwardChild(pid);
         return { ok: false, diagnostic: diagSoFar, pid, reason: "spawn-conflict" };
       }
       if (onProgress && Date.now() >= nextProgressAt) {
@@ -271,6 +267,11 @@ export function runDetachedForwardStartWithDiagnostics(
       ? ` last forward list: ${compactText(redact(lastListSnapshot)).slice(0, 240)}`
       : " last forward list: <empty>";
     const timeoutSummary = `forward did not appear in list within ${overallTimeoutMs}ms;${listTail}`;
+    // The detached `openshell forward start --background` process may still
+    // be running (e.g. blocked on a slow gateway handshake). If the caller
+    // is about to roll back the sandbox, leaving an orphan CLI that may yet
+    // succeed would race with the next onboard attempt for the same port.
+    terminateDetachedForwardChild(pid);
     return {
       ok: false,
       diagnostic: finalDiag ? `${timeoutSummary} ${finalDiag}` : timeoutSummary,
