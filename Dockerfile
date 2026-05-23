@@ -299,7 +299,8 @@ RUN set -eu; \
 # submitted run. That makes clients treat the turn as complete even though no
 # visible reply was delivered. The shim also correlates real agent run IDs back
 # to the submitted chat.send run ID when OpenClaw starts an internal run with a
-# different ID, and adds the submitted run ID as the transcript idempotency key.
+# different ID, carries that submitted ID through queued follow-up turns, and
+# adds the submitted run ID as the transcript idempotency key.
 #
 # Removal criteria: drop when upstream OpenClaw fixes openclaw/openclaw#70164
 # and openclaw/openclaw#50298, or when NemoClaw no longer ships OpenClaw 2026.5.x.

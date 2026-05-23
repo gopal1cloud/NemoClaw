@@ -91,15 +91,77 @@ function patchFollowupRunnerFile(file) {
   let source = fs.readFileSync(file, "utf8");
   const original = source;
 
+  if (
+    source.includes(
+      "const runId = opts?.runId ?? crypto.randomUUID(); // nemoclaw: preserve chat.send run ids in followup queue",
+    )
+  ) {
+    source = source.replace(
+      "const runId = opts?.runId ?? crypto.randomUUID(); // nemoclaw: preserve chat.send run ids in followup queue",
+      "const runId = queued.runId ?? opts?.runId ?? crypto.randomUUID(); // nemoclaw: preserve chat.send run ids in followup queue",
+    );
+  }
+
   if (!source.includes("preserve chat.send run ids in followup queue")) {
     const next = source.replace(
       /(replyOperation = createReplyOperation\(\{\n\s*sessionId: run\.sessionId,\n\s*sessionKey: replySessionKey \?\? "",\n\s*resetTriggered: false,\n\s*upstreamAbortSignal: queued\.abortSignal \?\? opts\?\.abortSignal\n\s*\}\);\n\s*)const runId = crypto\.randomUUID\(\);/,
       (_match, prefix) =>
-        `${prefix}const runId = opts?.runId ?? crypto.randomUUID(); ` +
+        `${prefix}const runId = queued.runId ?? opts?.runId ?? crypto.randomUUID(); ` +
         `// nemoclaw: preserve chat.send run ids in followup queue (#2603, #3145)`,
     );
     if (next === source) {
       fail(`OpenClaw followup runner run-id shape not recognized in ${file}`);
+    }
+    source = next;
+  }
+
+  if (source !== original) {
+    fs.writeFileSync(file, source);
+    return true;
+  }
+  return false;
+}
+
+function patchGetReplyFile(file) {
+  let source = fs.readFileSync(file, "utf8");
+  const original = source;
+
+  if (!source.includes("carry chat.send run id into queued followup")) {
+    const next = source.replace(
+      /(const followupRun = \{\n)(\s*)prompt: queuedBody,/,
+      (_match, prefix, indent) =>
+        `${prefix}${indent}runId: opts?.runId, ` +
+        `// nemoclaw: carry chat.send run id into queued followup (#2603, #3145)\n` +
+        `${indent}prompt: queuedBody,`,
+    );
+    if (next === source) {
+      fail(`OpenClaw get-reply followup run shape not recognized in ${file}`);
+    }
+    source = next;
+  }
+
+  if (!source.includes("force webchat chat.send queued turns")) {
+    if (source.includes("const resolvedQueue = useFastReplyRuntime ? {")) {
+      source = source.replace(
+        "const resolvedQueue = useFastReplyRuntime ? {",
+        "let resolvedQueue = useFastReplyRuntime ? {",
+      );
+    } else if (!source.includes("let resolvedQueue = useFastReplyRuntime ? {")) {
+      fail(`OpenClaw get-reply queue settings shape not recognized in ${file}`);
+    }
+
+    const next = source.replace(
+      /\n(\s*)const piRuntime = useFastReplyRuntime \? null : await traceRunPhase\("reply\.load_pi_runtime", \(\) => loadPiEmbeddedRuntime\(\)\);/,
+      (_match, indent) =>
+        `\n${indent}if (opts?.runId && sessionCtx.Provider === "webchat" && resolvedQueue.mode === "steer") resolvedQueue = {\n` +
+        `${indent}\t...resolvedQueue,\n` +
+        `${indent}\tmode: "followup",\n` +
+        `${indent}\tdebounceMs: 0\n` +
+        `${indent}}; // nemoclaw: force webchat chat.send queued turns to keep per-message replies (#2603, #3145)\n` +
+        `${indent}const piRuntime = useFastReplyRuntime ? null : await traceRunPhase("reply.load_pi_runtime", () => loadPiEmbeddedRuntime());`,
+    );
+    if (next === source) {
+      fail(`OpenClaw get-reply pi runtime shape not recognized in ${file}`);
     }
     source = next;
   }
@@ -122,6 +184,22 @@ if (candidates.length !== 1) {
 
 const chatFile = candidates[0];
 patchChatSendFile(chatFile);
+
+const getReplyCandidates = listJsFiles(distDir).filter((file) => {
+  const source = fs.readFileSync(file, "utf8");
+  return (
+    source.includes("resolveQueueSettings") &&
+    (source.includes("const followupRun = {") ||
+      source.includes("carry chat.send run id into queued followup"))
+  );
+});
+
+if (getReplyCandidates.length !== 1) {
+  fail(`expected exactly one OpenClaw get-reply runtime file, found ${getReplyCandidates.length}`);
+}
+
+const getReplyFile = getReplyCandidates[0];
+patchGetReplyFile(getReplyFile);
 
 const followupCandidates = listJsFiles(distDir).filter((file) => {
   const source = fs.readFileSync(file, "utf8");
@@ -153,11 +231,19 @@ if (!patched.includes("suppressing empty final event")) {
   fail("chat.send empty-final suppression patch did not apply");
 }
 
+const patchedGetReply = fs.readFileSync(getReplyFile, "utf8");
+if (!patchedGetReply.includes("carry chat.send run id into queued followup")) {
+  fail("get-reply queued run-id patch did not apply");
+}
+if (!patchedGetReply.includes("force webchat chat.send queued turns")) {
+  fail("get-reply webchat queue mode patch did not apply");
+}
+
 const patchedFollowup = fs.readFileSync(followupFile, "utf8");
 if (!patchedFollowup.includes("preserve chat.send run ids in followup queue")) {
   fail("followup runner run-id patch did not apply");
 }
 
 console.log(
-  `INFO: patched OpenClaw chat.send compatibility in ${path.basename(chatFile)} and ${path.basename(followupFile)}`,
+  `INFO: patched OpenClaw chat.send compatibility in ${path.basename(chatFile)}, ${path.basename(getReplyFile)}, and ${path.basename(followupFile)}`,
 );
