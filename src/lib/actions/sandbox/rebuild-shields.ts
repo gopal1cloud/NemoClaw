@@ -25,6 +25,7 @@ export function openRebuildShieldsWindow(
     shields.shieldsDown(sandboxName, {
       reason: "auto-unlock for rebuild",
       skipTimer: true,
+      throwOnError: true,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -70,7 +71,7 @@ export function relockRebuildShieldsWindow(
   console.log("");
   console.log("  Re-applying shields lockdown...");
   try {
-    shields.shieldsUp(sandboxName);
+    shields.shieldsUp(sandboxName, { throwOnError: true });
     console.log(`  ${G}✓${R} Shields restored to UP`);
     window.relocked = true;
     return true;

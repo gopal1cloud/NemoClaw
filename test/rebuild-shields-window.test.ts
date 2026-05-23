@@ -34,6 +34,7 @@ describe("rebuild shields window", () => {
     expect(shieldsMock.shieldsDown).toHaveBeenCalledWith("locked-sandbox", {
       reason: "auto-unlock for rebuild",
       skipTimer: true,
+      throwOnError: true,
     });
   });
 
@@ -44,7 +45,9 @@ describe("rebuild shields window", () => {
 
     expect(relocked).toBe(true);
     expect(window.relocked).toBe(true);
-    expect(shieldsMock.shieldsUp).toHaveBeenCalledWith("locked-sandbox");
+    expect(shieldsMock.shieldsUp).toHaveBeenCalledWith("locked-sandbox", {
+      throwOnError: true,
+    });
 
     expect(relockRebuildShieldsWindow("locked-sandbox", window, true, "nemoclaw")).toBe(true);
     expect(shieldsMock.shieldsUp).toHaveBeenCalledTimes(1);
