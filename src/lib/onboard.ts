@@ -302,7 +302,9 @@ const { resolveSandboxImageTagFromCreateOutput } =
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
 const { OnboardRuntimeBoundary }: typeof import("./onboard/runtime-boundary") = require("./onboard/runtime-boundary");
+const { handleAgentSetupState }: typeof import("./onboard/machine/handlers/agent-setup") = require("./onboard/machine/handlers/agent-setup");
 const { handleGatewayState }: typeof import("./onboard/machine/handlers/gateway") = require("./onboard/machine/handlers/gateway");
+const { handlePoliciesState }: typeof import("./onboard/machine/handlers/policies") = require("./onboard/machine/handlers/policies");
 const { handlePreflightState }: typeof import("./onboard/machine/handlers/preflight") = require("./onboard/machine/handlers/preflight");
 const { handleProviderInferenceState }: typeof import("./onboard/machine/handlers/provider-inference") = require("./onboard/machine/handlers/provider-inference");
 const { handleSandboxState }: typeof import("./onboard/machine/handlers/sandbox") = require("./onboard/machine/handlers/sandbox");
@@ -9517,133 +9519,74 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     selectedMessagingChannels = sandboxStateResult.selectedMessagingChannels;
     const webSearchSupported = sandboxStateResult.webSearchSupported;
 
-    if (agent) {
-      await agentOnboard.handleAgentSetup(sandboxName, model, provider, agent, resume, session, {
-        step,
-        runCaptureOpenshell,
-        openshellShellCommand,
-        openshellBinary: getOpenshellBinary(),
-        startRecordedStep,
-        recordStepComplete,
-        recordStepFailed,
+    const agentSetupResult = await handleAgentSetupState({
+      agent,
+      sandboxName,
+      model,
+      provider,
+      resume,
+      session,
+      hermesAuthMethod,
+      hermesToolGateways,
+      deps: {
+        handleAgentSetup: agentOnboard.handleAgentSetup,
+        agentSetupContext: () => ({
+          step,
+          runCaptureOpenshell,
+          openshellShellCommand,
+          openshellBinary: getOpenshellBinary(),
+          startRecordedStep,
+          recordStepComplete,
+          recordStepFailed,
+          skippedStepMessage,
+        }),
+        ensureAgentDashboardForward,
+        recordStepSkipped,
+        isOpenclawReady,
         skippedStepMessage,
-      });
-      ensureAgentDashboardForward(sandboxName, agent);
-      await recordStepSkipped("openclaw");
-    } else {
-      const resumeOpenclaw = resume && sandboxName && isOpenclawReady(sandboxName);
-      if (resumeOpenclaw) {
-        skippedStepMessage("openclaw", sandboxName);
-        // Rebuild leaves /sandbox/.nemoclaw/config.json as Dockerfile's
-        // zero-byte placeholder; re-sync to avoid loadOnboardConfig
-        // SyntaxError. Fixes #3999.
-        syncNemoClawConfigInSandbox(sandboxName, provider, model);
-        await recordStepComplete(
-          "openclaw",
-          toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
-        );
-      } else {
-        await startRecordedStep("openclaw", { sandboxName, provider, model });
-        await setupOpenclaw(sandboxName, model, provider);
-        await recordStepComplete(
-          "openclaw",
-          toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
-        );
-      }
-      await recordStepSkipped("agent_setup");
-    }
+        startRecordedStep,
+        setupOpenclaw,
+        syncNemoClawConfigInSandbox,
+        recordStepComplete,
+        toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+      },
+    });
+    session = agentSetupResult.session;
 
-    const latestSession = onboardSession.loadSession();
-    const recordedPolicyPresets = Array.isArray(latestSession?.policyPresets)
-      ? latestSession.policyPresets
-      : null;
-    const recordedMessagingChannels = Array.isArray(latestSession?.messagingChannels)
-      ? latestSession.messagingChannels
-      : [];
-    const activeSandbox = registry.getSandbox(sandboxName);
-    const activeMessagingChannels = activeSandbox?.messagingChannels;
-    const policyMessagingChannels = mergePolicyMessagingChannels(
-      selectedMessagingChannels,
-      recordedMessagingChannels,
-      activeMessagingChannels,
-      activeSandbox?.disabledChannels,
-    );
-    verifyCompatibleEndpointSandboxSmoke({
+    const policiesResult = await handlePoliciesState({
+      resume,
       sandboxName,
       provider,
       model,
-      runOpenshell,
-      redact,
       endpointUrl,
       credentialEnv,
-      messagingChannels: policyMessagingChannels,
+      selectedMessagingChannels,
+      webSearchConfig,
+      webSearchSupported,
+      hermesToolGateways,
       agent,
-    });
-    const policyResumeSelection = preparePolicyPresetResumeSelection(
-      { policies },
-      sandboxName,
-      {
-        recordedPolicyPresets,
-        disabledChannels: activeSandbox?.disabledChannels,
-        enabledChannels: policyMessagingChannels,
-        hermesToolGateways,
-        webSearchConfig,
-        webSearchSupported,
+      deps: {
+        loadSession: onboardSession.loadSession,
+        getActiveSandbox: (name) => registry.getSandbox(name),
+        mergePolicyMessagingChannels,
+        verifyCompatibleEndpointSandboxSmoke: (options) =>
+          verifyCompatibleEndpointSandboxSmoke({
+            ...options,
+            runOpenshell,
+            redact,
+          }),
+        preparePolicyPresetResumeSelection: (name, options) =>
+          preparePolicyPresetResumeSelection({ policies }, name, options),
+        arePolicyPresetsApplied,
+        skippedStepMessage,
+        startRecordedStep,
+        setupPoliciesWithSelection,
+        updateSession: onboardSession.updateSession,
+        recordStepComplete,
+        toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
       },
-    );
-    const recordedPolicyPresetsForSupport = policyResumeSelection.policyPresets;
-    const resumePolicies =
-      resume &&
-      sandboxName &&
-      !policyResumeSelection.recordedPolicyPresetsNeedReconcile &&
-      !policyResumeSelection.disabledMessagingPolicyPresetApplied &&
-      arePolicyPresetsApplied(sandboxName, recordedPolicyPresetsForSupport);
-    if (resumePolicies) {
-      skippedStepMessage("policies", recordedPolicyPresetsForSupport.join(", "));
-      await recordStepComplete(
-        "policies",
-        toSessionUpdates({
-          sandboxName,
-          provider,
-          model,
-          policyPresets: recordedPolicyPresetsForSupport,
-        }),
-      );
-    } else {
-      await startRecordedStep("policies", {
-        sandboxName,
-        provider,
-        model,
-        policyPresets: recordedPolicyPresetsForSupport,
-      });
-      const setupAppliedPolicyPresets = await setupPoliciesWithSelection(sandboxName, {
-        selectedPresets:
-          Array.isArray(recordedPolicyPresets)
-            ? recordedPolicyPresetsForSupport
-            : null,
-        enabledChannels: policyMessagingChannels,
-        disabledChannels: activeSandbox?.disabledChannels,
-        webSearchConfig,
-        provider,
-        webSearchSupported,
-        hermesToolGateways,
-        onSelection: (policyPresets) => {
-          onboardSession.updateSession((current: Session) => {
-            current.policyPresets = policyPresets;
-            return current;
-          });
-        },
-      });
-      await recordStepComplete(
-        "policies",
-        toSessionUpdates({
-          sandboxName,
-          provider,
-          model,
-          policyPresets: setupAppliedPolicyPresets,
-        }),
-      );
-    }
+    });
+    session = policiesResult.session;
 
     if (agent) {
       ensureAgentDashboardForward(sandboxName, agent);
