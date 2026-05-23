@@ -1389,6 +1389,7 @@ const { setupNim } = require(${onboardPath});
     const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -1417,6 +1418,7 @@ fi
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
+const wait = require(${waitPath});
 const child_process = require("child_process");
 
 child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
@@ -1462,6 +1464,7 @@ runner.runShell = (command) => {
 
 Object.defineProperty(process, "platform", { value: "linux" });
 platform.isWsl = () => false;
+wait.sleepSeconds = () => {};
 
 const { setupNim } = require(${onboardPath});
 
@@ -2086,10 +2089,12 @@ const { setupNim } = require(${onboardPath});
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
 
     const script = String.raw`
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
+const wait = require(${waitPath});
 
 let tagsProbeCount = 0;
 
@@ -2111,6 +2116,7 @@ runner.runShell = (command) => {
 
 Object.defineProperty(process, "platform", { value: "linux" });
 platform.isWsl = () => false;
+wait.sleepSeconds = () => {};
 
 const { setupNim } = require(${onboardPath});
 
@@ -5185,6 +5191,7 @@ const { setupNim } = require(${onboardPath});
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
 
     // Fake curl binary that returns a successful response — needed because
     // runCurlProbe and validateOllamaModel spawn real curl via child_process.
@@ -5220,6 +5227,7 @@ const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const platform = require(${platformPath});
+const wait = require(${waitPath});
 
 // Mock child_process.spawn so startOllamaAuthProxy doesn't try to spawn a real process.
 const child_process = require("child_process");
@@ -5293,6 +5301,7 @@ registry.updateSandbox = (_name, update) => updates.push(update);
 // Force platform to linux for this test
 Object.defineProperty(process, 'platform', { value: 'linux' });
 platform.isWsl = () => false;
+wait.sleepSeconds = () => {};
 
 const { setupNim } = require(${onboardPath});
 
@@ -5427,11 +5436,13 @@ const { setupNim } = require(${onboardPath});
     const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
+const wait = require(${waitPath});
 
 const menuLines = [];
 const originalLog = console.log;
@@ -5469,6 +5480,7 @@ runner.runShell = (command) => {
 
 Object.defineProperty(process, "platform", { value: "linux" });
 platform.isWsl = () => false;
+wait.sleepSeconds = () => {};
 
 const { setupNim } = require(${onboardPath});
 
@@ -5513,6 +5525,7 @@ const { setupNim } = require(${onboardPath});
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -5542,6 +5555,7 @@ const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const platform = require(${platformPath});
+const wait = require(${waitPath});
 const child_process = require("child_process");
 
 child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
@@ -5592,6 +5606,7 @@ registry.updateSandbox = (_name, update) => updates.push(update);
 
 Object.defineProperty(process, "platform", { value: "linux" });
 platform.isWsl = () => false;
+wait.sleepSeconds = () => {};
 
 const { setupNim } = require(${onboardPath});
 

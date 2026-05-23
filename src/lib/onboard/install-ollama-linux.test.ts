@@ -185,6 +185,24 @@ describe("installOllamaOnLinux (user-local)", () => {
     expect(downloadCall).toBeDefined();
   });
 
+  it("shell-quotes user-local paths derived from HOME", () => {
+    const runShellImpl = vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
+    const opts = makeOpts({
+      modeOverride: "user-local",
+      homedir: () => "/tmp/name'with-quote",
+      runCaptureImpl: vi.fn().mockReturnValue("/usr/bin/zstd"),
+      runCaptureExImpl: vi.fn().mockReturnValue({ stdout: "", exitCode: 0, timedOut: false }),
+      runShellImpl,
+    });
+    const result = installOllamaOnLinux(opts);
+    expect(result.ok).toBe(true);
+    const commandOutput = runShellImpl.mock.calls
+      .map(([cmd]) => (typeof cmd === "string" ? cmd : ""))
+      .join("\n");
+    expect(commandOutput).toContain("'\\''");
+    expect(commandOutput).not.toContain("'/tmp/name'with-quote");
+  });
+
   it("falls back to the .tgz tarball when the .tar.zst HEAD probe fails", () => {
     const runShellImpl = vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
     const runCaptureExImpl = vi.fn().mockReturnValue({

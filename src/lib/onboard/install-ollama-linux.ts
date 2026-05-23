@@ -13,7 +13,12 @@ import {
   type OllamaLoopbackSystemdOverrideState,
 } from "./ollama-systemd";
 
-const { runCapture, runCaptureEx, runShell }: typeof import("../runner") = require("../runner");
+const {
+  runCapture,
+  runCaptureEx,
+  runShell,
+  shellQuote,
+}: typeof import("../runner") = require("../runner");
 const {
   findReachableOllamaHost,
 }: typeof import("../inference/local") = require("../inference/local");
@@ -234,6 +239,7 @@ function downloadAndExtractUserLocal(
   );
   const zstExists = headProbe.exitCode === 0;
 
+  const quotedInstallDir = shellQuote(installDir);
   if (zstExists) {
     if (!hostCommandExists("zstd", opts)) {
       errorLog(
@@ -247,7 +253,7 @@ function downloadAndExtractUserLocal(
     }
     log(`  Downloading ${tarballName}.tar.zst`);
     runShellImpl(
-      `set -o pipefail; curl --fail --show-error --location '${zstUrl}' | zstd -d | tar -xf - -C '${installDir}'`,
+      `set -o pipefail; curl --fail --show-error --location ${shellQuote(zstUrl)} | zstd -d | tar -xf - -C ${quotedInstallDir}`,
       { stdio: "inherit" },
     );
     return;
@@ -255,7 +261,7 @@ function downloadAndExtractUserLocal(
 
   log(`  Downloading ${tarballName}.tgz`);
   runShellImpl(
-    `set -o pipefail; curl --fail --show-error --location '${tgzUrl}' | tar -xzf - -C '${installDir}'`,
+    `set -o pipefail; curl --fail --show-error --location ${shellQuote(tgzUrl)} | tar -xzf - -C ${quotedInstallDir}`,
     { stdio: "inherit" },
   );
 }
@@ -290,13 +296,14 @@ function installOllamaUserLocal(opts: InstallOllamaLinuxOptions): InstallOllamaL
   const installDir = nodePath.join(homedir(), ".local");
   const binDir = nodePath.join(installDir, "bin");
   const binPath = nodePath.join(binDir, "ollama");
+  const libDir = nodePath.join(installDir, "lib", "ollama");
 
   log(
     `  Installing Ollama in user-local mode (${installDir}). ` +
       "No sudo, no systemd; the daemon will be launched manually and must be restarted after a reboot.",
   );
 
-  runShellImpl(`mkdir -p '${binDir}' '${installDir}/lib/ollama'`);
+  runShellImpl(`mkdir -p ${shellQuote(binDir)} ${shellQuote(libDir)}`);
   downloadAndExtractUserLocal(`ollama-linux-${ollamaArch}`, installDir, opts);
   const jetpack = detectJetpackVariant(opts);
   if (jetpack) {
@@ -323,7 +330,7 @@ function startUserLocalOllamaDaemon(
   const waitForHttpImpl = opts.waitForHttpImpl ?? waitForHttp;
   log("  Starting Ollama...");
   runShellImpl(
-    `OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} nohup '${binPath}' serve > /dev/null 2>&1 &`,
+    `OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} nohup ${shellQuote(binPath)} serve > /dev/null 2>&1 &`,
     { ignoreError: true },
   );
   return waitForHttpImpl(`http://127.0.0.1:${OLLAMA_PORT}/`, 10);
