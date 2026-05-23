@@ -93,6 +93,7 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   const entry = { command, env: args[2]?.env || null };
   const policyMatch = command.match(/--policy ([^ ]+)/);
@@ -352,6 +353,7 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   const entry = { command, env: args[2]?.env || null };
   const policyMatch = command.match(/--policy ([^ ]+)/);
@@ -536,6 +538,7 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   const entry = { command, env: args[2]?.env || null };
   const dockerfileMatch = command.match(/--from ([^ ]+Dockerfile)/);
@@ -702,6 +705,7 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   const entry = { command, env: args[2]?.env || null };
   const dockerfileMatch = command.match(/--from ([^ ]+Dockerfile)/);
@@ -862,6 +866,7 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   const entry = { command, env: args[2]?.env || null };
   const dockerfileMatch = command.match(/--from ([^ ]+Dockerfile)/);
@@ -1028,6 +1033,7 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   const entry = { command, env: args[2]?.env || null };
   const dockerfileMatch = command.match(/--from ([^ ]+Dockerfile)/);
@@ -1356,6 +1362,7 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
@@ -1492,6 +1499,7 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));

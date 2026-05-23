@@ -2062,6 +2062,7 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
@@ -2262,6 +2263,7 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: hermes-sandbox\\n"));
@@ -2442,6 +2444,7 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\\n"));
@@ -2543,6 +2546,7 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
@@ -2643,6 +2647,7 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
@@ -2853,6 +2858,7 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
@@ -2975,6 +2981,7 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
@@ -3096,6 +3103,7 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
@@ -3241,6 +3249,7 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
@@ -3372,6 +3381,7 @@ const fakeSpawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
@@ -3502,6 +3512,7 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   child.killCalls = [];
   child.unrefCalls = 0;
   child.stdout.destroyCalls = 0;
@@ -3613,6 +3624,7 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.pid = 4242;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => child.emit("close", 0));
   return child;
