@@ -105,7 +105,7 @@ describe("runDetachedForwardStartWithDiagnostics", () => {
     // Real `buildDetachedForwardStartSpawn` checks `fs.accessSync(argv[0],
     // X_OK)` before spawning, so a missing binary surfaces as a synchronous
     // spawn-error instead of relying on Node's async `error` event (which
-    // cannot fire while the helper is sleeping inside spawnSync). #4072 P3.
+    // cannot fire while the helper is sleeping inside spawnSync).
     const spawn = buildDetachedForwardStartSpawn(["/nonexistent/openshell-binary-for-test"]);
 
     const result = runDetachedForwardStartWithDiagnostics(
@@ -200,6 +200,100 @@ describe("runDetachedForwardStartWithDiagnostics", () => {
 
     expect(result.ok).toBe(true);
     expect(fetchList).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears a transient fetch error from the diagnostic when a later poll succeeds", () => {
+    const fetchList = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error("transient gateway: connection refused");
+      })
+      .mockReturnValue("");
+    const spawn = vi.fn().mockReturnValue({ pid: 42 });
+    const sleep = vi.fn();
+
+    const result = runDetachedForwardStartWithDiagnostics(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      { overallTimeoutMs: 30, pollIntervalMs: 10, sleepMs: sleep },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("timeout");
+    expect(result.diagnostic).not.toMatch(/openshell forward list failed/);
+  });
+
+  it("SIGTERMs the detached child on timeout", () => {
+    const fetchList = vi.fn().mockReturnValue("");
+    const spawn = vi.fn().mockReturnValue({ pid: 4242 });
+    const sleep = vi.fn();
+    const realKill = process.kill;
+    const killSpy = vi.fn();
+    // Replace process.kill so the test does not actually try to signal pid 4242.
+    (process as { kill: typeof process.kill }).kill = killSpy as unknown as typeof process.kill;
+    try {
+      const result = runDetachedForwardStartWithDiagnostics(
+        spawn,
+        fetchList,
+        { port: 18789, sandboxName: "my-sandbox" },
+        { overallTimeoutMs: 20, pollIntervalMs: 10, sleepMs: sleep },
+      );
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("timeout");
+      expect(killSpy).toHaveBeenCalledWith(4242, "SIGTERM");
+    } finally {
+      (process as { kill: typeof process.kill }).kill = realKill;
+    }
+  });
+
+  it("SIGTERMs the detached child on a port-conflict diagnostic", () => {
+    // Spawn writes an EADDRINUSE line to the stderr file descriptor so the
+    // first poll iteration reads it back and trips the conflict branch.
+    const realFs = require("node:fs");
+    const fetchList = vi.fn().mockReturnValue("");
+    const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+      realFs.writeSync(stderr, "listen tcp 0.0.0.0:18789: bind: address already in use\n");
+      return { pid: 8888 };
+    });
+    const sleep = vi.fn();
+    const realKill = process.kill;
+    const killSpy = vi.fn();
+    (process as { kill: typeof process.kill }).kill = killSpy as unknown as typeof process.kill;
+    try {
+      const result = runDetachedForwardStartWithDiagnostics(
+        spawn,
+        fetchList,
+        { port: 18789, sandboxName: "my-sandbox" },
+        { overallTimeoutMs: 1_000, pollIntervalMs: 10, sleepMs: sleep },
+      );
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("spawn-conflict");
+      expect(killSpy).toHaveBeenCalledWith(8888, "SIGTERM");
+    } finally {
+      (process as { kill: typeof process.kill }).kill = realKill;
+    }
+  });
+
+  it("does not SIGTERM when spawn never produced a pid", () => {
+    const fetchList = vi.fn();
+    const spawn = vi.fn().mockReturnValue({ error: new Error("ENOENT") });
+    const sleep = vi.fn();
+    const realKill = process.kill;
+    const killSpy = vi.fn();
+    (process as { kill: typeof process.kill }).kill = killSpy as unknown as typeof process.kill;
+    try {
+      const result = runDetachedForwardStartWithDiagnostics(
+        spawn,
+        fetchList,
+        { port: 18789, sandboxName: "my-sandbox" },
+        { overallTimeoutMs: 1_000, pollIntervalMs: 10, sleepMs: sleep },
+      );
+      expect(result.reason).toBe("spawn-error");
+      expect(killSpy).not.toHaveBeenCalled();
+    } finally {
+      (process as { kill: typeof process.kill }).kill = realKill;
+    }
   });
 });
 

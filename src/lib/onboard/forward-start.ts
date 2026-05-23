@@ -15,7 +15,7 @@ import { cleanupTempDir, secureTempFile } from "./temp-files";
 // some platforms (notably the Docker compatibility gateway used when the
 // host glibc is older than the openshell-gateway requirement). spawnSync
 // then waits on those fds until the daemon exits — minutes later — and
-// reports ETIMEDOUT even though the forward is established. See #4064.
+// reports ETIMEDOUT even though the forward is established.
 //
 // The detached path below spawns the CLI with `detached: true`, hands it
 // independent diagnostic file descriptors, and confirms success by polling
@@ -117,6 +117,13 @@ export function buildDetachedForwardStartSpawn(
       // Swallow any belated `error` event so a race between accessSync and
       // execve does not crash the process via an unhandled emitter.
       child.on("error", () => {});
+      // A null/undefined pid means execve failed even though the preflight
+      // succeeded (race against permission changes, ulimit, etc.). The async
+      // `error` event would otherwise be swallowed by the listener above and
+      // the caller would wait the full deadline for a child that never ran.
+      if (child.pid == null) {
+        return { error: new Error(`spawn ${argv[0]} returned no pid`) };
+      }
       child.unref();
       return { pid: child.pid };
     } catch (e) {
@@ -186,7 +193,7 @@ export function runDetachedForwardStartWithDiagnostics(
   // 180s deadline accommodates Docker compatibility gateways (host glibc
   // older than openshell-gateway's requirement runs the gateway in an extra
   // Docker container, adding per-call gRPC latency that can push the
-  // forward-registration handshake past a tighter timeout). See #4064.
+  // forward-registration handshake past a tighter timeout).
   const overallTimeoutMs = options.overallTimeoutMs ?? 180_000;
   const pollIntervalMs = options.pollIntervalMs ?? 500;
   const sleepImpl = options.sleepMs ?? blockingSleepMs;
@@ -244,6 +251,10 @@ export function runDetachedForwardStartWithDiagnostics(
       let list = "";
       try {
         list = fetchForwardList() || "";
+        // Clear the cached transient error so a recovered gateway does not
+        // leave a stale "openshell forward list failed: …" suffix on the
+        // eventual timeout diagnostic.
+        lastFetchError = null;
       } catch (err) {
         lastFetchError = err instanceof Error ? err.message : String(err);
       }
