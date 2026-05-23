@@ -692,6 +692,50 @@ describe("service environment", () => {
       }
     });
 
+    it("does not rewrite locked clean rc files", () => {
+      const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-shim-clean-locked-test-"));
+      const proxyEnvPath = join(fakeHome, "proxy-env.sh");
+      const rcPath = join(fakeHome, ".bashrc");
+      const profilePath = join(fakeHome, ".profile");
+      const tmpFile = join(tmpdir(), `rc-shim-clean-locked-test-${process.pid}.sh`);
+      try {
+        writeFileSync(rcPath, "# clean bashrc\n", { mode: 0o444 });
+        writeFileSync(profilePath, "# clean profile\n", { mode: 0o444 });
+        execFileSync("chmod", ["555", fakeHome]);
+
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
+          `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
+          '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
+          extractRuntimeShellEnvShimSnippet(),
+          "ensure_runtime_shell_env_shim",
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        expect(readFileSync(rcPath, "utf-8")).toBe("# clean bashrc\n");
+        expect(readFileSync(profilePath, "utf-8")).toBe("# clean profile\n");
+      } finally {
+        try {
+          execFileSync("chmod", ["755", fakeHome]);
+        } catch {
+          /* ignore */
+        }
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          execFileSync("rm", ["-rf", fakeHome]);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
     it("entrypoint overwrites proxy-env.sh cleanly on repeated invocations", () => {
       const fakeDataDir = join(tmpdir(), `nemoclaw-idempotent-test-${process.pid}`);
       execFileSync("mkdir", ["-p", fakeDataDir]);

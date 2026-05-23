@@ -1886,6 +1886,8 @@ try:
     if any(line.rstrip("\n") == shim or "/tmp/nemoclaw-proxy-env.sh" in line for line in cleaned):
         print(f"[SECURITY] runtime env shim still present after cleanup: {rc_path}", file=sys.stderr)
         sys.exit(1)
+    if cleaned == lines:
+        sys.exit(0)
 
     tmp_fd, tmp_path = tempfile.mkstemp(prefix="nemoclaw-rc-clean.", dir="/tmp", text=True)
     with os.fdopen(tmp_fd, "w", encoding="utf-8", errors="surrogateescape") as handle:
