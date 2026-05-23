@@ -2974,7 +2974,7 @@ async function createSandbox(
     }
   }
   const preferredPort =
-    controlUiPort ?? envPort ?? persistedPort ?? (agent ? agent.forwardPort : CONTROL_UI_PORT);
+    controlUiPort ?? envPort ?? persistedPort ?? (agent ? agent.forwardPort : DASHBOARD_PORT);
   const earlyForwards = runCaptureOpenshell(["forward", "list"], { ignoreError: true });
   const effectivePort = findAvailableDashboardPort(sandboxName, preferredPort, earlyForwards);
   if (effectivePort !== preferredPort) {
@@ -6694,8 +6694,6 @@ async function setupPoliciesWithSelection(
 
 // ── Dashboard ────────────────────────────────────────────────────
 
-const CONTROL_UI_PORT = DASHBOARD_PORT;
-
 const {
   buildChain,
   buildControlUiUrls,
@@ -6710,6 +6708,7 @@ const {
 } = onboardDashboard.createOnboardDashboardHelpers({
   runOpenshell,
   runCaptureOpenshell,
+  openshellArgv,
   runCapture,
   cliName,
   agentProductName,
