@@ -319,24 +319,27 @@ if openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
 fi
 rm -f "$ssh_config"
 
-# Retry sandbox inference up to 3 times — live models are not deterministic
-# and the gateway proxy can return unexpected responses on first attempt. (#1969)
+# Retry sandbox inference up to 5 times — the OpenShell CONNECT proxy needs
+# time to warm up on first outbound TLS connection from a new sandbox, and
+# live models are not deterministic (#1969).  Raised from 3×5 s to 5×8 s
+# after nightly run 26318179268 showed consistent empty responses at the
+# 3-attempt level while the subsequent openclaw agent test passed.
 TIMEOUT_CMD="${TIMEOUT_CMD:-}"
 sandbox_content=""
 pong_ok=false
-for pong_attempt in 1 2 3; do
+for pong_attempt in 1 2 3 4 5; do
   if [ -n "$sandbox_response" ]; then
     sandbox_content=$(echo "$sandbox_response" | parse_chat_content 2>/dev/null) || true
     if grep -qi "PONG" <<<"$sandbox_content"; then
       pong_ok=true
       break
     fi
-    info "Sandbox inference attempt ${pong_attempt}/3: got '${sandbox_content:0:80}', retrying in 5s..."
+    info "Sandbox inference attempt ${pong_attempt}/5: got '${sandbox_content:0:80}', retrying in 8s..."
   else
-    info "Sandbox inference attempt ${pong_attempt}/3: empty response, retrying in 5s..."
+    info "Sandbox inference attempt ${pong_attempt}/5: empty response, retrying in 8s..."
   fi
-  [ "$pong_attempt" -lt 3 ] || break
-  sleep 5
+  [ "$pong_attempt" -lt 5 ] || break
+  sleep 8
   # Re-fetch with verbose curl on retry to diagnose proxy issues (#1969)
   ssh_config="$(mktemp)"
   sandbox_response=""
