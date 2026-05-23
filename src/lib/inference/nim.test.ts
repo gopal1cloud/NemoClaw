@@ -671,6 +671,87 @@ describe("nim", () => {
         restore();
       }
     });
+
+    it("populates availableMemoryMB on macOS Apple Silicon via vm_stat", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "system_profiler" && cmd[1] === "SPDisplaysDataType") {
+          return [
+            "      Chipset Model: Apple M3 Max",
+            "      Total Number of Cores: 40",
+            "      VRAM (Dynamic, Max): 49152 MB",
+          ].join("\n");
+        }
+        if (cmd[0] === "sysctl" && cmd[1] === "-n" && cmd[2] === "hw.memsize") {
+          return String(64 * 1024 * 1024 * 1024);
+        }
+        if (cmd[0] === "vm_stat") {
+          // 16 KiB page size; 32 000 free + 60 000 inactive + 1 000 speculative
+          // pages → (93 000 × 16 384) bytes ≈ 1 488 MiB available.
+          return [
+            "Mach Virtual Memory Statistics: (page size of 16384 bytes)",
+            "Pages free:                              32000.",
+            "Pages active:                            500000.",
+            "Pages inactive:                          60000.",
+            "Pages speculative:                       1000.",
+          ].join("\n");
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+      const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+      Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+
+      try {
+        const expectedAvailableMB = Math.floor(((32_000 + 60_000 + 1_000) * 16_384) / 1024 / 1024);
+        expect(nimModule.detectGpu()).toMatchObject({
+          type: "apple",
+          name: "Apple M3 Max",
+          totalMemoryMB: 49152,
+          availableMemoryMB: expectedAvailableMB,
+          cores: 40,
+        });
+      } finally {
+        if (originalPlatform) {
+          Object.defineProperty(process, "platform", originalPlatform);
+        }
+        restore();
+      }
+    });
+
+    it("omits availableMemoryMB on macOS when vm_stat fails to parse", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "system_profiler" && cmd[1] === "SPDisplaysDataType") {
+          return [
+            "      Chipset Model: Apple M2",
+            "      Total Number of Cores: 10",
+            "      VRAM (Dynamic, Max): 16384 MB",
+          ].join("\n");
+        }
+        // vm_stat returns nothing → readMacOsAvailableMemoryMB() returns 0,
+        // so availableMemoryMB must be absent from the result.
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+      const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+      Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+
+      try {
+        const result = nimModule.detectGpu();
+        expect(result).toMatchObject({
+          type: "apple",
+          name: "Apple M2",
+          totalMemoryMB: 16384,
+        });
+        expect(result?.availableMemoryMB).toBeUndefined();
+      } finally {
+        if (originalPlatform) {
+          Object.defineProperty(process, "platform", originalPlatform);
+        }
+        restore();
+      }
+    });
   });
 
   describe("groupGpusByName", () => {

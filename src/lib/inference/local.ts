@@ -798,17 +798,27 @@ export function resolveNonInteractiveOllamaModel(
       `  ! Requested Ollama model '${explicit}' is unlikely to fit currently available GPU memory; ` +
         `falling back to '${fallback}'. Override by freeing memory and re-running, or unset NEMOCLAW_MODEL.`,
     );
+    if (!anyRegistryModelFits(gpu)) {
+      warnNoBootstrapModelFits(gpu, log);
+    }
     return fallback;
   }
   if (!explicit && !anyRegistryModelFits(gpu)) {
-    const memory = effectiveGpuMemoryMB(gpu);
-    log(
-      `  ! No known Ollama bootstrap model fits the host's currently available GPU memory` +
-        `${memory ? ` (~${memory} MB free)` : ""}. Proceeding with the smallest known model; ` +
-        "the runner may still reject the load — free memory and re-run if it does.",
-    );
+    warnNoBootstrapModelFits(gpu, log);
   }
   return explicit || getDefaultOllamaModel(gpu);
+}
+
+function warnNoBootstrapModelFits(
+  gpu: GpuInfo | null,
+  log: (message: string) => void,
+): void {
+  const memory = effectiveGpuMemoryMB(gpu);
+  log(
+    `  ! No known Ollama bootstrap model fits the host's currently available GPU memory` +
+      `${memory ? ` (~${memory} MB free)` : ""}. Proceeding with the smallest known model; ` +
+      "the runner may still reject the load — free memory and re-run if it does.",
+  );
 }
 
 export function getDefaultOllamaModel(

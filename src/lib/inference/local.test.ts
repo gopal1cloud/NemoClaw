@@ -651,6 +651,39 @@ describe("local inference helpers", () => {
     ).toBe(QWEN3_6_OLLAMA_MODEL);
   });
 
+  it("resolveNonInteractiveOllamaModel surfaces the no-fit warning when even the smallest model exceeds available memory", async () => {
+    const { resolveNonInteractiveOllamaModel } = await import(
+      "../../../dist/lib/inference/local"
+    );
+    const messages: string[] = [];
+    const log = (m: string) => messages.push(m);
+
+    // Explicit oversize tag AND host has less than the smallest registry
+    // entry needs. The explicit-downgrade warning fires *and* the no-fit
+    // warning fires so the user sees both signals.
+    const result = resolveNonInteractiveOllamaModel(
+      "qwen3.6:35b",
+      null,
+      { type: "nvidia", totalMemoryMB: 16_384, availableMemoryMB: 4_000 },
+      log,
+    );
+    expect(result).toBe("qwen2.5:7b");
+    expect(messages.some((m) => m.includes("qwen3.6:35b"))).toBe(true);
+    expect(messages.some((m) => m.includes("No known Ollama bootstrap model fits"))).toBe(true);
+
+    // No explicit choice + nothing fits: only the no-fit warning fires.
+    messages.length = 0;
+    expect(
+      resolveNonInteractiveOllamaModel(
+        null,
+        null,
+        { type: "nvidia", totalMemoryMB: 16_384, availableMemoryMB: 4_000 },
+        log,
+      ),
+    ).toBe("qwen2.5:7b");
+    expect(messages.some((m) => m.includes("No known Ollama bootstrap model fits"))).toBe(true);
+  });
+
   it("offers the large Ollama model on Apple Silicon with sufficient unified memory", () => {
     expect(
       getBootstrapOllamaModelOptions({
