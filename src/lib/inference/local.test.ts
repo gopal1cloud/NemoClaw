@@ -554,19 +554,21 @@ describe("local inference helpers", () => {
 
   it("falls back to bootstrap model options when no Ollama models are installed", () => {
     expect(getBootstrapOllamaModelOptions(null)).toEqual(["qwen2.5:7b"]);
+    // Below every registry entry's required memory: small only.
     expect(
       getBootstrapOllamaModelOptions({
         type: "nvidia",
-        totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB - 1,
+        totalMemoryMB: 10_000,
       }),
     ).toEqual(["qwen2.5:7b"]);
+    // Comfortably above every registry entry's required memory: all options.
     expect(
       getBootstrapOllamaModelOptions({
         type: "nvidia",
         totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB,
       }),
     ).toEqual(["qwen2.5:7b", DEFAULT_OLLAMA_MODEL, QWEN3_6_OLLAMA_MODEL]);
-    expect(getDefaultOllamaModel({ type: "nvidia", totalMemoryMB: 16384 }, () => "")).toBe(
+    expect(getDefaultOllamaModel({ type: "nvidia", totalMemoryMB: 10_000 }, () => "")).toBe(
       "qwen2.5:7b",
     );
     expect(
@@ -575,6 +577,26 @@ describe("local inference helpers", () => {
         () => "",
       ),
     ).toBe(QWEN3_6_OLLAMA_MODEL);
+  });
+
+  it("downgrades the bootstrap menu when currently available memory is low (#4113)", () => {
+    // DGX Spark with another GPU workload eating the system pool: 128 GiB
+    // total, ~12 GiB currently free. The 23 GiB qwen3.6:35b model would
+    // crash the runner mid-load, so the bootstrap menu must only offer the
+    // small model.
+    expect(
+      getBootstrapOllamaModelOptions({
+        type: "nvidia",
+        totalMemoryMB: 131_072,
+        availableMemoryMB: 12_000,
+      }),
+    ).toEqual(["qwen2.5:7b"]);
+    expect(
+      getDefaultOllamaModel(
+        { type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 12_000 },
+        () => "",
+      ),
+    ).toBe("qwen2.5:7b");
   });
 
   it("offers the large Ollama model on Apple Silicon with sufficient unified memory", () => {

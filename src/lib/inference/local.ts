@@ -19,6 +19,7 @@ const { shellQuote, runCapture, runCaptureEx } = require("../runner");
 
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
+import { fittableOllamaModelTags } from "./ollama-model-registry";
 
 const { containerCanReachHostLoopback, inferContainerRuntime, isWsl } = require("../platform");
 const { dockerInfo } = require("../adapters/docker/info");
@@ -125,6 +126,13 @@ export interface GpuInfo {
   // does not get sized as if it were confirmed NVIDIA / Apple Silicon
   // (#3510).
   type?: string;
+  // Currently free GPU memory at probe time. Populated by `detectGpu` from
+  // `nvidia-smi memory.free` (or `MemAvailable` on unified-memory hosts).
+  // Used by the bootstrap-model selector so an idle 128 GiB Spark and a
+  // 128 GiB Spark with another GPU workload eating 116 GiB do not get the
+  // same model recommendation. Absent => the selector falls back to
+  // `totalMemoryMB`, preserving the pre-#4113 behaviour.
+  availableMemoryMB?: number;
 }
 
 export interface ValidationResult {
@@ -734,26 +742,13 @@ export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
   return parseOllamaList(listOutput);
 }
 
-function isLargeOllamaCapableGpu(gpu: GpuInfo | null): boolean {
-  // Only confirmed-NVIDIA and Apple-Silicon devices get the large-model
-  // default.  Other detection outcomes (null, missing `type`, or a partial
-  // result that fell through the NVIDIA path with type set to something
-  // else) fall back to the smaller model so we never download a 22 GB
-  // model onto a host whose acceleration is unconfirmed (#3510).
-  return (
-    !!gpu &&
-    (gpu.type === "nvidia" || gpu.type === "apple") &&
-    gpu.totalMemoryMB >= LARGE_OLLAMA_MIN_MEMORY_MB
-  );
-}
-
 export function getBootstrapOllamaModelOptions(gpu: GpuInfo | null): string[] {
-  const options = [SMALL_OLLAMA_MODEL];
-  if (isLargeOllamaCapableGpu(gpu)) {
-    options.push(DEFAULT_OLLAMA_MODEL);
-    options.push(QWEN3_6_OLLAMA_MODEL);
-  }
-  return options;
+  // Delegate to the registry so the menu reflects what the host can
+  // actually load right now (#4113). Only confirmed-NVIDIA and
+  // Apple-Silicon devices get larger options; ambiguous types fall back to
+  // the smallest model so we never download a 22 GB model onto a host
+  // whose acceleration is unconfirmed (#3510).
+  return fittableOllamaModelTags(gpu);
 }
 
 export function getDefaultOllamaModel(
@@ -762,10 +757,11 @@ export function getDefaultOllamaModel(
 ): string {
   const models = getOllamaModelOptions(runCaptureImpl);
   if (models.length === 0) {
-    if (isLargeOllamaCapableGpu(gpu)) {
-      return QWEN3_6_OLLAMA_MODEL;
-    }
-    return SMALL_OLLAMA_MODEL;
+    // No installed models — pick the largest registry entry that fits the
+    // host's currently available memory (the last element of the
+    // smallest-first list returned by fittableOllamaModelTags).
+    const fittable = fittableOllamaModelTags(gpu);
+    return fittable[fittable.length - 1];
   }
   return models.includes(DEFAULT_OLLAMA_MODEL) ? DEFAULT_OLLAMA_MODEL : models[0];
 }

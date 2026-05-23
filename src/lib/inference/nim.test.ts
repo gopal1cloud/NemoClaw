@@ -196,16 +196,18 @@ describe("nim", () => {
     });
 
     it("populates name and memory from primary nvidia-smi path", () => {
-      // Primary path returns name+memory.total in a single CSV line per GPU.
-      // Regression guard for #2669: the GB300 preflight line was missing the
-      // GPU model because only memory.total was being queried.
+      // Primary path returns name+memory.total+memory.free in a single CSV
+      // line per GPU. Regression guard for #2669: the GB300 preflight line
+      // was missing the GPU model because only memory.total was being
+      // queried. memory.free was added in #4113 so the bootstrap-model
+      // selector can size against currently free memory, not just total.
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (
           cmd[0] === "nvidia-smi" &&
           cmd.some((a: string) => a.includes("name,memory.total"))
         ) {
-          return "NVIDIA GB300, 284208\n";
+          return "NVIDIA GB300, 284208, 280000\n";
         }
         return "";
       });
@@ -217,6 +219,7 @@ describe("nim", () => {
           name: "NVIDIA GB300",
           count: 1,
           totalMemoryMB: 284208,
+          availableMemoryMB: 280000,
           perGpuMB: 284208,
         });
       } finally {
@@ -231,7 +234,7 @@ describe("nim", () => {
           cmd[0] === "nvidia-smi" &&
           cmd.some((a: string) => a.includes("name,memory.total"))
         ) {
-          return "NVIDIA H100 80GB HBM3, 81920\nNVIDIA H100 80GB HBM3, 81920\n";
+          return "NVIDIA H100 80GB HBM3, 81920, 81000\nNVIDIA H100 80GB HBM3, 81920, 60000\n";
         }
         return "";
       });
@@ -265,7 +268,7 @@ describe("nim", () => {
           cmd[0] === "nvidia-smi" &&
           cmd.some((a: string) => a.includes("name,memory.total"))
         ) {
-          return "NVIDIA RTX A,B, 81920\n";
+          return "NVIDIA RTX A,B, 81920, 80000\n";
         }
         return "";
       });
@@ -295,7 +298,7 @@ describe("nim", () => {
           cmd[0] === "nvidia-smi" &&
           cmd.some((a: string) => a.includes("name,memory.total"))
         ) {
-          return "NVIDIA RTX PRO 6000 Blackwell Max-Q, 97887\nNVIDIA GB300, 256703\n";
+          return "NVIDIA RTX PRO 6000 Blackwell Max-Q, 97887, 90000\nNVIDIA GB300, 256703, 250000\n";
         }
         return "";
       });
@@ -329,7 +332,7 @@ describe("nim", () => {
           cmd[0] === "nvidia-smi" &&
           cmd.some((a: string) => a.includes("name,memory.total"))
         ) {
-          return "JMJWOA-Generic-GPU, 65471\n";
+          return "JMJWOA-Generic-GPU, 65471, 65000\n";
         }
         return "";
       });
@@ -359,7 +362,7 @@ describe("nim", () => {
           cmd[0] === "nvidia-smi" &&
           cmd.some((a: string) => a.includes("name,memory.total"))
         ) {
-          return "NVIDIA JMJWOA-Generic-GPU, 65471\n";
+          return "NVIDIA JMJWOA-Generic-GPU, 65471, 65000\n";
         }
         return "";
       });
@@ -385,7 +388,7 @@ describe("nim", () => {
           cmd[0] === "nvidia-smi" &&
           cmd.some((a: string) => a.includes("name,memory.total"))
         ) {
-          return "JMJWOA-Generic-GPU, 131072\n";
+          return "JMJWOA-Generic-GPU, 131072, 12000\n";
         }
         return "";
       });
