@@ -200,7 +200,6 @@ export class TraceCollector {
 
   flush(finalStatus: TraceStatusCode = "OK", message?: string): string | null {
     if (this.flushed) return this.outputPath;
-    this.flushed = true;
     while (this.spanStack.length > 0) {
       const span = this.spanStack.pop();
       if (span) this.endSpan(span, finalStatus, message);
@@ -250,25 +249,32 @@ export class TraceCollector {
     };
     fs.mkdirSync(path.dirname(this.outputPath), { recursive: true, mode: 0o700 });
     fs.writeFileSync(this.outputPath, `${JSON.stringify(artifact, null, 2)}\n`, { mode: 0o600 });
+    this.flushed = true;
     return this.outputPath;
   }
 }
 
 let collector: TraceCollector | null | undefined;
+let exitHandler: ((code: number) => void) | null = null;
 
 export function getTraceCollector(): TraceCollector | null {
   if (collector !== undefined) return collector;
   const tracePath = resolveTracePath(process.env);
   collector = tracePath ? new TraceCollector(tracePath) : null;
   if (collector) {
-    process.once("exit", (code) => {
+    exitHandler = (code) => {
       collector?.flush(code === 0 ? "OK" : "ERROR", `process exited with code ${code}`);
-    });
+    };
+    process.once("exit", exitHandler);
   }
   return collector;
 }
 
 export function resetTraceForTests(): void {
+  if (exitHandler) {
+    process.removeListener("exit", exitHandler);
+  }
+  exitHandler = null;
   collector = undefined;
 }
 

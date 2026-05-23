@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../../../state/onboard-session";
+import { withPreflightTrace } from "../../tracing";
 
 export type PreflightSandboxGpuFlag = "enable" | "disable" | null;
 
@@ -117,7 +118,7 @@ export async function handlePreflightState<
     deps.assertCdiNvidiaGpuSpecPresent(deps.assessHost(), resumeOptedOutGpuPassthrough);
   } else {
     await deps.startRecordedStep("preflight");
-    gpu = await deps.runPreflight({ optedOutGpuPassthrough: noGpu });
+    gpu = await withPreflightTrace(() => deps.runPreflight({ optedOutGpuPassthrough: noGpu }));
     session = await deps.recordStepComplete("preflight");
   }
 

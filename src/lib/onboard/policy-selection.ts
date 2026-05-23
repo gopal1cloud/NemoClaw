@@ -6,6 +6,7 @@ import {
   HERMES_TOOL_GATEWAY_PRESET_NAMES,
   mergeRequiredHermesToolGatewayPolicyPresets,
 } from "./hermes-managed-tools";
+import { withPolicyApplicationTrace } from "./tracing";
 
 type Preset = { name: string; access?: string };
 type SupportOptions = { webSearchSupported?: boolean | null };
@@ -123,6 +124,16 @@ export function computeSetupPresetSuggestions(
 }
 
 export async function setupPoliciesWithSelection(
+  deps: SetupPolicySelectionDeps,
+  sandboxName: string,
+  options: SetupPolicySelectionOptions = {},
+): Promise<string[]> {
+  return withPolicyApplicationTrace(sandboxName, options, () =>
+    setupPoliciesWithSelectionInner(deps, sandboxName, options),
+  );
+}
+
+async function setupPoliciesWithSelectionInner(
   deps: SetupPolicySelectionDeps,
   sandboxName: string,
   options: SetupPolicySelectionOptions = {},

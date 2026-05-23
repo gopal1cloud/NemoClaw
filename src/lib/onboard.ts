@@ -78,7 +78,8 @@ const {
 }: typeof import("./onboard/gateway-gpu-passthrough") = require("./onboard/gateway-gpu-passthrough");
 const { syncPresetSelection }: typeof import("./onboard/policy-preset-sync") = require("./onboard/policy-preset-sync");
 const { maybeForceE2eStepFailure }: typeof import("./onboard/e2e-failure-injection") = require("./onboard/e2e-failure-injection");
-const trace: typeof import("./trace") = require("./trace");
+const onboardTracing: typeof import("./onboard/tracing") = require("./onboard/tracing");
+const sandboxReadinessTracing: typeof import("./onboard/sandbox-readiness-tracing") = require("./onboard/sandbox-readiness-tracing");
 const {
   gatherWechatConfig,
   hasWechatConfigDrift,
@@ -1694,18 +1695,13 @@ function upsertProvider(
   baseUrl: string | null,
   env: NodeJS.ProcessEnv = {},
 ) {
-  const result = trace.withTraceSpan(
-    "nemoclaw.policy.provider_upsert",
-    { provider: name, provider_type: type, credential_env: credentialEnv, base_url: baseUrl },
-    () =>
-      onboardProviders.upsertProvider(
-        name,
-        type,
-        credentialEnv,
-        baseUrl,
-        env,
-        runOpenshell,
-      ),
+  const result = onboardProviders.upsertProvider(
+    name,
+    type,
+    credentialEnv,
+    baseUrl,
+    env,
+    runOpenshell,
   );
   if (result.ok && credentialEnv) {
     const stagedValue = stagedLegacyValues.get(credentialEnv);
@@ -1768,11 +1764,7 @@ function verifyDirectSandboxGpu(sandboxName: string): void {
 }
 
 function upsertMessagingProviders(tokenDefs: MessagingTokenDef[]) {
-  const upserted = trace.withTraceSpan(
-    "nemoclaw.policy.messaging_provider_upsert",
-    { provider_count: tokenDefs.length, providers: tokenDefs.map(({ name }) => name) },
-    () => onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell),
-  );
+  const upserted = onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell);
   // upsertMessagingProviders process.exits on failure, so reaching this
   // point means every entry in tokenDefs that had a token was registered.
   // Mark migrated only when the registered token equals the staged legacy
@@ -2145,11 +2137,7 @@ async function validateOpenAiLikeSelection(
   } = {},
 ): Promise<EndpointValidationResult> {
   const apiKey = credentialEnv ? getCredential(credentialEnv) : "";
-  const probe = trace.withTraceSpan(
-    "nemoclaw.inference.validation.openai_like",
-    { provider_label: label, model, credential_env: credentialEnv, endpoint_url: endpointUrl },
-    () => probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options),
-  );
+  const probe = probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options);
   if (!probe.ok) {
     console.error(`  ${label} endpoint validation failed.`);
     console.error(`  ${probe.message}`);
@@ -2185,11 +2173,7 @@ async function validateAnthropicSelectionWithRetryMessage(
   helpUrl: string | null = null,
 ): Promise<EndpointValidationResult> {
   const apiKey = getCredential(credentialEnv);
-  const probe = trace.withTraceSpan(
-    "nemoclaw.inference.validation.anthropic",
-    { provider_label: label, model, credential_env: credentialEnv, endpoint_url: endpointUrl },
-    () => probeAnthropicEndpoint(endpointUrl, model, apiKey),
-  );
+  const probe = probeAnthropicEndpoint(endpointUrl, model, apiKey);
   if (!probe.ok) {
     console.error(`  ${label} endpoint validation failed.`);
     console.error(`  ${probe.message}`);
@@ -2220,16 +2204,11 @@ async function validateCustomOpenAiLikeSelection(
   helpUrl: string | null = null,
 ): Promise<EndpointValidationResult> {
   const apiKey = getCredential(credentialEnv);
-  const probe = trace.withTraceSpan(
-    "nemoclaw.inference.validation.custom_openai_like",
-    { provider_label: label, model, credential_env: credentialEnv, endpoint_url: endpointUrl },
-    () =>
-      probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, {
-        requireResponsesToolCalling: true,
-        skipResponsesProbe: shouldForceCompletionsApi(process.env.NEMOCLAW_PREFERRED_API),
-        probeStreaming: true,
-      }),
-  );
+  const probe = probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, {
+    requireResponsesToolCalling: true,
+    skipResponsesProbe: shouldForceCompletionsApi(process.env.NEMOCLAW_PREFERRED_API),
+    probeStreaming: true,
+  });
   if (probe.ok) {
     if (probe.note) {
       console.log(`  ℹ ${probe.note}`);
@@ -2264,11 +2243,7 @@ async function validateCustomAnthropicSelection(
   helpUrl: string | null = null,
 ): Promise<EndpointValidationResult> {
   const apiKey = getCredential(credentialEnv);
-  const probe = trace.withTraceSpan(
-    "nemoclaw.inference.validation.custom_anthropic",
-    { provider_label: label, model, credential_env: credentialEnv, endpoint_url: endpointUrl },
-    () => probeAnthropicEndpoint(endpointUrl, model, apiKey),
-  );
+  const probe = probeAnthropicEndpoint(endpointUrl, model, apiKey);
   if (probe.ok) {
     console.log(`  ${probe.label} available — ${agentProductName()} will use ${probe.api}.`);
     return { ok: true, api: probe.api };
@@ -3227,49 +3202,15 @@ async function ensureNamedCredential(
 }
 
 function waitForSandboxReady(sandboxName: string, attempts = 10, delaySeconds = 2): boolean {
-  return trace.withTraceSpan(
-    "nemoclaw.sandbox.readiness_wait",
-    { sandbox_name: sandboxName, attempts, delay_seconds: delaySeconds },
-    () => {
-      for (let i = 0; i < attempts; i += 1) {
-        const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-        if (isSandboxReady(list, sandboxName)) {
-          trace.addTraceEvent("ready", { attempt: i + 1, source: "sandbox_list" });
-          return true;
-        }
-
-        // Package-managed OpenShell gateways report readiness through
-        // `sandbox list`; legacy Kubernetes gateways may still expose pod state.
-        if (isLinuxDockerDriverGatewayEnabled()) {
-          if (i < attempts - 1) sleep(delaySeconds);
-          continue;
-        }
-        const podPhase = runCaptureOpenshell(
-          [
-            "doctor",
-            "exec",
-            "--",
-            "kubectl",
-            "-n",
-            "openshell",
-            "get",
-            "pod",
-            sandboxName,
-            "-o",
-            "jsonpath={.status.phase}",
-          ],
-          { ignoreError: true },
-        );
-        if (podPhase === "Running") {
-          trace.addTraceEvent("ready", { attempt: i + 1, source: "pod_phase" });
-          return true;
-        }
-        sleep(delaySeconds);
-      }
-      trace.addTraceEvent("not_ready", { attempts });
-      return false;
-    },
-  );
+  return sandboxReadinessTracing.waitForSandboxReadyWithTrace({
+    sandboxName,
+    attempts,
+    delaySeconds,
+    runCaptureOpenshell,
+    isSandboxReady,
+    isLinuxDockerDriverGatewayEnabled,
+    sleep,
+  });
 }
 
 // parsePolicyPresetEnv — see urlUtils import above
@@ -5541,28 +5482,16 @@ async function createSandbox(
     timeoutSecs: sandboxReadyTimeoutSecs,
     deps: { runOpenshell, runCaptureOpenshell, sleep },
   });
-  const createResult = await trace.withTraceSpan(
-    "nemoclaw.sandbox.create_stream",
-    {
-      sandbox_name: sandboxName,
-      provider,
-      model,
-      timeout_seconds: sandboxReadyTimeoutSecs,
-      from_dockerfile: Boolean(fromDockerfile),
-      gpu_enabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
+  const createResult = await streamSandboxCreate(createCommand, sandboxEnv, {
+    readyCheck: () => {
+      const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+      if (isSandboxReady(list, sandboxName)) return true;
+      dockerGpuCreatePatch.maybeApplyDuringCreate();
+      return false;
     },
-    () =>
-      streamSandboxCreate(createCommand, sandboxEnv, {
-        readyCheck: () => {
-          const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-          if (isSandboxReady(list, sandboxName)) return true;
-          dockerGpuCreatePatch.maybeApplyDuringCreate();
-          return false;
-        },
-        failureCheck: dockerGpuCreatePatch.createFailureMessage,
-        traceEvent: trace.addTraceEvent,
-      }),
-  );
+    failureCheck: dockerGpuCreatePatch.createFailureMessage,
+    traceEvent: onboardTracing.addTraceEvent,
+  });
 
   if (initialSandboxPolicy.cleanup && initialSandboxPolicy.cleanup()) {
     process.removeListener("exit", initialSandboxPolicy.cleanup);
@@ -5611,23 +5540,13 @@ async function createSandbox(
   // without this gate, NemoClaw registers a phantom sandbox that
   // causes "sandbox not found" on every subsequent connect/status call.
   console.log("  Waiting for sandbox to become ready...");
-  const ready = trace.withTraceSpan(
-    "nemoclaw.sandbox.readiness_wait",
-    { sandbox_name: sandboxName, timeout_seconds: sandboxReadyTimeoutSecs },
-    () => {
-      const readyAttempts = Math.max(1, Math.ceil(sandboxReadyTimeoutSecs / 2));
-      for (let i = 0; i < readyAttempts; i++) {
-        const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-        if (isSandboxReady(list, sandboxName)) {
-          trace.addTraceEvent("ready", { attempt: i + 1 });
-          return true;
-        }
-        if (i < readyAttempts - 1) sleep(2);
-      }
-      trace.addTraceEvent("not_ready", { attempts: readyAttempts });
-      return false;
-    },
-  );
+  const ready = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
+    sandboxName,
+    timeoutSecs: sandboxReadyTimeoutSecs,
+    runCaptureOpenshell,
+    isSandboxReady,
+    sleep,
+  });
 
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
@@ -5680,30 +5599,12 @@ async function createSandbox(
   // Probes /health endpoint and accepts 200 or 401 (device auth) as "alive".
   // Previously used `curl -sf` which failed on 401, causing false negatives. Fixes #2342.
   console.log("  Waiting for NemoClaw dashboard to become ready...");
-  trace.withTraceSpan(
-    "nemoclaw.dashboard.readiness_wait",
-    { sandbox_name: sandboxName, port: effectiveDashboardPort, attempts: 15 },
-    () => {
-      for (let i = 0; i < 15; i++) {
-        const readyOutput = runCaptureOpenshell(
-          ["sandbox", "exec", "-n", sandboxName, "--", "curl", "-so", "/dev/null", "-w", "%{http_code}",
-            "--max-time", "3", `http://localhost:${effectiveDashboardPort}/health`],
-          { ignoreError: true },
-        );
-        const readyCode = parseInt((readyOutput || "").trim(), 10) || 0;
-        trace.addTraceEvent("dashboard_probe", { attempt: i + 1, http_status: readyCode });
-        if (readyCode === 200 || readyCode === 401) {
-          console.log("  ✓ Dashboard is live");
-          return;
-        }
-        if (i === 14) {
-          console.warn("  Dashboard taking longer than expected to start. Continuing...");
-        } else {
-          sleep(2);
-        }
-      }
-    },
-  );
+  sandboxReadinessTracing.waitForDashboardReadyWithTrace({
+    sandboxName,
+    port: effectiveDashboardPort,
+    runCaptureOpenshell,
+    sleep,
+  });
 
   if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
     try {
@@ -8523,34 +8424,24 @@ async function setupPoliciesWithSelection(
   sandboxName: string,
   options: SetupPolicySelectionOptions = {},
 ) {
-  const selectedTier = await trace.withTraceSpan(
-    "nemoclaw.policy.application",
+  const selectedTier = await setupPoliciesWithSelectionImpl(
     {
-      sandbox_name: sandboxName,
-      selected_presets: options.selectedPresets ?? null,
-      provider: options.provider ?? null,
-      web_search_supported: options.webSearchSupported ?? null,
+      policies,
+      tiers,
+      localInferenceProviders: LOCAL_INFERENCE_PROVIDERS,
+      step,
+      note,
+      isNonInteractive,
+      waitForSandboxReady,
+      syncPresetSelection,
+      selectPolicyTier,
+      setPolicyTier: (sandbox, tierName) => registry.updateSandbox(sandbox, { policyTier: tierName }),
+      selectTierPresetsAndAccess,
+      parsePolicyPresetEnv,
+      env: process.env,
     },
-    () =>
-      setupPoliciesWithSelectionImpl(
-        {
-          policies,
-          tiers,
-          localInferenceProviders: LOCAL_INFERENCE_PROVIDERS,
-          step,
-          note,
-          isNonInteractive,
-          waitForSandboxReady,
-          syncPresetSelection,
-          selectPolicyTier,
-          setPolicyTier: (sandbox, tierName) => registry.updateSandbox(sandbox, { policyTier: tierName }),
-          selectTierPresetsAndAccess,
-          parsePolicyPresetEnv,
-          env: process.env,
-        },
-        sandboxName,
-        options,
-      ),
+    sandboxName,
+    options,
   );
   return selectedTier;
 }
@@ -9036,16 +8927,7 @@ function skippedStepMessage(
 
 async function onboard(opts: OnboardOptions = {}): Promise<void> {
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
-  const traceCollector = trace.getTraceCollector();
-  const onboardTraceSpan = traceCollector?.startSpan("nemoclaw.onboard", {
-    resume: opts.resume === true,
-    fresh: opts.fresh === true,
-    non_interactive: opts.nonInteractive === true || process.env.NEMOCLAW_NON_INTERACTIVE === "1",
-    agent: opts.agent || process.env.NEMOCLAW_AGENT || null,
-    trace_enabled: Boolean(process.env.NEMOCLAW_TRACE),
-    trace_file_enabled: Boolean(process.env.NEMOCLAW_TRACE_FILE),
-    trace_dir_enabled: Boolean(process.env.NEMOCLAW_TRACE_DIR),
-  });
+  const onboardTrace = onboardTracing.startOnboardTrace(opts, process.env);
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
@@ -9396,10 +9278,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         getSandbox: registry.getSandbox.bind(registry),
         getResumeSandboxGpuOverrides,
         detectGpu: nim.detectGpu,
-        runPreflight: (preflightOptions) =>
-          trace.withTraceSpan("nemoclaw.onboard.phase.preflight", {}, () =>
-            preflight({ ...opts, ...preflightOptions }),
-          ),
+        runPreflight: (preflightOptions) => preflight({ ...opts, ...preflightOptions }),
         assessHost,
         assertCdiNvidiaGpuSpecPresent,
         resolveSandboxGpuConfig,
@@ -9476,15 +9355,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         skippedStepMessage,
         note,
         startRecordedStep,
-        startGateway: (gatewayGpu, gatewayOptions) =>
-          trace.withTraceSpan(
-            "nemoclaw.onboard.phase.gateway",
-            {
-              reuse_state: gatewaySnapshot.gatewayReuseState,
-              gpu_passthrough: gatewayOptions.gpuPassthrough,
-            },
-            () => startGateway(gatewayGpu, gatewayOptions),
-          ),
+        startGateway,
         recordStepComplete,
         exitProcess: (code) => process.exit(code),
       },
@@ -9540,9 +9411,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         // otherwise leave a phantom that `nemoclaw list` resurrects until
         // manually destroyed.
         await startRecordedStep("provider_selection");
-        const selection = await trace.withTraceSpan(
-          "nemoclaw.onboard.phase.provider_selection",
-          { sandbox_name: sandboxName, agent: agent?.name ?? null },
+        const selection = await onboardTracing.withProviderSelectionTrace(
+          sandboxName,
+          agent?.name,
           () => setupNim(gpu, sandboxName, agent),
         );
         model = selection.model;
@@ -9589,14 +9460,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             sandboxName = await promptValidatedSandboxName(agent);
           }
           await startRecordedStep("inference", { provider: selectedProvider, model: selectedModel });
-          const inferenceResult = await trace.withTraceSpan(
-            "nemoclaw.onboard.phase.inference",
-            {
-              sandbox_name: sandboxName,
-              provider: selectedProvider,
-              model: selectedModel,
-              credential_env: credentialEnv,
-            },
+          const inferenceResult = await onboardTracing.withInferenceTrace(
+            sandboxName,
+            selectedProvider,
+            selectedModel,
+            credentialEnv,
             () =>
               setupInference(
                 sandboxName,
@@ -9672,14 +9540,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       }
 
       await startRecordedStep("inference", { provider, model });
-      const inferenceResult = await trace.withTraceSpan(
-        "nemoclaw.onboard.phase.inference",
-        {
-          sandbox_name: sandboxName,
-          provider: selectedProvider,
-          model: selectedModel,
-          credential_env: credentialEnv,
-        },
+      const inferenceResult = await onboardTracing.withInferenceTrace(
+        sandboxName,
+        selectedProvider,
+        selectedModel,
+        credentialEnv,
         () =>
           setupInference(
             sandboxName,
@@ -9874,9 +9739,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       if (fresh) {
         stopStaleDashboardListenersForSandbox(registry.listSandboxes().sandboxes, sandboxName);
       }
-      sandboxName = await trace.withTraceSpan(
-        "nemoclaw.onboard.phase.sandbox",
-        { sandbox_name: sandboxName, provider, model, agent: agent?.name ?? null },
+      sandboxName = await onboardTracing.withSandboxPhaseTrace(
+        sandboxName,
+        provider,
+        model,
+        agent?.name,
         () =>
           createSandbox(
             gpu,
@@ -10144,10 +10011,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   } finally {
     releaseOnboardLock();
     onboardRuntimeBoundary.clear();
-    if (onboardTraceSpan) {
-      traceCollector?.endSpan(onboardTraceSpan, traceCompleted ? "OK" : "ERROR");
-      trace.flushTrace(traceCompleted ? "OK" : "ERROR");
-    }
+    onboardTracing.finishOnboardTrace(onboardTrace, traceCompleted);
   }
 }
 

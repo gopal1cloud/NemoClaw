@@ -96,6 +96,10 @@ function getCurlProbeTraceAttributes(argv: string[], opts: CurlProbeOptions): Re
   };
 }
 
+function emitCurlResultTraceEvent(attributes: Record<string, unknown>): void {
+  addTraceEvent("curl_result", attributes);
+}
+
 export function summarizeCurlFailure(curlStatus = 0, stderr = "", body = ""): string {
   const detail = compactText(stderr || body);
   return detail
@@ -196,7 +200,7 @@ function runCurlProbeImpl(argv: string[], opts: CurlProbeOptions = {}): CurlProb
         stderr: errorMessage,
         message: summarizeProbeFailure(body, 0, errorCode, errorMessage),
       };
-      addTraceEvent("curl_result", { ok: false, http_status: 0, curl_status: errorCode });
+      emitCurlResultTraceEvent({ ok: false, http_status: 0, curl_status: errorCode });
       return failure;
     }
     const status = Number(String(result.stdout || "").trim());
@@ -213,7 +217,7 @@ function runCurlProbeImpl(argv: string[], opts: CurlProbeOptions = {}): CurlProb
         String(result.stderr || ""),
       ),
     };
-    addTraceEvent("curl_result", {
+    emitCurlResultTraceEvent({
       ok: probeResult.ok,
       http_status: probeResult.httpStatus,
       curl_status: probeResult.curlStatus,
@@ -233,7 +237,7 @@ function runCurlProbeImpl(argv: string[], opts: CurlProbeOptions = {}): CurlProb
         detail,
       ),
     };
-    addTraceEvent("curl_result", { ok: false, http_status: 0, curl_status: probeResult.curlStatus });
+    emitCurlResultTraceEvent({ ok: false, http_status: 0, curl_status: probeResult.curlStatus });
     return probeResult;
   } finally {
     cleanupTempDir(bodyFile, "nemoclaw-curl-probe");
@@ -302,6 +306,7 @@ function runChatCompletionsStreamingProbeImpl(
       const errorMessage = compactText(
         `${result.error.message || String(result.error)} ${String(result.stderr || "")}`,
       );
+      emitCurlResultTraceEvent({ ok: false, http_status: 0, curl_status: errorCode });
       return {
         ok: false,
         httpStatus: 0,
@@ -317,6 +322,7 @@ function runChatCompletionsStreamingProbeImpl(
     const hasStreamingData = hasChatCompletionsStreamingData(body);
     const httpOk = Number.isFinite(status) && status >= 200 && status < 300;
     if (httpOk && hasStreamingData && (curlStatus === 0 || curlStatus === 28)) {
+      emitCurlResultTraceEvent({ ok: true, http_status: status, curl_status: curlStatus });
       return {
         ok: true,
         httpStatus: status,
@@ -331,6 +337,11 @@ function runChatCompletionsStreamingProbeImpl(
       httpOk && !hasStreamingData
         ? `HTTP ${status}: chat completions stream did not return SSE data`
         : summarizeProbeFailure(body, status || 0, curlStatus, String(result.stderr || ""));
+    emitCurlResultTraceEvent({
+      ok: false,
+      http_status: Number.isFinite(status) ? status : 0,
+      curl_status: curlStatus,
+    });
     return {
       ok: false,
       httpStatus: Number.isFinite(status) ? status : 0,
@@ -341,17 +352,16 @@ function runChatCompletionsStreamingProbeImpl(
     };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    const curlStatus =
+      typeof error === "object" && error && "status" in error ? Number(error.status) || 1 : 1;
+    emitCurlResultTraceEvent({ ok: false, http_status: 0, curl_status: curlStatus });
     return {
       ok: false,
       httpStatus: 0,
-      curlStatus:
-        typeof error === "object" && error && "status" in error ? Number(error.status) || 1 : 1,
+      curlStatus,
       body: "",
       stderr: detail,
-      message: summarizeCurlFailure(
-        typeof error === "object" && error && "status" in error ? Number(error.status) || 1 : 1,
-        detail,
-      ),
+      message: summarizeCurlFailure(curlStatus, detail),
     };
   } finally {
     cleanupTempDir(bodyFile, "nemoclaw-chat-streaming-probe");
@@ -413,6 +423,11 @@ function runStreamingEventProbeImpl(
       const detail = result.error
         ? String(result.error.message || result.error)
         : String(result.stderr || "");
+      emitCurlResultTraceEvent({
+        ok: false,
+        missing_events_count: REQUIRED_STREAMING_EVENTS.length,
+        curl_status: result.status ?? 1,
+      });
       return {
         ok: false,
         missingEvents: REQUIRED_STREAMING_EVENTS,
@@ -432,6 +447,11 @@ function runStreamingEventProbeImpl(
 
     const missing = REQUIRED_STREAMING_EVENTS.filter((e) => !eventTypes.has(e));
     if (missing.length > 0) {
+      emitCurlResultTraceEvent({
+        ok: false,
+        missing_events_count: missing.length,
+        curl_status: result.status ?? 0,
+      });
       return {
         ok: false,
         missingEvents: missing,
@@ -441,9 +461,17 @@ function runStreamingEventProbeImpl(
       };
     }
 
+    emitCurlResultTraceEvent({ ok: true, missing_events_count: 0, curl_status: result.status ?? 0 });
     return { ok: true, missingEvents: [], message: "" };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    const curlStatus =
+      typeof error === "object" && error && "status" in error ? Number(error.status) || 1 : 1;
+    emitCurlResultTraceEvent({
+      ok: false,
+      missing_events_count: REQUIRED_STREAMING_EVENTS.length,
+      curl_status: curlStatus,
+    });
     return {
       ok: false,
       missingEvents: REQUIRED_STREAMING_EVENTS,

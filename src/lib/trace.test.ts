@@ -158,4 +158,26 @@ describe("onboard trace artifacts", () => {
 
     expect(getTraceCollector()).toBeNull();
   });
+
+  it("removes the registered exit listener when resetting tests", () => {
+    const before = process.listenerCount("exit");
+    withTraceFile(() => {
+      expect(getTraceCollector()).not.toBeNull();
+      expect(process.listenerCount("exit")).toBe(before + 1);
+      resetTraceForTests();
+      expect(process.listenerCount("exit")).toBe(before);
+    });
+  });
+
+  it("does not mark traces flushed when artifact writes fail", () => {
+    const blocker = path.join(os.tmpdir(), `nemoclaw-trace-blocker-${Date.now()}`);
+    fs.writeFileSync(blocker, "not a directory");
+    process.env[TRACE_FILE_ENV] = path.join(blocker, "trace.json");
+    resetTraceForTests();
+    const collector = getTraceCollector();
+    expect(collector).not.toBeNull();
+
+    expect(() => flushTrace()).toThrow();
+    expect(() => collector?.flush()).toThrow();
+  });
 });
