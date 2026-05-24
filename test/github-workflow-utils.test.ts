@@ -9,7 +9,6 @@ import { spawnSync } from "node:child_process";
 import { exportEnv, shellQuote, selectCsvJobs } from "../scripts/github/lib/actions.ts";
 import { runChecked } from "../scripts/github/lib/exec.ts";
 import { shellcheckJsonToSarif } from "../scripts/github/lib/shellcheck-sarif.ts";
-import { extractPreviewUrl, flattenPaginatedComments } from "../scripts/github/fern-preview.ts";
 import { parseOutputMappings } from "../scripts/github/select-jobs.ts";
 import {
   buildFullE2EScript,
@@ -88,25 +87,6 @@ describe("GitHub workflow utility helpers", () => {
       level: "warning",
       message: { text: "Double quote to prevent globbing and word splitting." },
     });
-  });
-
-  it("extracts Fern preview URLs from CLI output", () => {
-    expect(extractPreviewUrl("Published docs to https://preview.example.test/foo\n")).toBe(
-      "https://preview.example.test/foo",
-    );
-    expect(extractPreviewUrl("no url here")).toBeUndefined();
-  });
-
-  it("flattens paginated GitHub comment responses", () => {
-    expect(
-      flattenPaginatedComments([
-        [{ id: 1, body: "first page" }],
-        [{ id: 2, body: "second page" }],
-      ]),
-    ).toEqual([
-      { id: 1, body: "first page" },
-      { id: 2, body: "second page" },
-    ]);
   });
 
   it("writes multiline GitHub environment values using delimiter syntax", () => {
