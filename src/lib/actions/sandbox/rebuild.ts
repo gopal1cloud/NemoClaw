@@ -450,6 +450,9 @@ export async function rebuildSandbox(
       CLI_NAME,
     );
 
+  let sandboxStillExists = true;
+
+  try {
   // Step 2: Backup
   console.log("  Backing up sandbox state...");
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
@@ -533,6 +536,7 @@ export async function rebuildSandbox(
     bail("Failed to delete sandbox.", deleteResult.status || 1);
     return;
   }
+  sandboxStillExists = false;
   removeSandboxRegistryEntry(sandboxName);
   log(
     `Registry after remove: ${JSON.stringify(registry.listSandboxes().sandboxes.map((s: { name: string }) => s.name))}`,
@@ -696,6 +700,10 @@ export async function rebuildSandbox(
     }
   } finally {
     process.exit = _savedExit;
+  }
+
+  if (!onboardFailed) {
+    sandboxStillExists = true;
   }
 
   if (onboardFailed) {
@@ -885,5 +893,10 @@ export async function rebuildSandbox(
       `  ${YW}\u26a0${R} Sandbox '${sandboxName}' rebuilt but state restore was incomplete`,
     );
     console.log(`    Backup available at: ${backupManifest.backupPath}`);
+  }
+  } finally {
+    if (!rebuildShieldsWindow.relocked) {
+      relockShieldsIfNeeded(sandboxStillExists);
+    }
   }
 }
