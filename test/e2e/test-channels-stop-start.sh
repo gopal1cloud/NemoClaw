@@ -510,6 +510,13 @@ run_rebuild() {
   local phase="$1"
   local log="/tmp/nc-channels-${ACTIVE_AGENT}-rebuild-${phase}.log"
   local msg
+  # Pre-release the dashboard port forward before rebuild to avoid a race where
+  # the rebuild's ensureDashboardForward finds the old forward still host-bound,
+  # rolls back the newly-created sandbox, and fails with "Dashboard port became
+  # host-bound during sandbox build".  Other E2E tests (test-rebuild-hermes.sh)
+  # already follow this pattern.
+  openshell forward stop "$ACTIVE_SANDBOX" 2>/dev/null || true
+  sleep 1
   info "Rebuilding ${ACTIVE_SANDBOX} for ${phase}..."
   if nemoclaw "$ACTIVE_SANDBOX" rebuild --yes >"$log" 2>&1; then
     msg="${ACTIVE_AGENT}: rebuild completed after ${phase}"
