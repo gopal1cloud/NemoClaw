@@ -454,4 +454,28 @@ describe("installOllamaOnLinux (system)", () => {
     expect(result.ok).toBe(true);
     expect(waitForHttpImpl).not.toHaveBeenCalled();
   });
+
+  it("launches a local daemon even when only the Windows-host Ollama is reachable (WSL)", () => {
+    // Pre-existing WSL run probed both 127.0.0.1 and host.docker.internal;
+    // the resolver cached host.docker.internal. On a fresh native install the
+    // local daemon is absent — treating the cached Windows-host result as
+    // "Ollama reachable" would leave the freshly installed binary unstarted
+    // and the post-install pin at 127.0.0.1 would point at nothing.
+    const runShellImpl = vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
+    const waitForHttpImpl = vi.fn().mockReturnValue(true);
+    const opts = makeOpts({
+      modeOverride: "system",
+      runCaptureImpl: vi.fn().mockReturnValue("/usr/bin/zstd"),
+      runShellImpl,
+      ensureManagedOllamaLoopbackSystemdOverrideImpl: vi.fn().mockReturnValue("not-applicable"),
+      findReachableOllamaHostImpl: vi.fn().mockReturnValue("host.docker.internal"),
+      waitForHttpImpl,
+    });
+    const result = installOllamaOnLinux(opts);
+    expect(result.ok).toBe(true);
+    const manualStart = findRunShellCall(runShellImpl, "ollama serve");
+    expect(manualStart).toBeDefined();
+    expect(manualStart).toContain("OLLAMA_HOST=127.0.0.1:");
+    expect(waitForHttpImpl).toHaveBeenCalled();
+  });
 });
