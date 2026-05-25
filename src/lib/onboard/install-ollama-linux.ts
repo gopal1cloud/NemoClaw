@@ -20,7 +20,6 @@ const {
   shellQuote,
 }: typeof import("../runner") = require("../runner");
 const {
-  findReachableOllamaHost,
   setResolvedOllamaHost,
 }: typeof import("../inference/local") = require("../inference/local");
 
@@ -70,8 +69,6 @@ export type InstallOllamaLinuxOptions = {
   runShellImpl?: typeof runShell;
   /** Test seam: override systemd loopback override. */
   ensureManagedOllamaLoopbackSystemdOverrideImpl?: typeof ensureManagedOllamaLoopbackSystemdOverride;
-  /** Test seam: override `findReachableOllamaHost`. */
-  findReachableOllamaHostImpl?: typeof findReachableOllamaHost;
   /** Test seam: override `waitForHttp`. */
   waitForHttpImpl?: typeof waitForHttp;
   /** Test seam: override `sleepSeconds`. */
@@ -408,8 +405,6 @@ function installOllamaSystem(opts: InstallOllamaLinuxOptions): InstallOllamaLinu
   const runShellImpl = opts.runShellImpl ?? runShell;
   const sleepSecondsImpl = opts.sleepSecondsImpl ?? sleepSeconds;
   const waitForHttpImpl = opts.waitForHttpImpl ?? waitForHttp;
-  const findReachableOllamaHostImpl =
-    opts.findReachableOllamaHostImpl ?? findReachableOllamaHost;
   const ensureOverrideImpl =
     opts.ensureManagedOllamaLoopbackSystemdOverrideImpl
     ?? ensureManagedOllamaLoopbackSystemdOverride;
@@ -426,10 +421,10 @@ function installOllamaSystem(opts: InstallOllamaLinuxOptions): InstallOllamaLinu
   }
 
   if (overrideState === "not-applicable") {
-    // `findReachableOllamaHost()` is cached for the rest of the onboard run,
-    // so it can echo an earlier 127.0.0.1 success even when the upgrade has
-    // just torn down the daemon. Re-probe loopback fresh here so this
-    // decision reflects the post-install daemon state, not stale cache.
+    // Re-probe loopback fresh here so this decision reflects the
+    // post-install daemon state. The earlier `findReachableOllamaHost`
+    // shortcut was cached for the rest of the onboard run and could echo
+    // a pre-upgrade success while the new daemon was still coming up.
     const localDaemonReachable = waitForHttpImpl(`http://127.0.0.1:${OLLAMA_PORT}/`, 1);
     if (!localDaemonReachable) {
       log("  Starting Ollama...");

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { OLLAMA_PORT } from "../core/ports";
-import { waitForHttp } from "../core/wait";
+import { sleepSeconds, waitForHttp } from "../core/wait";
 
 const { run, runShell }: typeof import("../runner") = require("../runner");
 const {
@@ -17,6 +17,7 @@ export interface InstallOllamaMacOSOptions {
   runImpl?: typeof run;
   runShellImpl?: typeof runShell;
   waitForHttpImpl?: typeof waitForHttp;
+  sleepSecondsImpl?: typeof sleepSeconds;
   log?: (message: string) => void;
   errorLog?: (message: string) => void;
 }
@@ -42,10 +43,23 @@ export function installOllamaOnMacOS(
   const runImpl = opts.runImpl ?? run;
   const runShellImpl = opts.runShellImpl ?? runShell;
   const waitForHttpImpl = opts.waitForHttpImpl ?? waitForHttp;
+  const sleepSecondsImpl = opts.sleepSecondsImpl ?? sleepSeconds;
 
   const upgrade = Boolean(opts.isUpgrade);
   log(`  ${upgrade ? "Upgrading" : "Installing"} Ollama via Homebrew...`);
   runImpl(["brew", upgrade ? "upgrade" : "install", "ollama"], { ignoreError: !upgrade });
+
+  if (upgrade) {
+    // `brew upgrade` installs a fresh binary but does not stop the running
+    // daemon. Without an explicit restart, the stale process keeps owning
+    // `:11434`, the manual `ollama serve` below silently fails to bind,
+    // and the subsequent readiness probe passes against the old daemon.
+    // Stop any running Ollama process so the freshly installed binary owns
+    // the port; brief sleep gives the kernel time to release it.
+    log("  Stopping stale Ollama daemon before relaunching...");
+    runImpl(["pkill", "-x", "ollama"], { ignoreError: true });
+    sleepSecondsImpl(1);
+  }
 
   log("  Starting Ollama...");
   runShellImpl(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {

@@ -23,7 +23,6 @@ function makeOpts(overrides: Partial<InstallOllamaLinuxOptions>): InstallOllamaL
     runShellImpl: vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null }),
     waitForHttpImpl: vi.fn().mockReturnValue(true),
     sleepSecondsImpl: vi.fn(),
-    findReachableOllamaHostImpl: vi.fn().mockReturnValue(null),
     ensureManagedOllamaLoopbackSystemdOverrideImpl: vi.fn().mockReturnValue("ready"),
     fileExistsImpl: vi.fn().mockReturnValue(false),
     readFileImpl: vi.fn().mockReturnValue(""),
@@ -487,13 +486,11 @@ describe("installOllamaOnLinux (system)", () => {
     // false and triggers a manual launch instead of skipping it.
     const runShellImpl = vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
     const waitForHttpImpl = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
-    const findReachableOllamaHostImpl = vi.fn().mockReturnValue("127.0.0.1");
     const opts = makeOpts({
       modeOverride: "system",
       runCaptureImpl: vi.fn().mockReturnValue("/usr/bin/zstd"),
       runShellImpl,
       ensureManagedOllamaLoopbackSystemdOverrideImpl: vi.fn().mockReturnValue("not-applicable"),
-      findReachableOllamaHostImpl,
       waitForHttpImpl,
     });
     const result = installOllamaOnLinux(opts);
