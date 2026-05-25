@@ -74,6 +74,7 @@ function writeNodeStub(fakeBin: string) {
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
 if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.16.0"; exit 0; fi
+if [[ "\${1:-}" == */bin/lib/usage-notice.js ]]; then exit 0; fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
   exec ${JSON.stringify(process.execPath)} "$@"
 fi
@@ -87,6 +88,9 @@ exit 99`,
 /**
  * Minimal npm stub. Handles --version, config-get-prefix, and a custom
  * install handler injected as a shell snippet via NPM_INSTALL_HANDLER.
+ * If a test does not need custom ci behavior, succeed after the custom
+ * snippet has had a chance to log. Tests that need npm ci's cleanup behavior
+ * model it explicitly in their snippet.
  */
 function writeNpmStub(fakeBin: string, installSnippet: string = "exit 0") {
   writeExecutable(
@@ -97,6 +101,7 @@ if [ "$1" = "--version" ]; then echo "10.9.2"; exit 0; fi
 if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then echo "$NPM_PREFIX"; exit 0; fi
 if [ "$1" = "ci" ] || [ "$1" = "install" ] || [ "$1" = "link" ] || [ "$1" = "uninstall" ] || [ "$1" = "pack" ] || [ "$1" = "run" ]; then
   ${installSnippet}
+  if [ "$1" = "ci" ]; then exit 0; fi
 fi
 echo "unexpected npm invocation: $*" >&2; exit 98`,
   );
@@ -252,6 +257,9 @@ if [ "$1" = "--version" ]; then
   echo "v22.16.0"
   exit 0
 fi
+if [[ "\${1:-}" == */bin/lib/usage-notice.js ]]; then
+  exit 0
+fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
   exec ${JSON.stringify(process.execPath)} "$@"
 fi
@@ -295,6 +303,9 @@ if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
 fi
 if [ "$1" = "pack" ]; then
   exit 1
+fi
+if [ "$1" = "ci" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
+  exit 0
 fi
 if [ "$1" = "install" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
   exit 0
@@ -398,6 +409,9 @@ if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
 fi
 if [ "$1" = "pack" ]; then
   exit 1
+fi
+if [ "$1" = "ci" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
+  exit 0
 fi
 if [ "$1" = "install" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
   exit 0
@@ -990,6 +1004,30 @@ fi`,
     const onboardLog = path.join(tmp, "onboard.log");
     fs.mkdirSync(fakeBin);
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+    fs.mkdirSync(path.join(tmp, "nemoclaw"), { recursive: true });
+    fs.mkdirSync(path.join(tmp, "bin", "lib"), { recursive: true });
+    fs.mkdirSync(path.join(tmp, "dist", "lib", "onboard"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      JSON.stringify({ name: "nemoclaw", version: "0.1.0", dependencies: { openclaw: "2026.3.11" } }, null, 2),
+    );
+    fs.writeFileSync(
+      path.join(tmp, "nemoclaw", "package.json"),
+      JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
+    );
+    fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.js"), "process.exit(0);\n");
+    fs.writeFileSync(
+      path.join(tmp, "dist", "lib", "onboard", "preflight.js"),
+      `
+exports.assessHost = () => ({ runtime: "unknown", notes: [] });
+exports.planHostRemediation = () => [{
+  title: "Start Docker",
+  reason: "Docker daemon is not reachable",
+  commands: ["Start Docker"],
+  blocking: true,
+}];
+`,
+    );
 
     writeNodeStub(fakeBin);
     writeExecutable(
@@ -1059,6 +1097,7 @@ fi`,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_REPO_ROOT: tmp,
         NPM_PREFIX: prefix,
         NEMOCLAW_ONBOARD_LOG: onboardLog,
       },
@@ -1255,6 +1294,30 @@ exit 1
     const onboardLog = path.join(tmp, "onboard.log");
     fs.mkdirSync(fakeBin);
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+    fs.mkdirSync(path.join(tmp, "nemoclaw"), { recursive: true });
+    fs.mkdirSync(path.join(tmp, "bin", "lib"), { recursive: true });
+    fs.mkdirSync(path.join(tmp, "dist", "lib", "onboard"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      JSON.stringify({ name: "nemoclaw", version: "0.1.0", dependencies: { openclaw: "2026.3.11" } }, null, 2),
+    );
+    fs.writeFileSync(
+      path.join(tmp, "nemoclaw", "package.json"),
+      JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
+    );
+    fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.js"), "process.exit(0);\n");
+    fs.writeFileSync(
+      path.join(tmp, "dist", "lib", "onboard", "preflight.js"),
+      `
+exports.assessHost = () => ({ runtime: "podman", notes: [] });
+exports.planHostRemediation = () => [{
+  title: "Use Docker",
+  reason: "Podman may work in some environments, but it is not a supported runtime",
+  commands: [],
+  blocking: false,
+}];
+`,
+    );
 
     writeNodeStub(fakeBin);
     writeExecutable(
@@ -1308,6 +1371,7 @@ exit 0
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_REPO_ROOT: tmp,
         NPM_PREFIX: prefix,
         NEMOCLAW_ONBOARD_LOG: onboardLog,
       },
@@ -1537,6 +1601,9 @@ if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
   echo "v22.16.0"
   exit 0
 fi
+if [[ "\${1:-}" == */bin/lib/usage-notice.js ]]; then
+  exit 0
+fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
   exec ${JSON.stringify(process.execPath)} "$@"
 fi
@@ -1589,6 +1656,9 @@ if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
 fi
 if [ "$1" = "pack" ]; then
   exit 1
+fi
+if [ "$1" = "ci" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
+  exit 0
 fi
 if [ "$1" = "install" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
   exit 0
@@ -1680,6 +1750,9 @@ if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
   echo "v22.16.0"
   exit 0
 fi
+if [[ "\${1:-}" == */bin/lib/usage-notice.js ]]; then
+  exit 0
+fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
   exec ${JSON.stringify(process.execPath)} "$@"
 fi
@@ -1721,6 +1794,9 @@ if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
 fi
 if [ "$1" = "pack" ]; then
   exit 1
+fi
+if [ "$1" = "ci" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
+  exit 0
 fi
 if [ "$1" = "install" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
   exit 0
@@ -3344,6 +3420,7 @@ describe("curl-pipe installer release-tag resolution", () => {
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
 if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then echo "v22.16.0"; exit 0; fi
+if [[ "\${1:-}" == */bin/lib/usage-notice.js ]]; then exit 0; fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
   exec ${JSON.stringify(process.execPath)} "$@"
 fi
@@ -3358,6 +3435,7 @@ set -euo pipefail
 if [ "$1" = "--version" ]; then echo "10.9.2"; exit 0; fi
 if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then echo "$NPM_PREFIX"; exit 0; fi
 if [ "$1" = "pack" ]; then exit 1; fi
+if [ "$1" = "ci" ] && [[ "$*" == *"--ignore-scripts"* ]]; then exit 0; fi
 if [ "$1" = "install" ] && [[ "$*" == *"--ignore-scripts"* ]]; then exit 0; fi
 if [ "$1" = "run" ]; then exit 0; fi
 if [ "$1" = "uninstall" ]; then exit 0; fi
