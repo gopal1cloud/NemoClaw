@@ -412,7 +412,7 @@ const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
   findAvailableDashboardPort,
-  findDashboardForwardOwner,
+  preflightDashboardPortRangeAvailability,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
 const { destroyGatewayForReuse } = require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
 const { verifyGatewayContainerRunning } =
@@ -2359,7 +2359,7 @@ async function preflight(
     }
   }
 
-  return gpu;
+  if (_preflightDashboardPort === null) preflightDashboardPortRangeAvailability(); return gpu; // #3953 — fail-fast before next step
 }
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
@@ -6725,7 +6725,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
-  _preflightDashboardPort = opts.controlUiPort || null;
+  _preflightDashboardPort = opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
   delete process.env.OPENSHELL_GATEWAY;
   const resume = opts.resume === true;
@@ -7083,6 +7083,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         updateSession: onboardSession.updateSession,
       },
     });
+    if (resume && _preflightDashboardPort === null) preflightDashboardPortRangeAvailability(); // #3953 — resume must mirror preflight()'s fail-fast
     session = preflightResult.session;
     const {
       sandboxGpuConfig,
@@ -7530,7 +7531,6 @@ module.exports = {
 
   startGateway,
   findAvailableDashboardPort,
-  findDashboardForwardOwner,
   startGatewayForRecovery,
   openshellArgv,
   runCaptureOpenshell,
