@@ -146,11 +146,12 @@ jobs:
           "@
           $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
           [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
-          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\','/')
+          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp.Replace('\','/'))
           wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
 
       - name: Append plan summary
         if: always()
+        shell: bash
         run: |
           if [ -f .e2e/plan.txt ]; then
             echo '## E2E scenario plan' >> "$GITHUB_STEP_SUMMARY"
