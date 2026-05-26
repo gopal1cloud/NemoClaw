@@ -3,25 +3,20 @@
 
 # NemoClaw E2E
 
-End-to-end scenarios use the hybrid typed architecture as the runtime source of
-truth:
+End-to-end scenarios use the hybrid typed architecture as the runtime source of truth:
 
 ```text
 typed scenario builder → NemoClawInstance manifest → phase-owned assertion modules → run plan
 ```
 
-- **Scenario builders** in `test/e2e/scenarios/` define canonical scenario IDs,
-  environment families, expected states, runner requirements, secrets, skipped
-  capabilities, expected failures, and assertion composition.
+- **Scenario builders** in `test/e2e/scenarios/` are deterministic code builders that define canonical scenario IDs, environment families, expected states, runner requirements, secrets, skipped capabilities, expected failures, and assertion composition.
 - **Product manifests** in `test/e2e/manifests/*.yaml` describe setup and
   onboarding desired state as `NemoClawInstance` resources. Manifests do not
   contain assertion IDs, suite IDs, or raw secrets.
 - **Assertion modules** in `test/e2e/scenarios/assertions/` own environment,
   onboarding, and runtime checks. Each group has stable step IDs, evidence paths,
   and optional timeout/retry policy.
-- **Legacy YAML** under `nemoclaw_scenarios/` and `validation_suites/` is
-  transitional reference material only. It is not the runtime source of truth for
-  scenario selection or suite composition.
+- **YAML** is limited to setup/onboarding desired state or historical reference data; it is not a scenario definition source of truth.
 
 ## How to run
 
@@ -76,5 +71,4 @@ test/e2e/
 4. Run `npx tsx test/e2e/scenarios/run.ts --scenarios <id> --plan-only`.
 5. Run `bash test/e2e/runtime/coverage-report.sh` to confirm coverage.
 
-New legacy-style `test/e2e/test-*.sh` entrypoints are blocked by convention
-lint; add scenario coverage through typed builders and assertion modules instead.
+New legacy-style `test/e2e/test-*.sh` entrypoints are blocked by convention lint; add scenario coverage through typed builders and assertion modules instead.

@@ -4,8 +4,7 @@
 #
 # Standardized non-interactive environment for E2E runs.
 #
-# Applies the same defaults historically set ad-hoc at the top of each
-# `test/e2e/test-*.sh` script. Safe to source from any scenario runner.
+# Applies shared defaults for typed scenario orchestrators and assertion steps.
 
 # Auto-source the logging helpers so every consumer of env.sh gets
 # e2e_section / e2e_info / e2e_pass / e2e_fail for free. Scenario runner

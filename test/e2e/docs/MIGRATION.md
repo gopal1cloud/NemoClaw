@@ -3,14 +3,15 @@
 
 # Hybrid Scenario E2E Migration Tracker
 
-The scenario E2E architecture now uses typed scenario builders as the runtime
-source of truth. Product-facing `NemoClawInstance` manifests describe setup and
-onboarding desired state; assertion modules define phase-owned checks; the plan
-compiler combines both into run plans and coverage reports.
+The hybrid typed architecture is the runtime source of truth for scenario-based
+E2E. Typed scenario builders are deterministic code builders; product-facing
+`NemoClawInstance` manifests describe setup/onboarding desired state; assertions
+are phase-owned modules that define environment, onboarding, and runtime checks.
 
-Legacy YAML scenario composition is transitional reference material only. It must
-not be used as the source of truth for live scenario selection, suite selection,
-or coverage reporting.
+YAML describes setup/onboarding desired state or historical reference data; YAML
+is not a scenario definition source of truth. Live scenario selection, assertion
+composition, suite selection, coverage reporting, and workflow dispatch all use
+the typed registry and compiler.
 
 ## Current Runtime Sources
 
@@ -18,9 +19,9 @@ or coverage reporting.
 |---|---|---|
 | Scenario IDs | `test/e2e/scenarios/registry.ts` + `scenarios/baseline.ts` | Canonical IDs targeted by workflows and E2E advisor paths. |
 | Manifests | `test/e2e/manifests/*.yaml` | Product-facing setup/onboarding state only; no assertion or suite metadata. |
-| Assertions | `test/e2e/scenarios/assertions/*.ts` | Groups are phase-owned and carry stable step IDs, evidence paths, timeout/retry policy. |
+| Assertions | `test/e2e/scenarios/assertions/*.ts` | Phase-owned modules with stable step IDs, evidence paths, timeout/retry policy. |
 | Plans | `test/e2e/scenarios/compiler.ts` | Emits `.e2e/run-plan.json` and `.e2e/plan.txt`. |
-| Coverage | `test/e2e/runtime/resolver/coverage.ts` | Reads typed registry/manifests/assertion modules, not YAML suite files. |
+| Coverage | `test/e2e/runtime/resolver/coverage.ts` | Reads typed registry/manifests/assertion modules. |
 | Runtime entrypoint | `test/e2e/scenarios/run.ts` | `test/e2e/runtime/run-scenario.sh` is a retired fail-fast shim. |
 
 ## Coverage Status
@@ -31,15 +32,9 @@ Generate the current authoritative report with:
 bash test/e2e/runtime/coverage-report.sh
 ```
 
-The report tracks:
-
-- scenario ID coverage
-- manifest coverage
-- environment family coverage
-- onboarding configuration coverage
-- assertion group/domain coverage
-- phase coverage for `environment`, `onboarding`, and `runtime`
-- runner requirements, required secrets, skipped capabilities, and expected failures
+The report tracks scenario IDs, manifests, environment/onboarding families,
+assertion groups, phase coverage, runner requirements, required secrets, skipped
+capabilities, and expected failures.
 
 ## Canonical Scenario Tracker
 
@@ -65,15 +60,13 @@ The report tracks:
 | `ubuntu-repo-openai-compatible-openclaw` | `openclaw-openai-compatible.yaml` | environment, onboarding, runtime | ✅ typed runtime |
 | `wsl-repo-cloud-openclaw` | `openclaw-nvidia-wsl.yaml` | environment, onboarding, runtime | ✅ typed runtime |
 
-## Legacy Metadata Disposition
+## Metadata Disposition
 
 | Asset | Status | Runtime role |
 |---|---|---|
-| `test/e2e/nemoclaw_scenarios/scenarios.yaml` | Transitional reference until Phase 9 cleanup | None for typed runtime. |
-| `test/e2e/nemoclaw_scenarios/expected-states.yaml` | Transitional expected-state reference until Phase 9 decision | Referenced by old resolver tests only. |
-| `test/e2e/validation_suites/suites.yaml` | Transitional reference until Phase 9 cleanup | Not authoritative for coverage or typed runtime. |
-| `test/e2e/docs/parity-map.yaml` | Transitional parity aid | Kept only for parity workflow/reporting until obsolete assets are removed. |
-| `test/e2e/docs/parity-inventory.generated.json` | Transitional parity aid | Kept only for parity workflow/reporting until obsolete assets are removed. |
+| `test/e2e/nemoclaw_scenarios/scenarios.yaml` | Non-runtime marker file | None. |
+| `test/e2e/nemoclaw_scenarios/expected-states.yaml` | Historical expected-state contract reference | None for scenario selection/composition. |
+| `test/e2e/validation_suites/suites.yaml` | Historical suite reference consumed only by compatibility helper/tests | Not authoritative for typed runtime. |
 
 ## Assertion Domain Tracker
 
@@ -88,6 +81,3 @@ The report tracks:
 | Lifecycle | `suite.sandbox-lifecycle`, `suite.rebuild`, `suite.upgrade`, `suite.snapshot` | ✅ covered |
 | Platform | `suite.platform-macos`, `suite.platform-wsl` | ✅ covered |
 | Negative | `runtime.expected-failure.no-side-effects` | ✅ covered |
-
-Phase 9 removes the old YAML-first resolver source of truth. Phase 10 removes
-remaining obsolete helpers and updates broader documentation.

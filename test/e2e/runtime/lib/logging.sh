@@ -2,12 +2,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Canonical logging helpers for E2E scenarios.
+# Canonical logging helpers for typed E2E scenario assertions.
 #
-# Collapses the ad-hoc `section` / `info` / `pass` / `fail` functions that
-# the 40 legacy `test/e2e/test-*.sh` scripts each re-declare with subtle
-# drift. Emits stable markers that `scripts/e2e/compare-parity.sh` parses
-# when diffing legacy vs. migrated runs.
+# Emits stable markers consumed by phase results and local diagnostics.
 #
 # Contract:
 #   PASS: <message>           — asserting success
@@ -34,8 +31,7 @@ fi
 _E2E_LOGGING_SH_LOADED=1
 
 # e2e_section <label>
-# Emits a `=== Phase N: ...` or `=== <label>` banner. Parity-map parser
-# treats `=== Phase ` as a section break.
+# Emits a `=== Phase N: ...` or `=== <label>` banner.
 e2e_section() {
   local label="${*:-}"
   if [[ -z "${label}" ]]; then
@@ -52,16 +48,15 @@ e2e_info() {
 }
 
 # e2e_pass <message>
-# Assertion-success marker; consumed by parity-map.yaml + compare-parity.sh.
+# Assertion-success marker consumed by typed scenario diagnostics.
 e2e_pass() {
   printf 'PASS: %s\n' "${*:-}"
 }
 
 # e2e_fail <message>
 # Assertion-failure marker. Exits the current shell with a non-zero status
-# so the step aborts immediately — matches the legacy `fail` behavior.
-# Callers that want to record a failure without aborting should use
-# `e2e_info "FAIL: ..."` instead.
+# so the step aborts immediately. Callers that want to record a failure
+# without aborting should use `e2e_info "FAIL: ..."` instead.
 e2e_fail() {
   printf 'FAIL: %s\n' "${*:-}" >&2
   exit 1
