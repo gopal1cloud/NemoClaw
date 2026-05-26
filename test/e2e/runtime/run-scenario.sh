@@ -178,6 +178,7 @@ read_plan_string() {
 
 INSTALL_ID="$(read_plan_string dimensions.install.id)"
 INSTALL_METHOD="$(read_plan_string dimensions.install.profile.method)"
+INSTALL_SOURCE="$(read_plan_string dimensions.install.profile.source)"
 ONBOARDING_ID="$(read_plan_string dimensions.onboarding.id)"
 RUNTIME_ID="$(read_plan_string dimensions.runtime.id)"
 RUNTIME_CONTAINER_DAEMON="$(read_plan_string dimensions.runtime.profile.container_daemon)"
@@ -192,6 +193,15 @@ FAILURE_NO_STACK_TRACE="$(read_plan_string expected_state.config.failure.no_stac
 # the resolved method.
 e2e_env_trace "install:${INSTALL_ID}"
 
+if [[ "${INSTALL_SOURCE}" == "public-installer-target-ref" ]]; then
+  : "${GITHUB_SHA:=$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || true)}"
+  if [[ -n "${GITHUB_SHA}" ]]; then
+    export NEMOCLAW_INSTALL_REF="${NEMOCLAW_INSTALL_REF:-${GITHUB_SHA}}"
+    export NEMOCLAW_INSTALL_TAG="${NEMOCLAW_INSTALL_TAG:-${GITHUB_SHA}}"
+    export E2E_INSTALLER_URL="${E2E_INSTALLER_URL:-https://raw.githubusercontent.com/NVIDIA/NemoClaw/${GITHUB_SHA}/install.sh}"
+  fi
+fi
+
 install_log="${E2E_CONTEXT_DIR}/install.log"
 set +e
 e2e_install "${INSTALL_METHOD}" >"${install_log}" 2>&1
@@ -202,9 +212,14 @@ if [[ "${install_status}" -ne 0 ]]; then
   echo "run-scenario: install ${INSTALL_METHOD} failed with status ${install_status}" >&2
   exit "${install_status}"
 fi
-export PATH="${HOME}/.local/bin:${PATH}"
+NPM_PREFIX="$(npm config get prefix 2>/dev/null || true)"
+if [[ -n "${NPM_PREFIX}" && -d "${NPM_PREFIX}/bin" ]]; then
+  export PATH="${NPM_PREFIX}/bin:${PATH}"
+fi
+export PATH="${HOME}/.npm-global/bin:${HOME}/.local/bin:${PATH}"
 {
   printf 'PATH=%s\n' "${PATH}"
+  printf 'npm_prefix=%s\n' "${NPM_PREFIX}"
   command -v nemoclaw || true
 } >"${E2E_CONTEXT_DIR}/post-install-path.log" 2>&1
 if [[ "${DRY_RUN}" -eq 1 ]]; then

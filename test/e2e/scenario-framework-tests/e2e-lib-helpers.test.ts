@@ -992,10 +992,12 @@ describe("Phase 1.E install dispatcher splits", () => {
   });
 
   it("install_should_dispatch_to_install_curl_helper_for_public_installer_profile", () => {
-    const r = dispatchDryRun("public-installer");
-    expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout + r.stderr).toMatch(/install-curl/);
-    expect(r.stdout + r.stderr).not.toMatch(/install-repo|install-ollama|install-launchable/);
+    for (const profile of ["public-installer", "public-curl-target-ref"]) {
+      const r = dispatchDryRun(profile);
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout + r.stderr).toMatch(/install-curl/);
+      expect(r.stdout + r.stderr).not.toMatch(/install-repo|install-ollama|install-launchable/);
+    }
   });
 
   it("install_should_dispatch_to_install_ollama_helper_for_ollama_profile", () => {
@@ -1010,6 +1012,35 @@ describe("Phase 1.E install dispatcher splits", () => {
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout + r.stderr).toMatch(/install-launchable/);
     expect(r.stdout + r.stderr).not.toMatch(/install-repo|install-curl|install-ollama/);
+  });
+
+  it("onboard_should_accept_layered_cloud_nvidia_openclaw_profile_alias", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-onboard-alias-"));
+    try {
+      const binDir = path.join(tmp, "bin");
+      fs.mkdirSync(binDir);
+      fs.writeFileSync(
+        path.join(binDir, "nemoclaw"),
+        `#!/usr/bin/env bash
+echo "$@" > "${tmp}/nemoclaw.args"
+exit 0
+`,
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=test\nE2E_SANDBOX_NAME=e2e-test\n");
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${REPO_ROOT}/test/e2e/nemoclaw_scenarios/onboard/dispatch.sh"
+        e2e_onboard cloud-nvidia-openclaw
+        `,
+        { E2E_CONTEXT_DIR: tmp, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+      );
+      expect(r.status, r.stderr).toBe(0);
+      expect(fs.readFileSync(path.join(tmp, "nemoclaw.args"), "utf8")).toContain("onboard --non-interactive --yes");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 

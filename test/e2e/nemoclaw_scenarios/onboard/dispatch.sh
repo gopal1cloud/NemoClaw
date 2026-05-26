@@ -31,7 +31,7 @@ e2e_onboard() {
     return 0
   fi
   case "${profile}" in
-    cloud-openclaw)
+    cloud-openclaw | cloud-nvidia-openclaw)
       e2e_onboard_cloud_openclaw
       ;;
     cloud-openclaw-custom-policies)

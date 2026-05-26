@@ -35,7 +35,7 @@ e2e_install() {
     repo-checkout | repo-current)
       e2e_install_repo
       ;;
-    curl-install-script | public-installer)
+    curl-install-script | public-installer | public-curl-target-ref)
       e2e_install_curl
       ;;
     ollama)
