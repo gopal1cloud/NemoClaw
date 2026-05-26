@@ -713,7 +713,7 @@ Move E2E scenario identity and matrix composition into typed scenario builders.
 - `--plan-only --scenarios ubuntu-repo-cloud-openclaw` produces a plan equivalent to the current YAML resolver plan at the semantic level.
 - `--plan-only --scenarios id1,id2` produces two targeted run plans.
 
-## Phase 4: Assertion Modules and Existing Suite Conversion
+## Phase 4: Assertion Modules and Existing Suite Conversion [COMPLETED: c74525326]
 
 Move assertion composition from YAML suite lists and onboarding assertion lists into logical code modules. This work is split by suite domain so every current validation suite key becomes a real assertion group and is exercised by at least one canonical scenario plan.
 
