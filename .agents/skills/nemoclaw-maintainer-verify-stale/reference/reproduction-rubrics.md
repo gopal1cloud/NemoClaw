@@ -216,17 +216,21 @@ Performance bugs (#2598 "10s P50", #2600 "hangs ~2 min", #2733 Ollama tool-call 
    done
    ```
 
-3. **Compute p50 and p90** for both sides. For N=10:
+3. **Compute p50 and p90** for both sides, in milliseconds (to match the `_MS`
+   units of `SLA_P50_MS` / `SLA_P90_MS`). `/usr/bin/time -f '%e'` emits
+   seconds, so multiply by 1000 in the awk:
 
    ```bash
-   # p50 = mean of the 5th and 6th values (standard median for even N).
-   P50_MS=$(sort -n ./latest-perf.log | awk 'NR==5||NR==6 {sum+=$1; n++} END {printf "%.2f", sum/n}')
-   # p90 = 9th value (nearest-rank / NIST method for N=10).
-   P90_MS=$(sort -n ./latest-perf.log | awk 'NR==9')
-   echo "[perf] latest p50=${P50_MS}s p90=${P90_MS}s"
+   # p50 = mean of the 5th and 6th values (standard median for even N), in ms.
+   P50_MS=$(sort -n ./latest-perf.log \
+     | awk 'NR==5||NR==6 {sum+=$1; n++} END {printf "%d", (sum/n)*1000}')
+   # p90 = 9th value (nearest-rank / NIST method for N=10), in ms.
+   P90_MS=$(sort -n ./latest-perf.log | awk 'NR==9 {printf "%d", $1*1000}')
+   echo "[perf] latest p50=${P50_MS}ms p90=${P90_MS}ms"
    ```
 
-   Apply the same two lines to `./baseline-perf.log` for the baseline side.
+   Apply the same two lines to `./baseline-perf.log` for the baseline side
+   (export as `BASELINE_P50_MS` / `BASELINE_P90_MS`).
 4. **Match rubric (p50 fires first; p90 is the regression backstop):**
    - Latest's p50 within `$SLA_P50_MS` AND baseline's p50 outside → bug fixed; same Step 9 scoring (subject to baseline-validation gate).
    - Latest's p50 outside `$SLA_P50_MS` → bug still reproduces (Step 9 special case).
