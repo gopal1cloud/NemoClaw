@@ -344,7 +344,7 @@ Classification vocabulary is exactly: `covered`, `new assertion`, `deferred`, `r
 - Wire `gpu-repo-local-ollama-openclaw` and `gpu-repo-local-ollama-openclaw-reonboard` plans.
 - Preserve GPU runner metadata and Docker GPU topology skip semantics.
 
-### Phase 4: Brev launchable and branch validation suites
+### Phase 4: Brev launchable and branch validation suites [COMPLETED: e451cf7f7]
 
 - Add `platform-remote-launchable` and `platform-remote-brev-branch` suites.
 - Preserve `NVIDIA_API_KEY`, Brev token/API, CPU/GPU branch, and launchable runner metadata.
