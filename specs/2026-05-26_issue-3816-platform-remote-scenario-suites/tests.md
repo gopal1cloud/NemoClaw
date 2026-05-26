@@ -55,7 +55,7 @@ Primary existing test locations:
 
 **Test Implementation Notes:**
 
-- If the current branch still uses `test/e2e/docs/parity-map.yaml`, add fixture coverage there; otherwise use the current scenario coverage metadata mechanism.
+- Use the current scenario coverage metadata mechanism under `test/e2e/nemoclaw_scenarios/` and `test/e2e/runtime/resolver/`; do not hand-edit generated parity inventory JSON or reintroduce the removed workflow-level parity-map gate.
 - Keep inventory tests local and deterministic; no live platforms or secrets.
 
 ## Phase 2: `platform_remote.sh` Primitive Library - Test Guide
@@ -71,12 +71,12 @@ Primary existing test locations:
 
 1. `test_should_source_platform_remote_helpers_under_strict_shell_mode`
    - **Input**: Bash strict mode sourcing `test/e2e/validation_suites/lib/platform_remote.sh`.
-   - **Expected**: Exit 0 and core helper functions are defined.
-   - **Covers**: Primitive library exists and is source-safe.
+   - **Expected**: Exit 0; core helper functions are defined; sourcing makes the existing `e2e_context_*`, `e2e_env_*`, `e2e_section`, `e2e_pass`, and `e2e_fail` primitives available through the existing runtime libraries.
+   - **Covers**: Primitive library exists, is source-safe, and reuses existing context/logging/dry-run primitives rather than introducing parallel helpers.
 
 2. `test_should_fail_clearly_when_platform_remote_context_is_missing`
    - **Input**: Empty `E2E_CONTEXT_DIR` and a context-dependent helper.
-   - **Expected**: Non-zero exit with missing `context.env` or key named; no install/onboard command is invoked.
+   - **Expected**: Non-zero exit with missing `context.env` or key named using the existing `e2e_context_require` failure format; no install/onboard command is invoked.
    - **Covers**: Suites consume context and do not rediscover setup state.
 
 3. `test_should_redact_platform_remote_secret_values`

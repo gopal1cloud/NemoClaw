@@ -55,6 +55,12 @@ flowchart TD
 
 Create `test/e2e/validation_suites/lib/platform_remote.sh` with context-driven helpers. Suites must consume `$E2E_CONTEXT_DIR/context.env`; they must not reinstall, onboard, or rediscover setup state.
 
+Design alignment:
+
+- Source and wrap the existing runtime/suite primitives (`test/e2e/runtime/lib/context.sh`, `test/e2e/runtime/lib/env.sh`, `test/e2e/runtime/lib/logging.sh` through `env.sh`, and `test/e2e/validation_suites/sandbox-exec.sh`) instead of creating a parallel context, logging, dry-run, or redaction implementation.
+- Use `e2e_context_require`, `e2e_context_get`, `e2e_context_dump`, `e2e_env_is_dry_run`, `e2e_section`, `e2e_pass`, and `e2e_fail` for the underlying behavior; `e2e_platform_remote_*` helpers should be thin domain wrappers that add platform/remote assertion IDs and metadata.
+- Keep suite steps as small shell scripts under `test/e2e/validation_suites/platform_remote/` that delegate shared behavior to `platform_remote.sh`.
+
 Required helper families:
 
 - Context, metadata, and redaction:
@@ -320,10 +326,11 @@ Classification vocabulary is exactly: `covered`, `new assertion`, `deferred`, `r
 
 ### Phase 1: Metadata, schema, and coverage inventory
 
-- Add platform-remote expectation metadata to `test/e2e/nemoclaw_scenarios/expected-states.yaml` or the current resolver-owned expectation metadata file.
+- Add platform-remote expectation metadata to the current resolver-owned source metadata under `test/e2e/nemoclaw_scenarios/`. If no assertion-inventory source file exists, add a focused source file such as `test/e2e/nemoclaw_scenarios/platform-remote-inventory.yaml` and load it through the existing resolver/coverage-report path.
+- Do not edit generated inventory artifacts such as `test/e2e/docs/parity-inventory.generated.json` by hand, and do not reintroduce the removed workflow-level parity-map gate.
 - Add allowed statuses: `covered`, `new assertion`, `deferred`, `retired` for inventory classification, and execution statuses such as `expected_pass`, `deferred_platform_or_secret`, `metadata_only`, `retired` if the existing reporter uses a separate execution vocabulary.
 - Ensure every `expected.platform_remote.*` emitted by suites has metadata.
-- Update coverage report and parity-map successor metadata so all rows above are visible.
+- Update the existing scenario coverage/reporting mechanism so all rows above are visible.
 
 ### Phase 2: Add `platform_remote.sh` primitive library
 
