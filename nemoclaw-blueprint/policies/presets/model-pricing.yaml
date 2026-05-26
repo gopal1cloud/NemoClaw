@@ -9,7 +9,6 @@
 # compliance review surfaces) cannot distinguish a real free run from
 # the silent failure mode. Enabling this preset whitelists the two
 # specific pricing endpoints, pinned to GET-only on a single path each.
-# See https://github.com/NVIDIA/NemoClaw/issues/4211.
 preset:
   name: model-pricing
   description: "OpenClaw model-pricing reference fetch (LiteLLM + OpenRouter)"
