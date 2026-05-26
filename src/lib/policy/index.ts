@@ -351,9 +351,17 @@ function assertOpenshellResolvable(): void {
 
   const home = process.env.HOME;
   const override = process.env.NEMOCLAW_OPENSHELL_BIN;
+  const currentPath = process.env.PATH;
   const checked: string[] = [];
   if (override) checked.push(`NEMOCLAW_OPENSHELL_BIN=${override}`);
-  checked.push("$PATH (via `command -v openshell`)");
+  // Log the concrete PATH so bug reports name what was actually searched.
+  // The whole point of #4224 is that non-interactive shells drop ~/.local/bin
+  // from PATH; the value is the most actionable single piece of context.
+  checked.push(
+    currentPath
+      ? `PATH=${currentPath} (via \`command -v openshell\`)`
+      : "PATH=<unset> (via `command -v openshell`)",
+  );
   if (home?.startsWith("/")) checked.push(`${home}/.local/bin/openshell`);
   checked.push("/usr/local/bin/openshell", "/usr/bin/openshell");
 

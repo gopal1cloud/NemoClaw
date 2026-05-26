@@ -919,7 +919,8 @@ exit 1
         const combined = errors.join("\n");
         expect(combined).toMatch(/openshell binary not found/);
         expect(combined).toMatch(/NEMOCLAW_OPENSHELL_BIN=\/nonexistent\/openshell/);
-        expect(combined).toMatch(/\$PATH/);
+        // PATH value should be logged verbatim so bug reports name what was searched.
+        expect(combined).toContain("PATH=/nonexistent-nemoclaw-path");
         expect(combined).toContain(`${tmpHome}/.local/bin/openshell`);
         expect(combined).toContain("/usr/local/bin/openshell");
         expect(combined).toContain("/usr/bin/openshell");
