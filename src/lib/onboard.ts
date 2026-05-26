@@ -421,6 +421,8 @@ const {
   preflightDashboardPortRangeAvailability,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
 const { destroyGatewayForReuse } = require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
+const { preflightGatewayCleanupDecision } =
+  require("./onboard/preflight-gateway-cleanup-decision") as typeof import("./onboard/preflight-gateway-cleanup-decision");
 const { verifyGatewayContainerRunning } =
   require("./onboard/gateway-container-running") as typeof import("./onboard/gateway-container-running");
 const { destroyGatewayWithVolumeCleanup } =
@@ -2140,20 +2142,23 @@ async function preflight(
     }
   }
 
-  if (gatewayReuseState === "stale" || gatewayReuseState === "active-unnamed") {
+  // #4235: defer destructive recreation to step [2/8] on the Docker-driver path so preflight stays read-only.
+  const staleCleanupAction = preflightGatewayCleanupDecision({
+    gatewayReuseState,
+    isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
+  });
+  if (staleCleanupAction === "defer") {
+    console.log(
+      "  ⚠ Gateway will be recreated when sandbox creation starts — this will affect running sandboxes.",
+    );
+  } else if (staleCleanupAction === "destroy-legacy") {
     console.log(`  Cleaning up previous ${cliDisplayName()} session...`);
-    if (isLinuxDockerDriverGatewayEnabled()) {
-      retireLegacyGatewayForDockerDriverUpgrade();
-      gatewayReuseState = "missing";
-      console.log("  ✓ Previous session cleaned up");
-    } else {
-      runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
-      gatewayReuseState = destroyGatewayForReuse(
-        destroyGateway,
-        "  ✓ Previous session cleaned up",
-        "  ! Previous session cleanup failed; leaving registry state intact.",
-      );
-    }
+    runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+    gatewayReuseState = destroyGatewayForReuse(
+      destroyGateway,
+      "  ✓ Previous session cleaned up",
+      "  ! Previous session cleanup failed; leaving registry state intact.",
+    );
   }
 
   // Clean up orphaned Docker containers from interrupted onboard (e.g. Ctrl+C
