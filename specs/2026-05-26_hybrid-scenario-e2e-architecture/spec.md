@@ -648,7 +648,7 @@ Create the new framework skeleton and lock down the current inventory so every e
 - Existing scenario framework tests are replaced or updated so the new architecture is the only expected path.
 - The reliability inventory exists and identifies current tests or steps that need retry, timeout, expected-failure, external-skip, or manual classification treatment.
 
-## Phase 2: Product-Facing Onboarding Manifests
+## Phase 2: Product-Facing Onboarding Manifests [COMPLETED: 9f3f4786f]
 
 Split setup/onboarding desired state out of current scenario YAML into product-facing manifests.
 
