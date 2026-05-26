@@ -17,7 +17,6 @@ import type { AssertionGroup } from "../scenarios/types.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const E2E_DIR = path.join(REPO_ROOT, "test/e2e");
-const SCENARIOS_PATH = path.join(E2E_DIR, "nemoclaw_scenarios", "scenarios.yaml");
 const SUITES_PATH = path.join(E2E_DIR, "validation_suites", "suites.yaml");
 
 type AnyRecord = Record<string, unknown>;
@@ -37,20 +36,16 @@ function allPlannedAssertionGroupIds(): Set<string> {
 }
 
 describe("assertion modules", () => {
-  it("test_should_map_every_onboarding_assertion_to_assertion_step", () => {
-    const scenarios = loadYaml(SCENARIOS_PATH);
-    const onboardingAssertions = scenarios.onboarding_assertions as Record<
-      string,
-      { assertion_id: string; script: string }
-    >;
+  it("test_should_define_onboarding_assertions_in_modules", () => {
     const onboardingGroups = assertionRegistry.groups.filter((group) => group.phase === "onboarding");
     const stepIds = new Set(onboardingGroups.flatMap((group) => group.steps.map((step) => step.id)));
 
-    for (const [key, value] of Object.entries(onboardingAssertions)) {
-      expect(stepIds.has(value.assertion_id), `${key} missing step ${value.assertion_id}`).toBe(true);
-      const step = onboardingGroups.flatMap((group) => group.steps).find((candidate) => candidate.id === value.assertion_id);
-      expect(step?.phase).toBe("onboarding");
-      expect(step?.implementation?.ref).toBe(`test/e2e/${value.script}`);
+    for (const id of ["onboarding.base.cli-installed", "onboarding.preflight.passed", "onboarding.preflight.expected-failed"]) {
+      expect(stepIds.has(id), `missing onboarding step ${id}`).toBe(true);
+    }
+    for (const step of onboardingGroups.flatMap((group) => group.steps)) {
+      expect(step.phase).toBe("onboarding");
+      expect(step.implementation?.ref).toMatch(/^test\/e2e\/onboarding_assertions\//);
     }
   });
 

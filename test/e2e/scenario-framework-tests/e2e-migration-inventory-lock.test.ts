@@ -6,7 +6,9 @@ import fs from "node:fs";
 import path from "node:path";
 import yaml from "js-yaml";
 
+import { assertionRegistry } from "../scenarios/assertions/registry.ts";
 import { migrationInventory } from "../scenarios/migration-inventory.ts";
+import { listScenarios } from "../scenarios/registry.ts";
 
 const E2E_DIR = path.resolve(import.meta.dirname, "..");
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -39,14 +41,22 @@ function expectCovered(kind: keyof typeof migrationInventory, ids: string[]) {
 }
 
 describe("hybrid scenario migration inventory lock", () => {
-  it("test_should_fail_when_old_setup_scenario_missing_new_owner_or_removal_rationale", () => {
+  it("old_scenarios_yaml_should_be_non_runtime_reference_only", () => {
     const scenarios = loadYaml(SCENARIOS_PATH);
 
-    expectCovered("setupScenarios", keysFrom(scenarios.setup_scenarios));
-    expectCovered("baseScenarios", keysFrom(scenarios.base_scenarios));
-    expectCovered("onboardingProfiles", keysFrom(scenarios.onboarding_profiles));
-    expectCovered("testPlans", keysFrom(scenarios.test_plans));
-    expectCovered("onboardingAssertions", keysFrom(scenarios.onboarding_assertions));
+    expect(scenarios.metadata).toMatchObject({ status: "non-runtime-reference-only" });
+    for (const removed of ["setup_scenarios", "base_scenarios", "onboarding_profiles", "test_plans", "onboarding_assertions"]) {
+      expect(scenarios).not.toHaveProperty(removed);
+    }
+  });
+
+  it("typed_registry_should_cover_inventory_targets", () => {
+    const scenarioIds = new Set(listScenarios().map((scenario) => scenario.id));
+    const missingScenarios = migrationInventory.setupScenarios
+      .map((entry) => entry.newOwner.replace(/^scenario:/, ""))
+      .filter((owner) => !scenarioIds.has(owner));
+
+    expect(missingScenarios, `missing scenario owners: ${missingScenarios.join(", ")}`).toEqual([]);
   });
 
   it("should_fail_when_old_expected_state_missing_new_owner_or_removal_rationale", () => {
@@ -66,9 +76,12 @@ describe("hybrid scenario migration inventory lock", () => {
           .filter((script): script is string => Boolean(script)),
       ),
     ).sort();
+    const assertionSuiteIds = new Set(assertionRegistry.groups.map((group) => group.suiteId).filter((suiteId): suiteId is string => Boolean(suiteId)));
+    const missingAssertionGroups = suiteIds.filter((suiteId) => !assertionSuiteIds.has(suiteId));
 
     expectCovered("validationSuites", suiteIds);
     expectCovered("validationSuiteScripts", scriptIds);
+    expect(missingAssertionGroups, `missing assertion groups: ${missingAssertionGroups.join(", ")}`).toEqual([]);
   });
 
   it("should_keep_migration_inventory_out_of_runtime_entrypoint", () => {

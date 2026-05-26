@@ -10,8 +10,9 @@ import path from "node:path";
 import {
   validateExpectedState,
   type ProbeResults,
+  type ExpectedStateConfig,
+  type ResolvedSuite,
 } from "../runtime/resolver/validator.ts";
-import type { ExpectedStateConfig, ResolvedSuite } from "../runtime/resolver/schema.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const RUN_SCENARIO = path.join(REPO_ROOT, "test/e2e/runtime/run-scenario.sh");

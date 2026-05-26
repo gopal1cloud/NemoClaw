@@ -15,11 +15,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { loadMetadataFromDir } from "../runtime/resolver/load.ts";
-import { resolveScenario } from "../runtime/resolver/plan.ts";
+import { compileRunPlans } from "../scenarios/compiler.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const E2E_DIR = path.join(REPO_ROOT, "test/e2e");
 function planOnly(scenarioId: string): { stdout: string; stderr: string; status: number | null; plan: Record<string, unknown> } {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-p9-"));
   try {
@@ -42,7 +40,6 @@ function planOnly(scenarioId: string): { stdout: string; stderr: string; status:
 
 describe("Phase 9: additional scenario families - metadata", () => {
   it("resolver should resolve all new scenarios", () => {
-    const meta = loadMetadataFromDir(E2E_DIR);
     const ids = [
       "macos-repo-cloud-openclaw",
       "wsl-repo-cloud-openclaw",
@@ -52,10 +49,10 @@ describe("Phase 9: additional scenario families - metadata", () => {
       "ubuntu-no-docker-preflight-negative",
     ];
     for (const id of ids) {
-      const plan = resolveScenario(id, meta);
-      expect(plan.scenario_id).toBe(id);
-      expect(plan.expected_state.id).toBeTypeOf("string");
-      expect(Array.isArray(plan.suites)).toBe(true);
+      const [plan] = compileRunPlans([id]);
+      expect(plan.scenarioId).toBe(id);
+      expect(plan.expectedStateId).toBeTypeOf("string");
+      expect(Array.isArray(plan.suiteIds)).toBe(true);
     }
   });
 });
@@ -88,14 +85,10 @@ describe("Phase 9: GPU local Ollama plan-only", () => {
 
 describe("Phase 9: Brev launchable scenario (overrides schema)", () => {
   it("should_support_scenario_overrides_on_brev_launchable", () => {
-    const meta = loadMetadataFromDir(E2E_DIR);
-    const plan = resolveScenario("brev-launchable-cloud-openclaw", meta);
-    expect(plan.overrides).toBeTruthy();
-    const overrides = plan.overrides as {
-      onboarding?: { gateway?: { bind_address?: string } };
-    };
-    expect(overrides?.onboarding?.gateway?.bind_address).toBeTypeOf("string");
-    expect(overrides?.onboarding?.gateway?.bind_address?.length).toBeGreaterThan(0);
+    const [plan] = compileRunPlans(["brev-launchable-cloud-openclaw"]);
+    const bindAddress = plan.manifest?.spec.onboarding.gateway?.bindAddress;
+    expect(bindAddress).toBeTypeOf("string");
+    expect((bindAddress as string).length).toBeGreaterThan(0);
   });
 
   it("plan shows remote target, launchable install, and gateway bind override", () => {
@@ -111,18 +104,10 @@ describe("Phase 9: Brev launchable scenario (overrides schema)", () => {
 
 describe("Phase 9: negative preflight", () => {
   it("should_define_preflight_failure_no_sandbox_state", () => {
-    const meta = loadMetadataFromDir(E2E_DIR);
-    const es = meta.expectedStates.expected_states["preflight-failure-no-sandbox"] as
-      | {
-          gateway?: { expected?: string };
-          sandbox?: { expected?: string };
-          failure?: { expected?: boolean };
-        }
-      | undefined;
-    expect(es, "preflight-failure-no-sandbox should be defined").toBeTruthy();
-    expect(es?.gateway?.expected).toBe("absent");
-    expect(es?.sandbox?.expected).toBe("absent");
-    expect(es?.failure?.expected).toBe(true);
+    const [plan] = compileRunPlans(["ubuntu-no-docker-preflight-negative"]);
+    expect(plan.expectedStateId).toBe("preflight-failure-no-sandbox");
+    expect(plan.expectedFailure?.errorClass).toBe("docker-missing");
+    expect(plan.expectedFailure?.forbiddenSideEffects).toEqual(["gateway-started", "sandbox-created"]);
   });
 
   it("negative scenario plan identifies docker missing and negative state", () => {

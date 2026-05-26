@@ -10,10 +10,14 @@
  * execute suites.
  */
 
-import type { ExpectedStateConfig, ResolvedSuite } from "./schema.ts";
-
 export type ProbeValue = string | number | boolean | null;
 export type ProbeResults = Record<string, ProbeValue>;
+export type ExpectedStateConfig = Record<string, unknown>;
+
+export interface ResolvedSuite {
+  id: string;
+  requires_state?: Record<string, unknown>;
+}
 
 export interface ValidatorInput {
   stateId: string;

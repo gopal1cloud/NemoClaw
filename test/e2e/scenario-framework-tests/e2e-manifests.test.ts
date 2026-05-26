@@ -2,28 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import fs from "node:fs";
 import path from "node:path";
-import yaml from "js-yaml";
 
 import { compileRunPlans } from "../scenarios/compiler.ts";
 import { loadManifest, loadManifestsFromDir, validateManifest } from "../scenarios/manifests.ts";
-import { migrationInventory } from "../scenarios/migration-inventory.ts";
+import { listScenarios } from "../scenarios/registry.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const E2E_DIR = path.join(REPO_ROOT, "test/e2e");
 const MANIFEST_DIR = path.join(E2E_DIR, "manifests");
-const SCENARIOS_PATH = path.join(E2E_DIR, "nemoclaw_scenarios", "scenarios.yaml");
-
-type AnyRecord = Record<string, unknown>;
-
-function loadYaml(filePath: string): AnyRecord {
-  const doc = yaml.load(fs.readFileSync(filePath, "utf8"));
-  if (!doc || typeof doc !== "object") {
-    throw new Error(`${filePath} did not parse to an object`);
-  }
-  return doc as AnyRecord;
-}
 
 describe("NemoClawInstance manifests", () => {
   it("test_should_validate_all_nemoclaw_instance_manifests", () => {
@@ -66,23 +53,14 @@ describe("NemoClawInstance manifests", () => {
     expect(() => validateManifest(badManifest, "bad-secret.yaml")).toThrow(/raw secret|credentialRefs/i);
   });
 
-  it("test_should_cover_or_delete_every_old_test_plan_manifest_need", () => {
-    const scenarios = loadYaml(SCENARIOS_PATH);
-    const oldTestPlans = Object.keys(scenarios.test_plans as AnyRecord).sort();
-    const coveredPlans = new Set(migrationInventory.testPlans.map((entry) => entry.id));
-    const missingPlans = oldTestPlans.filter((id) => !coveredPlans.has(id));
-    const manifestOwners = new Set(
-      migrationInventory.onboardingProfiles
-        .map((entry) => entry.newOwner)
-        .filter((owner) => owner.startsWith("manifest:"))
-        .map((owner) => owner.replace(/^manifest:/, "")),
-    );
-    const manifestNames = new Set(
-      loadManifestsFromDir(MANIFEST_DIR).map((manifest) => manifest.document.metadata.name),
-    );
-    const missingManifests = Array.from(manifestOwners).filter((id) => !manifestNames.has(id));
+  it("test_should_cover_every_typed_scenario_manifest_need", () => {
+    const manifestNames = new Set(loadManifestsFromDir(MANIFEST_DIR).map((manifest) => manifest.document.metadata.name));
+    const missingManifests = listScenarios()
+      .map((scenario) => scenario.manifestPath)
+      .filter((manifestPath): manifestPath is string => Boolean(manifestPath))
+      .map((manifestPath) => path.basename(manifestPath, ".yaml"))
+      .filter((id) => !manifestNames.has(id));
 
-    expect(missingPlans, `missing test plan manifest coverage: ${missingPlans.join(", ")}`).toEqual([]);
     expect(missingManifests, `missing manifest files: ${missingManifests.join(", ")}`).toEqual([]);
   });
 
