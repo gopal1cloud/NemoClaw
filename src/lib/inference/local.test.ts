@@ -852,6 +852,8 @@ describe("local inference helpers", () => {
 
     expect(resolveOllamaRuntimeContextWindow("qwen3.6:35b", null, capture)).toBe(262144);
     expect(resolveOllamaRuntimeContextWindow("qwen3.6:35b", "131072", capture)).toBeNull();
+    expect(resolveOllamaRuntimeContextWindow("qwen3.6:35b", "bogus", capture)).toBeNull();
+    expect(resolveOllamaRuntimeContextWindow("qwen3.6:35b", "   ", capture)).toBe(262144);
     expect(resolveOllamaRuntimeContextWindow("other:model", null, capture)).toBeNull();
   });
 

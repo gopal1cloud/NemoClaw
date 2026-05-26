@@ -694,6 +694,10 @@ export function parsePositiveInteger(value: unknown): number | null {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function hasExplicitContextWindow(value: unknown): boolean {
+  return String(value ?? "").trim() !== "";
+}
+
 function parseOllamaRuntimeContextLength(value: unknown): {
   contextLength?: number;
   warning?: string;
@@ -786,7 +790,7 @@ export function resolveOllamaRuntimeContextWindow(
   currentContextWindow: string | null | undefined = null,
   runCaptureImpl?: RunCaptureFn,
 ): number | null {
-  if (parsePositiveInteger(currentContextWindow)) return null;
+  if (hasExplicitContextWindow(currentContextWindow)) return null;
   const runtimeStatus = probeOllamaRuntimeModelStatus(model, runCaptureImpl);
   return runtimeStatus.loaded ? (runtimeStatus.contextLength ?? null) : null;
 }
@@ -805,7 +809,7 @@ export function applyOllamaRuntimeContextWindow(selectedModel: string): void {
     currentContextWindow === autoDetectedOllamaContextWindow;
   const userContextWindow = currentIsPreviousAuto ? null : currentContextWindow;
 
-  if (parsePositiveInteger(userContextWindow)) {
+  if (hasExplicitContextWindow(userContextWindow)) {
     console.log(`  ℹ Keeping configured context window: ${userContextWindow} tokens`);
     return;
   }

@@ -1617,6 +1617,12 @@ try {
   models = [{ name: "qwen2.5:7b", context_length: 32768 }];
   applyOllamaRuntimeContextWindow("qwen2.5:7b");
   result.userOverride = process.env.NEMOCLAW_CONTEXT_WINDOW || null;
+
+  resetOllamaRuntimeContextWindowAutoState();
+  process.env.NEMOCLAW_CONTEXT_WINDOW = "bogus";
+  models = [{ name: "qwen2.5:7b", context_length: 32768 }];
+  applyOllamaRuntimeContextWindow("qwen2.5:7b");
+  result.invalidOverride = process.env.NEMOCLAW_CONTEXT_WINDOW || null;
 } finally {
   console.warn = originalWarn;
   console.log = originalLog;
@@ -1641,6 +1647,7 @@ console.log(JSON.stringify(result));
       updated: "32768",
       cleared: null,
       userOverride: "262144",
+      invalidOverride: "bogus",
     });
   });
 
