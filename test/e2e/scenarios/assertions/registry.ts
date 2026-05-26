@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { environmentBaseline } from "./environment.ts";
 import type { AssertionGroup, AssertionStep, PhaseName, ScenarioDefinition } from "../types.ts";
 
 type Reliability = AssertionStep["reliability"];
@@ -31,6 +32,15 @@ function probeStep(id: string, phase: PhaseName, ref: string, reliability?: Reli
     implementation: { kind: "probe", ref },
     evidencePath: `.e2e/assertions/${id}.json`,
     reliability,
+  };
+}
+
+function pendingStep(id: string, phase: PhaseName, ref: string): AssertionStep {
+  return {
+    id,
+    phase,
+    implementation: { kind: "pending", ref },
+    evidencePath: `.e2e/assertions/${id}.json`,
   };
 }
 
@@ -154,6 +164,16 @@ const ollamaProxySteps = [
   }),
 ];
 
+export const runtimeControlGroups: AssertionGroup[] = [
+  {
+    id: "runtime.expected-failure.no-side-effects",
+    phase: "runtime",
+    description: "Negative scenario runtime check ensuring forbidden side effects did not occur.",
+    migrationStatus: "complete",
+    steps: [pendingStep("runtime.expected-failure.no-side-effects", "runtime", "expectedFailureNoSideEffectsProbe")],
+  },
+];
+
 export const validationSuiteGroups: AssertionGroup[] = [
   suiteGroup("smoke", smokeSteps),
   suiteGroup("gateway-health", [smokeSteps[1]]),
@@ -189,7 +209,7 @@ export const validationSuiteGroups: AssertionGroup[] = [
 ];
 
 export const assertionRegistry = {
-  groups: [...onboardingAssertionGroups, ...validationSuiteGroups],
+  groups: [environmentBaseline(), ...onboardingAssertionGroups, ...runtimeControlGroups, ...validationSuiteGroups],
 };
 
 export function assertionGroupForSuite(suiteId: string): AssertionGroup | undefined {
@@ -257,9 +277,11 @@ function uniqueGroups(groups: AssertionGroup[]): AssertionGroup[] {
 
 export function assertionGroupsForScenario(scenario: ScenarioDefinition): AssertionGroup[] {
   const groups = [
+    environmentBaseline(),
     ...(scenario.onboardingAssertionIds ?? []).map((id) => assertionGroupForOnboardingAssertion(id)),
     ...(scenario.suiteIds ?? []).map((id) => assertionGroupForSuite(id)),
     ...supplementalSuiteIdsForScenario(scenario).map((id) => assertionGroupForSuite(id)),
+    scenario.expectedFailure ? runtimeControlGroups[0] : undefined,
   ].filter((entry): entry is AssertionGroup => Boolean(entry));
   return uniqueGroups(groups);
 }

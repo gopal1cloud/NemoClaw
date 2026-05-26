@@ -36,8 +36,6 @@ function canonicalScenario(input: CanonicalScenarioInput): ScenarioDefinition {
     .onboardingAssertions(input.onboardingAssertionIds ?? ["base-installed", "preflight-passed"])
     .suites(input.suiteIds);
 
-  builder = builder.assertions(assertionGroupsForScenario(builder.build()));
-
   if (input.runnerRequirements) {
     builder = builder.runnerRequirements(input.runnerRequirements);
   }
@@ -50,6 +48,7 @@ function canonicalScenario(input: CanonicalScenarioInput): ScenarioDefinition {
   if (input.expectedFailure) {
     builder = builder.expectedFailure(input.expectedFailure);
   }
+  builder = builder.assertions(assertionGroupsForScenario(builder.build()));
   return builder.build();
 }
 

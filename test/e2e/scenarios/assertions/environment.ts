@@ -8,6 +8,7 @@ export function environmentBaseline(): AssertionGroup {
     id: "environment.baseline",
     phase: "environment",
     description: "Skeleton environment baseline assertion group.",
+    migrationStatus: "complete",
     steps: [
       {
         id: "environment.plan.skeleton",

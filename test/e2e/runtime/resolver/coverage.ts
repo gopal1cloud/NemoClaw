@@ -2,260 +2,217 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Render a Markdown coverage report for E2E setup scenarios.
+ * Render Markdown coverage for the hybrid scenario E2E architecture.
  *
- * Design (per the simplify pass): one primary table, one row per scenario.
- * A `## Gaps` section flags scenarios without suites and expected states
- * that no scenario references. Rows are sorted deterministically for
- * stable CI diffs.
+ * The source of truth is the typed scenario registry, product-facing manifests,
+ * and assertion modules. Legacy YAML suite/test-plan files are intentionally not
+ * loaded here.
  */
 
-import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-import yaml from "js-yaml";
-
-import type { ResolverInput } from "./load.ts";
+import { assertionRegistry } from "../../scenarios/assertions/registry.ts";
+import { compileRunPlans } from "../../scenarios/compiler.ts";
+import { loadManifest } from "../../scenarios/manifests.ts";
+import { listScenarios } from "../../scenarios/registry.ts";
+import type { AssertionGroup, PhaseName, ScenarioDefinition } from "../../scenarios/types.ts";
 
 export interface CoverageReportOptions {
   /** Optional map of scenario id -> last known run status. */
   lastRunStatus?: Record<string, string>;
 }
 
-interface ParityInventoryAssertion {
-  mapping_status?: string;
+export interface CoverageSummary {
+  scenarios: number;
+  manifests: number;
+  assertionGroups: number;
+  phases: PhaseName[];
 }
 
-interface ParityInventoryEntrypoint {
-  script: string;
-  assertions: ParityInventoryAssertion[];
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
+const PHASES: PhaseName[] = ["environment", "onboarding", "runtime"];
+
+function uniqueSorted(values: Iterable<string>): string[] {
+  return [...new Set(values)].sort((a, b) => a.localeCompare(b));
 }
 
-function renderLegacyParitySummary(meta: ResolverInput): string[] {
-  if (!meta.sourceDir) return [];
-  const docsDir = path.join(meta.sourceDir, "docs");
-  const inventoryPath = path.join(docsDir, "parity-inventory.generated.json");
-  const mapPath = path.join(docsDir, "parity-map.yaml");
-  if (!fs.existsSync(inventoryPath) || !fs.existsSync(mapPath)) return [];
+function groupIdsFor(scenario: ScenarioDefinition): string[] {
+  return uniqueSorted(scenario.assertionGroups.map((group) => group.id));
+}
 
-  const inventory = JSON.parse(fs.readFileSync(inventoryPath, "utf8")) as {
-    entrypoints: ParityInventoryEntrypoint[];
-  };
-  const parityMap = (yaml.load(fs.readFileSync(mapPath, "utf8")) ?? {}) as {
-    scripts?: Record<string, { bucket?: string }>;
-  };
-  const counts = { mapped: 0, deferred: 0, retired: 0, unmapped: 0 };
-  const buckets = new Map<
-    string,
-    {
-      scripts: Set<string>;
-      mapped: number;
-      deferred: number;
-      retired: number;
-      unmapped: number;
+function phaseCounts(groups: AssertionGroup[]): Record<PhaseName, number> {
+  return PHASES.reduce(
+    (acc, phase) => {
+      acc[phase] = groups.filter((group) => group.phase === phase).length;
+      return acc;
+    },
+    {} as Record<PhaseName, number>,
+  );
+}
+
+export function validateCoverage(
+  scenarios: ScenarioDefinition[] = listScenarios(),
+  groups: AssertionGroup[] = assertionRegistry.groups,
+): void {
+  if (scenarios.length === 0) {
+    throw new Error("Coverage has no registered scenarios");
+  }
+  if (groups.length === 0) {
+    throw new Error("Coverage has no registered assertion groups");
+  }
+
+  const coveredGroups = new Set<string>();
+  const missingManifests: string[] = [];
+  const missingAssertions: string[] = [];
+  for (const scenario of scenarios) {
+    if (!scenario.manifestPath) {
+      missingManifests.push(scenario.id);
     }
-  >();
+    if (scenario.assertionGroups.length === 0) {
+      missingAssertions.push(scenario.id);
+    }
+    for (const group of scenario.assertionGroups) {
+      coveredGroups.add(group.id);
+    }
+  }
+  if (missingManifests.length > 0) {
+    throw new Error(`Scenarios missing manifest coverage: ${missingManifests.sort().join(", ")}`);
+  }
+  if (missingAssertions.length > 0) {
+    throw new Error(`Scenarios missing assertion coverage: ${missingAssertions.sort().join(", ")}`);
+  }
 
-  for (const entrypoint of inventory.entrypoints) {
-    const script = path.basename(entrypoint.script);
-    const bucket = parityMap.scripts?.[script]?.bucket ?? "unbucketed";
-    const row = buckets.get(bucket) ?? {
-      scripts: new Set<string>(),
-      mapped: 0,
-      deferred: 0,
-      retired: 0,
-      unmapped: 0,
-    };
-    row.scripts.add(script);
-    buckets.set(bucket, row);
-    for (const assertion of entrypoint.assertions) {
-      const status = assertion.mapping_status;
-      if (
-        status === "mapped" ||
-        status === "deferred" ||
-        status === "retired"
-      ) {
-        counts[status]++;
-        row[status]++;
-      } else {
-        counts.unmapped++;
-        row.unmapped++;
+  const registeredIds = new Set(groups.map((group) => group.id));
+  const unknownGroups = uniqueSorted([...coveredGroups].filter((id) => !registeredIds.has(id)));
+  if (unknownGroups.length > 0) {
+    throw new Error(`Scenarios reference unknown assertion groups: ${unknownGroups.join(", ")}`);
+  }
+
+  const uncoveredGroups = uniqueSorted([...registeredIds].filter((id) => !coveredGroups.has(id)));
+  if (uncoveredGroups.length > 0) {
+    throw new Error(`Registered assertion groups missing scenario coverage: ${uncoveredGroups.join(", ")}`);
+  }
+
+  for (const scenario of scenarios) {
+    for (const phase of PHASES) {
+      if (!scenario.assertionGroups.some((group) => group.phase === phase)) {
+        throw new Error(`Scenario ${scenario.id} missing ${phase} phase coverage`);
       }
     }
   }
-
-  const lines: string[] = [];
-  lines.push("## Legacy Parity Summary");
-  lines.push("");
-  lines.push(`- Scripts: ${inventory.entrypoints.length}`);
-  lines.push(`- Mapped assertions: ${counts.mapped}`);
-  lines.push(`- Deferred assertions: ${counts.deferred}`);
-  lines.push(`- Retired assertions: ${counts.retired}`);
-  lines.push(`- Unmapped assertions: ${counts.unmapped}`);
-  lines.push("");
-  lines.push("| Bucket | Scripts | Mapped | Deferred | Retired | Unmapped |");
-  lines.push("|---|---:|---:|---:|---:|---:|");
-  for (const [bucket, row] of [...buckets.entries()].sort(([a], [b]) =>
-    a.localeCompare(b),
-  )) {
-    lines.push(
-      `| ${bucket} | ${row.scripts.size} | ${row.mapped} | ${row.deferred} | ${row.retired} | ${row.unmapped} |`,
-    );
-  }
-  lines.push("");
-  return lines;
 }
 
-export function renderCoverageReport(
-  meta: ResolverInput,
-  options: CoverageReportOptions = {},
-): string {
-  const { scenarios, expectedStates } = meta;
-  const scenarioIds = Object.keys(scenarios.setup_scenarios).sort();
+export function buildCoverageSummary(scenarios: ScenarioDefinition[] = listScenarios()): CoverageSummary {
+  return {
+    scenarios: scenarios.length,
+    manifests: uniqueSorted(scenarios.map((scenario) => scenario.manifestPath).filter((value): value is string => Boolean(value))).length,
+    assertionGroups: uniqueSorted(scenarios.flatMap((scenario) => groupIdsFor(scenario))).length,
+    phases: PHASES,
+  };
+}
+
+export function renderCoverageReport(_meta?: unknown, options: CoverageReportOptions = {}): string {
+  const scenarios = listScenarios();
+  const groups = assertionRegistry.groups;
+  validateCoverage(scenarios, groups);
+  const plans = compileRunPlans(scenarios);
+  const summary = buildCoverageSummary(scenarios);
+  const hasStatus = Boolean(options.lastRunStatus && Object.keys(options.lastRunStatus).length > 0);
+
   const lines: string[] = [];
-  lines.push("# E2E Setup Scenario Coverage");
+  lines.push("# Hybrid Scenario E2E Coverage");
   lines.push("");
-  lines.push(
-    "_Generated from `test/e2e/{scenarios,expected-states,suites}.yaml`._",
-  );
+  lines.push("_Generated from typed scenario builders, product manifests, and assertion modules._");
   lines.push("");
-  lines.push("## Base Scenarios");
+  lines.push("## Summary");
   lines.push("");
-  lines.push("| Base | Platform | Install | Runtime | Requirements |");
-  lines.push("|---|---|---|---|---|");
-  for (const [id, base] of Object.entries(scenarios.base_scenarios ?? {}).sort(
-    ([a], [b]) => a.localeCompare(b),
-  )) {
-    lines.push(
-      `| ${id} | ${base.platform} | ${base.install} | ${base.runtime} | ${(base.runner_requirements ?? []).join(", ") || "_none_"} |`,
-    );
-  }
+  lines.push(`- Scenarios: ${summary.scenarios}`);
+  lines.push(`- Manifests: ${summary.manifests}`);
+  lines.push(`- Assertion groups: ${summary.assertionGroups}`);
+  lines.push(`- Phases: ${summary.phases.join(", ")}`);
   lines.push("");
-  lines.push("## Onboarding Profiles");
+
+  lines.push("## Scenario Coverage");
   lines.push("");
-  lines.push("| Profile | Path | Provider | Agent | Route |");
-  lines.push("|---|---|---|---|---|");
-  for (const [id, profile] of Object.entries(
-    scenarios.onboarding_profiles ?? {},
-  ).sort(([a], [b]) => a.localeCompare(b))) {
-    lines.push(
-      `| ${id} | ${profile.path ?? ""} | ${profile.provider ?? ""} | ${profile.agent ?? ""} | ${profile.inference_route ?? ""} |`,
-    );
-  }
-  lines.push("");
-  lines.push("## Test Plans");
-  lines.push("");
-  lines.push("| Plan | Base | Onboarding | Expected state | Suites |");
-  lines.push("|---|---|---|---|---|");
-  for (const [id, plan] of Object.entries(scenarios.test_plans ?? {}).sort(
-    ([a], [b]) => a.localeCompare(b),
-  )) {
-    lines.push(
-      `| ${id} | ${plan.base} | ${plan.onboarding} | ${plan.expected_state} | ${(plan.suites ?? []).join(", ") || "_(none)_"} |`,
-    );
-  }
-  lines.push("");
-  lines.push("## Suites");
-  lines.push("");
-  lines.push(`Total suites: ${Object.keys(meta.suites.suites).length}`);
-  lines.push("");
-  lines.push("## Scenarios");
-  lines.push("");
-  const hasStatus =
-    options.lastRunStatus && Object.keys(options.lastRunStatus).length > 0;
-  const header = hasStatus
-    ? "| Scenario | Platform | Install | Runtime | Onboarding | Expected state | Suites | Last run |"
-    : "| Scenario | Platform | Install | Runtime | Onboarding | Expected state | Suites |";
-  const sep = hasStatus
-    ? "|---|---|---|---|---|---|---|---|"
-    : "|---|---|---|---|---|---|---|";
-  lines.push(header);
-  lines.push(sep);
-  for (const id of scenarioIds) {
-    const sc = scenarios.setup_scenarios[id];
-    if (!sc) continue;
-    const suites = sc.suites ?? [];
-    const dimensions = sc.dimensions;
-    const suiteCell = suites.length === 0 ? "_(none)_" : suites.join(", ");
+  lines.push(hasStatus ? "| Scenario | Manifest | Environment | Expected state | Assertion groups | Last run |" : "| Scenario | Manifest | Environment | Expected state | Assertion groups |");
+  lines.push(hasStatus ? "|---|---|---|---|---|---|" : "|---|---|---|---|---|");
+  for (const scenario of scenarios) {
+    const env = scenario.environment
+      ? `platform=${scenario.environment.platform}<br>install=${scenario.environment.install}<br>runtime=${scenario.environment.runtime}<br>onboarding=${scenario.environment.onboarding}`
+      : "_none_";
     const row = [
-      id,
-      dimensions?.platform ?? "",
-      dimensions?.install ?? "",
-      dimensions?.runtime ?? "",
-      dimensions?.onboarding ?? "",
-      sc.expected_state ?? "",
-      suiteCell,
+      scenario.id,
+      scenario.manifestPath ?? "_missing_",
+      env,
+      scenario.expectedStateId ?? "_none_",
+      groupIdsFor(scenario).join(", "),
     ];
     if (hasStatus) {
-      row.push(options.lastRunStatus?.[id] ?? "_unknown_");
+      row.push(options.lastRunStatus?.[scenario.id] ?? "_unknown_");
     }
     lines.push(`| ${row.join(" | ")} |`);
   }
   lines.push("");
-  lines.push(...renderLegacyParitySummary(meta));
 
-  // Gaps section.
-  const scenarioEntries = scenarioIds.flatMap((id) => {
-    const scenario = scenarios.setup_scenarios[id];
-    return scenario ? [{ id, scenario }] : [];
-  });
-  const scenariosWithoutSuites = scenarioEntries
-    .filter(({ scenario }) => (scenario.suites ?? []).length === 0)
-    .map(({ id }) => id);
-  const skippedScenarios = scenarioEntries
-    .map(({ id, scenario }) => ({
-      id,
-      skips: scenario.skipped_capabilities ?? [],
-    }))
-    .filter(({ skips }) => skips.length > 0);
-  const referencedStates = new Set<string>(
-    scenarioEntries
-      .map(({ scenario }) => scenario.expected_state)
-      .filter((state): state is string => Boolean(state)),
-  );
-  const unusedStates = Object.keys(expectedStates.expected_states)
-    .filter((s) => !referencedStates.has(s))
-    .sort();
+  lines.push("## Manifest Coverage");
+  lines.push("");
+  lines.push("| Manifest | Scenarios | Agent | Provider | Route | Platform | Runtime |");
+  lines.push("|---|---|---|---|---|---|---|");
+  for (const manifestPath of uniqueSorted(scenarios.map((scenario) => scenario.manifestPath).filter((value): value is string => Boolean(value)))) {
+    const manifest = loadManifest(path.resolve(REPO_ROOT, manifestPath)).document;
+    const users = scenarios.filter((scenario) => scenario.manifestPath === manifestPath).map((scenario) => scenario.id).sort();
+    lines.push(
+      `| ${manifestPath} | ${users.join(", ")} | ${manifest.spec.onboarding.agent} | ${manifest.spec.onboarding.provider} | ${manifest.spec.onboarding.modelRoute ?? "_none_"} | ${manifest.spec.setup.platform.os ?? "unknown"}/${manifest.spec.setup.platform.executionTarget ?? "unknown"} | ${manifest.spec.setup.runtime.containerEngine ?? "unknown"}/${manifest.spec.setup.runtime.containerDaemon ?? "unknown"} |`,
+    );
+  }
+  lines.push("");
+
+  lines.push("## Environment Family Coverage");
+  lines.push("");
+  lines.push("| Family | Values |");
+  lines.push("|---|---|");
+  lines.push(`| Platform | ${uniqueSorted(scenarios.map((scenario) => scenario.environment?.platform ?? "unknown")).join(", ")} |`);
+  lines.push(`| Install | ${uniqueSorted(scenarios.map((scenario) => scenario.environment?.install ?? "unknown")).join(", ")} |`);
+  lines.push(`| Runtime | ${uniqueSorted(scenarios.map((scenario) => scenario.environment?.runtime ?? "unknown")).join(", ")} |`);
+  lines.push(`| Onboarding | ${uniqueSorted(scenarios.map((scenario) => scenario.environment?.onboarding ?? "unknown")).join(", ")} |`);
+  lines.push("");
+
+  lines.push("## Assertion Group Coverage");
+  lines.push("");
+  lines.push("| Assertion group | Phase | Source | Scenarios | Steps |");
+  lines.push("|---|---|---|---|---:|");
+  for (const group of [...groups].sort((a, b) => a.id.localeCompare(b.id))) {
+    const users = scenarios.filter((scenario) => scenario.assertionGroups.some((entry) => entry.id === group.id)).map((scenario) => scenario.id).sort();
+    lines.push(`| ${group.id} | ${group.phase} | ${group.suiteId ? `suite:${group.suiteId}` : group.onboardingAssertionId ? `onboarding:${group.onboardingAssertionId}` : "typed"} | ${users.join(", ")} | ${group.steps.length} |`);
+  }
+  lines.push("");
+
+  lines.push("## Phase Coverage");
+  lines.push("");
+  lines.push("| Phase | Assertion groups | Scenario coverage |");
+  lines.push("|---|---:|---:|");
+  const counts = phaseCounts(groups);
+  for (const phase of PHASES) {
+    const scenarioCount = scenarios.filter((scenario) => scenario.assertionGroups.some((group) => group.phase === phase)).length;
+    lines.push(`| ${phase} | ${counts[phase]} | ${scenarioCount}/${scenarios.length} |`);
+  }
+  lines.push("");
+
+  lines.push("## Runner, Secret, Skip, and Expected Failure Gates");
+  lines.push("");
+  lines.push("| Scenario | Runner requirements | Required secrets | Skipped capabilities | Expected failure |");
+  lines.push("|---|---|---|---|---|");
+  for (const plan of plans) {
+    lines.push(
+      `| ${plan.scenarioId} | ${plan.runnerRequirements.join(", ") || "_none_"} | ${plan.requiredSecrets.join(", ") || "_none_"} | ${plan.skippedCapabilities.map((entry) => entry.id ?? "unnamed").join(", ") || "_none_"} | ${plan.expectedFailure ? JSON.stringify(plan.expectedFailure) : "_none_"} |`,
+    );
+  }
+  lines.push("");
 
   lines.push("## Gaps");
   lines.push("");
-  if (
-    scenariosWithoutSuites.length === 0 &&
-    unusedStates.length === 0 &&
-    skippedScenarios.length === 0
-  ) {
-    lines.push("_No gaps detected._");
-  } else {
-    if (scenariosWithoutSuites.length > 0) {
-      lines.push("### Scenarios with no suites");
-      lines.push("");
-      for (const id of scenariosWithoutSuites.sort()) {
-        lines.push(`- \`${id}\`: no suites configured`);
-      }
-      lines.push("");
-    }
-    if (skippedScenarios.length > 0) {
-      lines.push("### Explicitly skipped capabilities");
-      lines.push("");
-      for (const { id, skips } of skippedScenarios) {
-        for (const skip of skips) {
-          const suites =
-            Array.isArray(skip.suites) && skip.suites.length > 0
-              ? ` Suites: ${skip.suites.map((suite) => `\`${suite}\``).join(", ")}.`
-              : "";
-          lines.push(`- \`${id}\` / \`${skip.id}\`: ${skip.reason}${suites}`);
-        }
-      }
-      lines.push("");
-    }
-    if (unusedStates.length > 0) {
-      lines.push("### Unused expected states");
-      lines.push("");
-      for (const id of unusedStates) {
-        lines.push(`- \`${id}\`: no scenario references this expected state`);
-      }
-      lines.push("");
-    }
-  }
-  return lines.join("\n");
+  lines.push("_No gaps detected._");
+
+  return `${lines.join("\n").trimEnd()}\n`;
 }
