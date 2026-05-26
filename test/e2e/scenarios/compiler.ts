@@ -25,12 +25,17 @@ export function compileRunPlans(scenarioIds: string[]): RunPlan[] {
       note: "not-yet-implemented skeleton plan; live execution lands in later phases",
       manifestPath: scenario.manifestPath,
       manifest,
+      environment: scenario.environment,
+      expectedStateId: scenario.expectedStateId,
+      suiteIds: scenario.suiteIds ?? [],
+      onboardingAssertionIds: scenario.onboardingAssertionIds ?? [],
       phases: PHASES.map((phase) => ({
         name: phase,
         actions: [`${phase}: skeleton`],
         assertionGroups: groupsForPhase(scenario, phase),
       })),
       runnerRequirements: scenario.runnerRequirements ?? [],
+      requiredSecrets: scenario.requiredSecrets ?? [],
       skippedCapabilities: scenario.skippedCapabilities ?? [],
       expectedFailure: scenario.expectedFailure,
     };
@@ -44,6 +49,29 @@ export function renderPlanText(plans: RunPlan[]): string {
     lines.push(`Status: ${plan.status}`);
     lines.push(`Note: ${plan.note ?? ""}`);
     lines.push(`Manifest: ${plan.manifestPath ?? "not-yet-defined"}`);
+    if (plan.environment) {
+      lines.push(
+        `Environment: platform=${plan.environment.platform} install=${plan.environment.install} runtime=${plan.environment.runtime} onboarding=${plan.environment.onboarding}`,
+      );
+    }
+    if (plan.expectedStateId) {
+      lines.push(`Expected state: ${plan.expectedStateId}`);
+    }
+    if (plan.suiteIds.length > 0) {
+      lines.push(`Suites: ${plan.suiteIds.join(", ")}`);
+    }
+    if (plan.requiredSecrets.length > 0) {
+      lines.push(`Required secrets: ${plan.requiredSecrets.join(", ")}`);
+    }
+    if (plan.runnerRequirements.length > 0) {
+      lines.push(`Runner requirements: ${plan.runnerRequirements.join(", ")}`);
+    }
+    if (plan.skippedCapabilities.length > 0) {
+      lines.push(`Skipped capabilities: ${plan.skippedCapabilities.map((entry) => entry.id ?? "unnamed").join(", ")}`);
+    }
+    if (plan.expectedFailure) {
+      lines.push(`Expected failure: ${JSON.stringify(plan.expectedFailure)}`);
+    }
     if (plan.manifest) {
       const setup = plan.manifest.spec.setup;
       const onboarding = plan.manifest.spec.onboarding;

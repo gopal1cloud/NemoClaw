@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { AssertionGroup, ScenarioDefinition } from "./types.ts";
+import type { AssertionGroup, ScenarioDefinition, ScenarioEnvironment } from "./types.ts";
 
 export class ScenarioBuilder {
   private readonly definition: ScenarioDefinition;
@@ -20,8 +20,23 @@ export class ScenarioBuilder {
     return this;
   }
 
-  environment(environment: Record<string, unknown>): ScenarioBuilder {
+  environment(environment: ScenarioEnvironment): ScenarioBuilder {
     this.definition.environment = environment;
+    return this;
+  }
+
+  expectedState(expectedStateId: string): ScenarioBuilder {
+    this.definition.expectedStateId = expectedStateId;
+    return this;
+  }
+
+  suites(suiteIds: string[]): ScenarioBuilder {
+    this.definition.suiteIds = suiteIds;
+    return this;
+  }
+
+  onboardingAssertions(onboardingAssertionIds: string[]): ScenarioBuilder {
+    this.definition.onboardingAssertionIds = onboardingAssertionIds;
     return this;
   }
 
@@ -32,6 +47,11 @@ export class ScenarioBuilder {
 
   runnerRequirements(runnerRequirements: string[]): ScenarioBuilder {
     this.definition.runnerRequirements = runnerRequirements;
+    return this;
+  }
+
+  requiredSecrets(requiredSecrets: string[]): ScenarioBuilder {
+    this.definition.requiredSecrets = requiredSecrets;
     return this;
   }
 
@@ -49,7 +69,10 @@ export class ScenarioBuilder {
     return {
       ...this.definition,
       assertionGroups: [...this.definition.assertionGroups],
+      suiteIds: [...(this.definition.suiteIds ?? [])],
+      onboardingAssertionIds: [...(this.definition.onboardingAssertionIds ?? [])],
       runnerRequirements: [...(this.definition.runnerRequirements ?? [])],
+      requiredSecrets: [...(this.definition.requiredSecrets ?? [])],
       skippedCapabilities: [...(this.definition.skippedCapabilities ?? [])],
     };
   }

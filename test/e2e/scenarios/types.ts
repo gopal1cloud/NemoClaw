@@ -70,13 +70,24 @@ export interface AssertionGroup {
   steps: AssertionStep[];
 }
 
+export interface ScenarioEnvironment {
+  platform: string;
+  install: string;
+  runtime: string;
+  onboarding: string;
+}
+
 export interface ScenarioDefinition {
   id: string;
   description?: string;
   manifestPath?: string;
-  environment?: Record<string, unknown>;
+  environment?: ScenarioEnvironment;
   assertionGroups: AssertionGroup[];
+  expectedStateId?: string;
+  suiteIds?: string[];
+  onboardingAssertionIds?: string[];
   runnerRequirements?: string[];
+  requiredSecrets?: string[];
   skippedCapabilities?: Array<Record<string, unknown>>;
   expectedFailure?: Record<string, unknown>;
 }
@@ -93,8 +104,13 @@ export interface RunPlan {
   note?: string;
   manifestPath?: string;
   manifest?: NemoClawInstanceManifest;
+  environment?: ScenarioEnvironment;
+  expectedStateId?: string;
+  suiteIds: string[];
+  onboardingAssertionIds: string[];
   phases: RunPlanPhase[];
   runnerRequirements: string[];
+  requiredSecrets: string[];
   skippedCapabilities: Array<Record<string, unknown>>;
   expectedFailure?: Record<string, unknown>;
 }
