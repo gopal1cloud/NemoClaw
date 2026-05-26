@@ -188,7 +188,8 @@ Before deleting an existing sandbox during recreation, NemoClaw backs up the wor
 This applies whether the existing sandbox is ready or marked not-ready, so cross-version upgrades that pass `NEMOCLAW_RECREATE_SANDBOX=1` no longer drop user files under `/sandbox/.openclaw/workspace/`.
 The behaviour matches `nemoclaw <name> rebuild --force`.
 NemoClaw aborts the recreate when the backup cannot complete in full — including when individual state directories or files fail mid-backup — so failed entries are not silently dropped on delete.
-Set `NEMOCLAW_RECREATE_WITHOUT_BACKUP=1` to skip the pre-recreate backup; the destination sandbox starts with a fresh workspace.
+Set `NEMOCLAW_RECREATE_WITHOUT_BACKUP=1` to skip the pre-recreate backup.
+The destination sandbox starts with a fresh workspace.
 
 Before creating the gateway, the wizard runs preflight checks.
 It verifies that Docker is reachable, warns on untested runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.

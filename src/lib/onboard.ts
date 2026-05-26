@@ -3323,24 +3323,16 @@ async function createSandbox(
       const rotatedNames = credentialRotation.changedProviders.join(", ");
       console.log(`  Messaging credential(s) rotated: ${rotatedNames}`);
       console.log("  Rebuilding sandbox to propagate new credentials to the L7 proxy...");
-      const result = backupSandboxBeforeRecreate({ sandboxName });
-      if (!result.ok) {
-        console.error("  Pass --recreate-sandbox to force recreation without backup.");
-        upsertMessagingProviders(messagingTokenDefs);
-        const reusedPort3 = ensureDashboardForward(sandboxName, chatUiUrl);
-        process.env.CHAT_UI_URL = `http://127.0.0.1:${reusedPort3}`;
-        updateReusedSandboxMetadata(
-          sandboxName,
-          agent,
-          model,
-          provider,
-          reusedPort3,
-          !selectionDrift.unknown,
-          effectiveSandboxGpuConfig,
-        );
-        return sandboxName;
+      if (!shouldSkipPreRecreateBackup(process.env)) {
+        const result = backupSandboxBeforeRecreate({ sandboxName });
+        if (!result.ok) {
+          console.error(
+            "  Set NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 to recreate without preserving state.",
+          );
+          process.exit(1);
+        }
+        pendingStateRestore = result.backup;
       }
-      pendingStateRestore = result.backup;
     }
 
     if (recreateForAgentDrift) {
