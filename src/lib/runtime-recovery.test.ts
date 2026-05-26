@@ -44,6 +44,20 @@ describe("runtime recovery helpers", () => {
     expect(Array.from(parseLiveSandboxNames())).toEqual([]);
   });
 
+  it("does not drop sandboxes whose name starts with 'name' or 'no'", () => {
+    expect(
+      Array.from(
+        parseLiveSandboxNames(
+          [
+            "NAME              NAMESPACE  CREATED              PHASE",
+            "name-prod         openshell  2026-03-24 10:00:00  Ready",
+            "no-sandboxes      openshell  2026-03-24 10:01:00  Ready",
+          ].join("\n"),
+        ),
+      ),
+    ).toEqual(["name-prod", "no-sandboxes"]);
+  });
+
   describe("parseReadySandboxNames", () => {
     it("includes only sandboxes whose PHASE is Ready", () => {
       expect(
@@ -89,6 +103,20 @@ describe("runtime recovery helpers", () => {
     it("handles empty input", () => {
       expect(Array.from(parseReadySandboxNames(""))).toEqual([]);
       expect(Array.from(parseReadySandboxNames())).toEqual([]);
+    });
+
+    it("does not drop Ready sandboxes whose name starts with 'name' or 'no'", () => {
+      expect(
+        Array.from(
+          parseReadySandboxNames(
+            [
+              "NAME              NAMESPACE  CREATED              PHASE",
+              "name-prod         openshell  2026-03-24 10:00:00  Ready",
+              "no-sandboxes      openshell  2026-03-24 10:01:00  Ready",
+            ].join("\n"),
+          ),
+        ),
+      ).toEqual(["name-prod", "no-sandboxes"]);
     });
   });
 });
