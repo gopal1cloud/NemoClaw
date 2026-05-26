@@ -132,22 +132,12 @@ jobs:
 
       - name: Run typed scenarios in WSL
         if: contains(github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
-        shell: powershell
+        shell: bash
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
-          $script = @"
-          set -euo pipefail
-          cd '$env:WSL_CHECKOUT_DIR'
           npm ci --ignore-scripts
-          export NVIDIA_API_KEY='$env:NVIDIA_API_KEY'
-          export E2E_CONTEXT_DIR='$env:WSL_CHECKOUT_DIR'
-          npx tsx test/e2e/scenarios/run.ts --scenarios '${{ github.event.inputs.scenarios }}' --dry-run
-          "@
-          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
-          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
-          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp.Replace('\','/'))
-          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+          npx tsx test/e2e/scenarios/run.ts --scenarios "${{ github.event.inputs.scenarios }}" --dry-run
 
       - name: Append plan summary
         if: always()
