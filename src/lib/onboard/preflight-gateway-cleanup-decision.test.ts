@@ -1,12 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { preflightGatewayCleanupDecision } from "./preflight-gateway-cleanup-decision";
+import type { GatewayReuseState } from "../state/gateway";
 
-describe("preflightGatewayCleanupDecision (#4235)", () => {
-  it("defers destructive recreation when state is stale and Docker-driver gateway is enabled", () => {
+import {
+  PREFLIGHT_DEFERRED_RECREATE_MESSAGE,
+  applyPreflightGatewayCleanup,
+  preflightGatewayCleanupDecision,
+} from "./preflight-gateway-cleanup-decision";
+
+describe("preflightGatewayCleanupDecision", () => {
+  it("defers when state is stale and Docker-driver gateway is enabled", () => {
     expect(
       preflightGatewayCleanupDecision({
         gatewayReuseState: "stale",
@@ -15,7 +21,7 @@ describe("preflightGatewayCleanupDecision (#4235)", () => {
     ).toBe("defer");
   });
 
-  it("defers destructive recreation when state is active-unnamed and Docker-driver gateway is enabled", () => {
+  it("defers when state is active-unnamed and Docker-driver gateway is enabled", () => {
     expect(
       preflightGatewayCleanupDecision({
         gatewayReuseState: "active-unnamed",
@@ -53,6 +59,77 @@ describe("preflightGatewayCleanupDecision (#4235)", () => {
           isDockerDriverGatewayEnabled: false,
         }),
       ).toBe("noop");
+    }
+  });
+});
+
+describe("applyPreflightGatewayCleanup", () => {
+  function makeDeps(overrides: {
+    gatewayReuseState: GatewayReuseState;
+    isDockerDriverGatewayEnabled: boolean;
+  }) {
+    const log = vi.fn();
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const destroyGateway = vi.fn(() => true);
+    const destroyGatewayForReuse = vi.fn<
+      (
+        destroy: () => boolean,
+        success: string,
+        failure: string,
+      ) => GatewayReuseState
+    >((destroy) => {
+      destroy();
+      return "missing";
+    });
+    return {
+      deps: {
+        gatewayReuseState: overrides.gatewayReuseState,
+        isDockerDriverGatewayEnabled: overrides.isDockerDriverGatewayEnabled,
+        cliDisplayName: "NemoClaw",
+        dashboardPort: 8081,
+        log,
+        runOpenshell,
+        destroyGateway,
+        destroyGatewayForReuse,
+      },
+      log,
+      runOpenshell,
+      destroyGateway,
+      destroyGatewayForReuse,
+    };
+  }
+
+  it("logs the deferral notice without invoking destroy on the Docker-driver path", () => {
+    const ctx = makeDeps({ gatewayReuseState: "stale", isDockerDriverGatewayEnabled: true });
+    const next = applyPreflightGatewayCleanup(ctx.deps);
+    expect(next).toBe("stale");
+    expect(ctx.log).toHaveBeenCalledWith(PREFLIGHT_DEFERRED_RECREATE_MESSAGE);
+    expect(ctx.destroyGateway).not.toHaveBeenCalled();
+    expect(ctx.destroyGatewayForReuse).not.toHaveBeenCalled();
+    expect(ctx.runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("destroys the legacy gateway and stops the dashboard forward on the non-Docker-driver path", () => {
+    const ctx = makeDeps({ gatewayReuseState: "stale", isDockerDriverGatewayEnabled: false });
+    const next = applyPreflightGatewayCleanup(ctx.deps);
+    expect(next).toBe("missing");
+    expect(ctx.log).toHaveBeenCalledWith("  Cleaning up previous NemoClaw session...");
+    expect(ctx.runOpenshell).toHaveBeenCalledWith(["forward", "stop", "8081"], {
+      ignoreError: true,
+    });
+    expect(ctx.destroyGatewayForReuse).toHaveBeenCalledTimes(1);
+    expect(ctx.destroyGateway).toHaveBeenCalledTimes(1);
+  });
+
+  it("is a no-op for healthy / missing / foreign-active states", () => {
+    for (const state of ["healthy", "missing", "foreign-active"] as const) {
+      const ctx = makeDeps({ gatewayReuseState: state, isDockerDriverGatewayEnabled: true });
+      const next = applyPreflightGatewayCleanup(ctx.deps);
+      expect(next).toBe(state);
+      expect(ctx.log).not.toHaveBeenCalled();
+      expect(ctx.destroyGateway).not.toHaveBeenCalled();
+      expect(ctx.destroyGatewayForReuse).not.toHaveBeenCalled();
+      expect(ctx.runOpenshell).not.toHaveBeenCalled();
     }
   });
 });

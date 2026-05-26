@@ -421,7 +421,7 @@ const {
   preflightDashboardPortRangeAvailability,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
 const { destroyGatewayForReuse } = require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
-const { preflightGatewayCleanupDecision } =
+const { applyPreflightGatewayCleanup } =
   require("./onboard/preflight-gateway-cleanup-decision") as typeof import("./onboard/preflight-gateway-cleanup-decision");
 const { verifyGatewayContainerRunning } =
   require("./onboard/gateway-container-running") as typeof import("./onboard/gateway-container-running");
@@ -2142,24 +2142,16 @@ async function preflight(
     }
   }
 
-  // #4235: defer destructive recreation to step [2/8] on the Docker-driver path so preflight stays read-only.
-  const staleCleanupAction = preflightGatewayCleanupDecision({
+  gatewayReuseState = applyPreflightGatewayCleanup({
     gatewayReuseState,
     isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
+    cliDisplayName: cliDisplayName(),
+    dashboardPort: DASHBOARD_PORT,
+    log: console.log,
+    runOpenshell,
+    destroyGateway,
+    destroyGatewayForReuse,
   });
-  if (staleCleanupAction === "defer") {
-    console.log(
-      "  ⚠ Gateway will be recreated when sandbox creation starts — this will affect running sandboxes.",
-    );
-  } else if (staleCleanupAction === "destroy-legacy") {
-    console.log(`  Cleaning up previous ${cliDisplayName()} session...`);
-    runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
-    gatewayReuseState = destroyGatewayForReuse(
-      destroyGateway,
-      "  ✓ Previous session cleaned up",
-      "  ! Previous session cleanup failed; leaving registry state intact.",
-    );
-  }
 
   // Clean up orphaned Docker containers from interrupted onboard (e.g. Ctrl+C
   // during gateway start). The container may still be running even though
