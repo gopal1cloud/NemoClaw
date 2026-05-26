@@ -328,3 +328,26 @@ suites:
     steps:
     - id: jetson-assertions
       script: platform_remote/jetson/00-jetson-assertions.sh
+
+  platform-remote-macos:
+    requires_state:
+      cli.installed: true
+    steps:
+    - id: macos-assertions
+      script: platform_remote/macos/00-macos-assertions.sh
+  platform-remote-wsl:
+    requires_state:
+      cli.installed: true
+    steps:
+    - id: wsl-assertions
+      script: platform_remote/wsl/00-wsl-assertions.sh
+  platform-remote-public-install:
+    requires_state:
+      cli.installed: true
+    steps:
+    - id: public-install-assertions
+      script: platform_remote/public-install/00-public-install-assertions.sh
+  platform-remote-metadata:
+    steps:
+    - id: workflow-metadata-assertions
+      script: platform_remote/metadata/00-workflow-metadata-assertions.sh

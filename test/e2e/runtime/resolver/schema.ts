@@ -116,6 +116,7 @@ export interface SetupScenario {
   overrides?: AnyRecord;
   /** Explicit CI/hardware requirements for non-default platforms. */
   runner_requirements?: string[];
+  required_secrets?: string[];
   skipped_capabilities?: SkippedCapability[];
   /**
    * Per-scenario override of the expected-state failure contract. Fields

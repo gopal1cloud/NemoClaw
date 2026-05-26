@@ -203,7 +203,7 @@ export function resolveScenario(scenarioId: string, meta: ResolverInput): Resolv
     suites: resolvedSuites,
     overrides: layeredPlan?.overrides ?? legacy?.overrides,
     runner_requirements: runnerRequirements.length > 0 ? runnerRequirements : undefined,
-    required_secrets: layeredPlan?.required_secrets,
+    required_secrets: layeredPlan?.required_secrets ?? legacy?.required_secrets,
     ...(expectedFailure ? { expected_failure: expectedFailure } : {}),
   };
 }

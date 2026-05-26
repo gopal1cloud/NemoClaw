@@ -110,6 +110,19 @@ describe("E2E scenario resolver", () => {
     }
   });
 
+
+
+  it("should_resolve_macos_wsl_and_public_install_platform_remote_scenarios", () => {
+    const meta = realMetadata();
+    expect(resolveScenario("macos-repo-cloud-openclaw", meta).suites.map((s) => s.id)).toEqual(expect.arrayContaining(["platform-remote-macos", "platform-remote-metadata"]));
+    expect(resolveScenario("wsl-repo-cloud-openclaw", meta).suites.map((s) => s.id)).toEqual(expect.arrayContaining(["platform-remote-wsl", "platform-remote-metadata"]));
+    expect(resolveScenario("wsl-no-distro-bootstrap-negative", meta).runner_requirements).toEqual(expect.arrayContaining(["windows-latest", "wsl2"]));
+    expect(resolveScenario("wsl-fake-gpu-negative", meta).suites.map((s) => s.id)).toContain("platform-remote-wsl");
+    const publicInstall = resolveScenario("ubuntu-public-cloud-openclaw-target-ref", meta);
+    expect(publicInstall.suites.map((s) => s.id)).toContain("platform-remote-public-install");
+    expect(publicInstall.required_secrets).toContain("NVIDIA_API_KEY");
+  });
+
   it("should_fail_for_unknown_scenario", () => {
     const meta = realMetadata();
     expect(() => resolveScenario("does-not-exist", meta)).toThrow(/does-not-exist/);

@@ -175,6 +175,24 @@ describe("Issue #3816 platform remote Spark and Jetson suites", () => {
 });
 
 
+describe("Issue #3816 platform remote OS and public install suites", () => {
+  it("test_should_emit_macos_wsl_public_install_and_metadata_ids_in_dry_run", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-platform-os-"));
+    try {
+      seedContext(tmp, { ...fullContext(), E2E_SCENARIO: "ubuntu-public-cloud-openclaw-target-ref" });
+      const r = runSuites(["platform-remote-macos", "platform-remote-wsl", "platform-remote-public-install", "platform-remote-metadata"], { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" });
+      expect(r.status, `stderr:${r.stderr}\nstdout:${r.stdout}`).toBe(0);
+      for (const id of [
+        "expected.platform_remote.macos.runner-macos-26",
+        "expected.platform_remote.wsl.fake-gpu-rejected",
+        "expected.platform_remote.public_install.target-ref-used",
+        "expected.platform_remote.workflow.runtime-actions-node-compatible",
+      ]) expect(r.stdout).toContain(id);
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+});
+
+
 describe("run-suites.sh", () => {
   it("security_credentials_suite_should_emit_stable_assertion_ids", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-security-credentials-"));

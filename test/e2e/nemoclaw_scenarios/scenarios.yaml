@@ -34,6 +34,9 @@ installs:
   public-curl:
     method: curl-install-script
     source: public-installer
+  public-curl-target-ref:
+    method: curl-install-script
+    source: public-installer-target-ref
   launchable:
     method: brev-launchable
     source: launchable-image
@@ -167,7 +170,8 @@ setup_scenarios:
       onboarding: cloud-openclaw
     expected_state: macos-cli-ready-docker-optional
     suites:
-    - platform-macos
+    - platform-remote-macos
+    - platform-remote-metadata
     runner_requirements:
     - macos-latest
     skipped_capabilities:
@@ -186,8 +190,8 @@ setup_scenarios:
       onboarding: cloud-openclaw
     expected_state: cloud-openclaw-ready
     suites:
-    - smoke
-    - platform-wsl
+    - platform-remote-wsl
+    - platform-remote-metadata
     runner_requirements:
     - windows-latest
     - wsl2
@@ -259,6 +263,46 @@ setup_scenarios:
     runner_requirements:
     - jetson-tegra
     - manual
+
+  wsl-no-distro-bootstrap-negative:
+    dimensions:
+      platform: wsl-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-openclaw
+    expected_state: cloud-openclaw-ready
+    suites:
+    - platform-remote-wsl
+    runner_requirements:
+    - windows-latest
+    - wsl2
+    - manual
+  wsl-fake-gpu-negative:
+    dimensions:
+      platform: wsl-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-openclaw
+    expected_state: cloud-openclaw-ready
+    suites:
+    - platform-remote-wsl
+    runner_requirements:
+    - windows-latest
+    - wsl2
+    - manual
+  ubuntu-public-cloud-openclaw-target-ref:
+    dimensions:
+      platform: ubuntu-local
+      install: public-curl-target-ref
+      runtime: docker-running
+      onboarding: cloud-openclaw
+    expected_state: cloud-openclaw-ready
+    suites:
+    - platform-remote-public-install
+    runner_requirements:
+    - ubuntu-latest
+    required_secrets:
+    - NVIDIA_API_KEY
 
   ubuntu-no-docker-preflight-negative:
     alias_for_plan: ubuntu-repo-no-docker__cloud-nvidia-openclaw
@@ -472,7 +516,8 @@ test_plans:
     onboarding_assertions:
     - base-installed
     suites:
-    - platform-macos
+    - platform-remote-macos
+    - platform-remote-metadata
     skipped_capabilities:
     - id: macos-docker-dependent-suites
       reason: GitHub-hosted macOS runners do not provide a reachable Docker daemon; gateway/sandbox/inference suites are reported as skipped instead of failing this scenario.
@@ -488,8 +533,8 @@ test_plans:
     - base-installed
     - preflight-passed
     suites:
-    - smoke
-    - platform-wsl
+    - platform-remote-wsl
+    - platform-remote-metadata
   brev-launchable-remote__cloud-nvidia-openclaw:
     base: brev-launchable-remote
     onboarding: cloud-nvidia-openclaw

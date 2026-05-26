@@ -243,6 +243,9 @@ function validateScenarios(doc: Record<string, unknown>, file: string): Scenario
         throw new Error(`scenario ${id}.runner_requirements must be a list of strings`);
       }
     }
+    if ("required_secrets" in e) {
+      validateStringList(e.required_secrets, `scenario ${id}.required_secrets`);
+    }
     if ("expected_failure" in e) {
       validateExpectedFailureBlock(e.expected_failure, `scenario ${id}`, { partial: true });
     }
