@@ -75,6 +75,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
         disabledChannels?: string[] | null;
         webSearchConfig: WebSearchConfig | null;
         provider: string;
+        agent?: string | null;
         webSearchSupported: boolean;
         hermesToolGateways: string[];
         onSelection: (policyPresets: string[]) => void;
@@ -177,6 +178,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       disabledChannels: activeSandbox?.disabledChannels,
       webSearchConfig,
       provider,
+      agent: (agent as { name?: string } | null)?.name ?? null,
       webSearchSupported,
       hermesToolGateways,
       onSelection: (policyPresets) => {

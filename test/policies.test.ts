@@ -167,13 +167,13 @@ describe("policies", () => {
         "huggingface",
         "jira",
         "local-inference",
-        "model-pricing",
         "nous-audio",
         "nous-browser",
         "nous-code",
         "nous-image",
         "nous-web",
         "npm",
+        "openclaw-pricing",
         "outlook",
         "pypi",
         "slack",
@@ -314,16 +314,16 @@ describe("policies", () => {
       }
     });
 
-    it("model-pricing preset pins LiteLLM and OpenRouter reference fetches to GET-only paths", () => {
+    it("openclaw-pricing preset pins LiteLLM and OpenRouter reference fetches to GET-only paths", () => {
       // OpenClaw's gateway/model-pricing subsystem fetches the LiteLLM
       // pricing table and the OpenRouter model catalogue on every start.
       // Both endpoints are read-only metadata fetches, so the preset must
       // expose exactly one GET rule per host on the specific path each
       // fetch reads, with no wildcards that could widen into a general
       // raw.githubusercontent.com or openrouter.ai escape hatch.
-      const parsed = parsePresetYaml("model-pricing");
+      const parsed = parsePresetYaml("openclaw-pricing");
       const endpoints: Array<Record<string, unknown>> =
-        parsed?.network_policies?.["model-pricing"]?.endpoints ?? [];
+        parsed?.network_policies?.["openclaw-pricing"]?.endpoints ?? [];
 
       const litellm = endpoints.find((item) => item.host === "raw.githubusercontent.com");
       if (!litellm) throw new Error("expected raw.githubusercontent.com endpoint");
@@ -347,7 +347,7 @@ describe("policies", () => {
       expect(openrouter.rules).toEqual([{ allow: { method: "GET", path: "/api/v1/models" } }]);
 
       const binaries: Array<{ path: string }> =
-        parsed?.network_policies?.["model-pricing"]?.binaries ?? [];
+        parsed?.network_policies?.["openclaw-pricing"]?.binaries ?? [];
       const binaryPaths = binaries.map((entry) => entry.path).sort();
       expect(binaryPaths).toEqual(["/usr/bin/node", "/usr/local/bin/node"]);
     });
