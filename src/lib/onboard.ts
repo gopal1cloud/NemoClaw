@@ -4145,6 +4145,43 @@ type OllamaModelSelectionOutcome =
   | { outcome: "selected"; model: string }
   | { outcome: "back-to-selection" };
 
+let autoDetectedOllamaContextWindow: string | null = null;
+
+function resetOllamaRuntimeContextWindowAutoState(): void {
+  autoDetectedOllamaContextWindow = null;
+}
+
+function applyOllamaRuntimeContextWindow(selectedModel: string): void {
+  const currentContextWindow = process.env.NEMOCLAW_CONTEXT_WINDOW;
+  const currentIsPreviousAuto =
+    !!currentContextWindow &&
+    !!autoDetectedOllamaContextWindow &&
+    currentContextWindow === autoDetectedOllamaContextWindow;
+  const userContextWindow = currentIsPreviousAuto ? null : currentContextWindow;
+
+  if (localInference.parsePositiveInteger(userContextWindow)) {
+    console.log(`  ℹ Keeping configured context window: ${userContextWindow} tokens`);
+    return;
+  }
+
+  const runtimeStatus = localInference.probeOllamaRuntimeModelStatus(selectedModel);
+  if (runtimeStatus.contextLengthWarning) {
+    console.warn(`  ⚠ ${runtimeStatus.contextLengthWarning}`);
+  }
+  if (runtimeStatus.loaded && runtimeStatus.contextLength) {
+    const value = String(runtimeStatus.contextLength);
+    process.env.NEMOCLAW_CONTEXT_WINDOW = value;
+    autoDetectedOllamaContextWindow = value;
+    console.log(`  ✓ Using Ollama runtime context length: ${value} tokens`);
+    return;
+  }
+
+  if (currentIsPreviousAuto) {
+    delete process.env.NEMOCLAW_CONTEXT_WINDOW;
+    autoDetectedOllamaContextWindow = null;
+  }
+}
+
 // Pick an Ollama model, pull it if missing, and validate it via the local
 // proxy. Shared by the three Ollama provider branches (running, Windows-host
 // install/start, install-locally). Returns "back-to-selection" so the caller
@@ -4236,6 +4273,7 @@ async function selectAndValidateOllamaModel(
         "  ℹ Using chat completions API (Ollama tool calls require /v1/chat/completions)",
       );
     }
+    applyOllamaRuntimeContextWindow(selectedModel);
     return { outcome: "selected", model: selectedModel };
   }
 }
@@ -7538,6 +7576,8 @@ module.exports = {
   MESSAGING_CHANNELS,
   selectOnboardAgent,
   setupNim,
+  applyOllamaRuntimeContextWindow,
+  resetOllamaRuntimeContextWindowAutoState,
   providerNameToOptionKey,
   readRecordedProvider,
   readRecordedModel,

@@ -670,12 +670,51 @@ export interface OllamaRuntimeModelStatus {
   probed: boolean;
   loaded: boolean;
   cpuOnly: boolean;
+  contextLength?: number;
+  contextLengthWarning?: string;
   processor?: string;
   sizeVram?: number;
 }
 
+// Four million tokens is intentionally above today's practical local-model
+// context windows while still rejecting obviously broken daemon responses.
+export const MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW = 4_194_304;
+
 function normalizeOllamaModelName(value: unknown): string {
   return String(value || "").trim();
+}
+
+export function parsePositiveInteger(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value > 0 ? value : null;
+  }
+  const raw = String(value ?? "").trim();
+  if (!/^[1-9][0-9]*$/.test(raw)) return null;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function parseOllamaRuntimeContextLength(value: unknown): {
+  contextLength?: number;
+  warning?: string;
+} {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return {};
+  }
+  const parsed = parsePositiveInteger(value);
+  if (!parsed) {
+    return {
+      warning: `Ollama /api/ps returned a non-positive context_length (${String(value)}); ignoring it.`,
+    };
+  }
+  if (parsed > MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW) {
+    return {
+      warning:
+        `Ollama /api/ps returned context_length=${parsed}, above NemoClaw's ` +
+        `auto-detect ceiling (${MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW}); ignoring it.`,
+    };
+  }
+  return { contextLength: parsed };
 }
 
 export function probeOllamaRuntimeModelStatus(
@@ -712,6 +751,13 @@ export function probeOllamaRuntimeModelStatus(
 
     const rawSizeVram = Number((loaded as { size_vram?: unknown }).size_vram);
     const hasSizeVram = Number.isFinite(rawSizeVram);
+    // Current Ollama /api/ps responses include context_length for loaded
+    // models; older daemons may omit it. Missing or invalid values are
+    // best-effort no-ops so onboarding falls back to the normal
+    // NEMOCLAW_CONTEXT_WINDOW/default path.
+    const contextLengthResult = parseOllamaRuntimeContextLength(
+      (loaded as { context_length?: unknown }).context_length,
+    );
     const processor = normalizeOllamaModelName((loaded as { processor?: unknown }).processor);
     const mentionsGpu = /\bGPU\b/i.test(processor);
     const processorCpuOnly = /\bCPU\b/i.test(processor) && !mentionsGpu;
@@ -721,12 +767,28 @@ export function probeOllamaRuntimeModelStatus(
       probed: true,
       loaded: true,
       cpuOnly: processorCpuOnly || sizeVramCpuOnly,
+      ...(contextLengthResult.contextLength
+        ? { contextLength: contextLengthResult.contextLength }
+        : {}),
+      ...(contextLengthResult.warning
+        ? { contextLengthWarning: contextLengthResult.warning }
+        : {}),
       ...(processor ? { processor } : {}),
       ...(hasSizeVram ? { sizeVram: rawSizeVram } : {}),
     };
   } catch {
     return { probed: true, loaded: false, cpuOnly: false };
   }
+}
+
+export function resolveOllamaRuntimeContextWindow(
+  model: string,
+  currentContextWindow: string | null | undefined = null,
+  runCaptureImpl?: RunCaptureFn,
+): number | null {
+  if (parsePositiveInteger(currentContextWindow)) return null;
+  const runtimeStatus = probeOllamaRuntimeModelStatus(model, runCaptureImpl);
+  return runtimeStatus.loaded ? (runtimeStatus.contextLength ?? null) : null;
 }
 
 function formatOllamaCpuOnlyDiagnostic(model: string, status: OllamaRuntimeModelStatus): string {
@@ -796,6 +858,7 @@ export function resolveNonInteractiveOllamaModel(
   recoveredModel: string | null,
   gpu: GpuInfo | null,
   log: (message: string) => void = (m) => console.warn(m),
+  runCaptureImpl?: RunCaptureFn,
 ): string {
   const explicit = requestedModel || recoveredModel;
   if (explicit && !modelFitsAvailableMemory(explicit, gpu)) {
@@ -812,7 +875,7 @@ export function resolveNonInteractiveOllamaModel(
   if (!explicit && !anyRegistryModelFits(gpu)) {
     warnNoBootstrapModelFits(gpu, log);
   }
-  return explicit || getDefaultOllamaModel(gpu);
+  return explicit || getDefaultOllamaModel(gpu, runCaptureImpl);
 }
 
 function warnNoBootstrapModelFits(

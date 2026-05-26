@@ -37,6 +37,7 @@ import {
   parseOllamaList,
   parseOllamaTags,
   probeOllamaRuntimeModelStatus,
+  resolveOllamaRuntimeContextWindow,
   probeLocalProviderHealth,
   validateOllamaModel,
   validateLocalProvider,
@@ -654,6 +655,7 @@ describe("local inference helpers", () => {
         null,
         { type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 131_072 },
         log,
+        () => "",
       ),
     ).toBe(QWEN3_6_OLLAMA_MODEL);
   });
@@ -686,6 +688,7 @@ describe("local inference helpers", () => {
         null,
         { type: "nvidia", totalMemoryMB: 16_384, availableMemoryMB: 4_000 },
         log,
+        () => "",
       ),
     ).toBe("qwen2.5:7b");
     expect(messages.some((m) => m.includes("No known Ollama bootstrap model fits"))).toBe(true);
@@ -797,7 +800,12 @@ describe("local inference helpers", () => {
     const capture = () =>
       JSON.stringify({
         models: [
-          { name: "qwen3.6:35b", size_vram: 0, processor: "100% CPU" },
+          {
+            name: "qwen3.6:35b",
+            context_length: 262144,
+            size_vram: 0,
+            processor: "100% CPU",
+          },
         ],
       });
 
@@ -805,9 +813,46 @@ describe("local inference helpers", () => {
       probed: true,
       loaded: true,
       cpuOnly: true,
+      contextLength: 262144,
       processor: "100% CPU",
       sizeVram: 0,
     });
+  });
+
+  it("ignores implausibly large Ollama runtime context lengths", () => {
+    const capture = () =>
+      JSON.stringify({
+        models: [
+          {
+            name: "qwen3.6:35b",
+            context_length: 10_000_000,
+            processor: "100% GPU",
+          },
+        ],
+      });
+
+    const status = probeOllamaRuntimeModelStatus("qwen3.6:35b", capture);
+    expect(status.loaded).toBe(true);
+    expect(status.contextLength).toBeUndefined();
+    expect(status.contextLengthWarning).toContain("above NemoClaw's auto-detect ceiling");
+    expect(resolveOllamaRuntimeContextWindow("qwen3.6:35b", null, capture)).toBeNull();
+  });
+
+  it("resolves Ollama runtime context length only when no valid override is set", () => {
+    const capture = () =>
+      JSON.stringify({
+        models: [
+          {
+            model: "qwen3.6:35b",
+            context_length: "262144",
+            processor: "100% GPU",
+          },
+        ],
+      });
+
+    expect(resolveOllamaRuntimeContextWindow("qwen3.6:35b", null, capture)).toBe(262144);
+    expect(resolveOllamaRuntimeContextWindow("qwen3.6:35b", "131072", capture)).toBeNull();
+    expect(resolveOllamaRuntimeContextWindow("other:model", null, capture)).toBeNull();
   });
 
   it("fails Spark Ollama validation when the model is CPU-only after warmup", () => {
