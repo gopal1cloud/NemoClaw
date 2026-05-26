@@ -902,7 +902,7 @@ Move runtime entrypoints and GitHub workflows to the new runner as the only supp
 - Artifact uploads include run plan, phase results, result summary, and logs.
 - E2E advisor paths target only canonical typed scenario IDs.
 
-## Phase 8: Coverage, Reporting, and Migration Metadata
+## Phase 8: Coverage, Reporting, and Migration Metadata [COMPLETED: a0b5b4cfb]
 
 Update coverage and reporting so maintainers can see scenario, manifest, assertion, and phase coverage.
 
