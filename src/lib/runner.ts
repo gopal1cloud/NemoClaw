@@ -11,12 +11,11 @@ import { NAME_ALLOWED_FORMAT, NAME_MAX_LENGTH } from "./name-validation";
 const { spawnSync } = require("child_process");
 const path = require("path");
 const { detectDockerHost } = require("./platform");
+const { shellQuote } = require("./core/shell-quote") as typeof import("./core/shell-quote");
 const { buildSubprocessEnv } = require("./subprocess-env") as typeof import("./subprocess-env");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const SCRIPTS = path.join(ROOT, "scripts");
-
-type RunnerScalar = string | number | boolean | null | undefined;
 
 type RunnerOptions = SpawnSyncOptions & {
   ignoreError?: boolean;
@@ -140,6 +139,8 @@ function runArrayCmd(
 
   const stdio = stdioCfg ?? defaultStdio;
 
+  // run() always uses argv arrays and rejects `shell: true` above.
+  // codeql[js/indirect-command-line-injection]
   const result = spawnSync(exe, args, {
     ...spawnOpts,
     stdio,
@@ -229,6 +230,8 @@ function runCapture(cmd: readonly string[], opts: CaptureOptions = {}): string {
   }
 
   try {
+    // runCapture() always uses argv arrays and rejects `shell: true` above.
+    // codeql[js/indirect-command-line-injection]
     const result = spawnSync(exe, args, {
       ...spawnOpts,
       cwd: ROOT,
@@ -284,7 +287,11 @@ function runCaptureEx(cmd: readonly string[], opts: Omit<CaptureOptions, "ignore
     const result = spawnSync(exe, args, {
       ...spawnOpts,
       cwd: ROOT,
-      env: { ...process.env, ...extraEnv },
+      // #2616: route via buildRunnerEnv so subprocess env is sanitized and
+      // NO_PROXY=localhost,127.0.0.1 is injected when HTTP_PROXY is set.
+      // Otherwise curl probes against localhost (Ollama validation, etc.)
+      // tunnel through the user's host proxy and fail with HTTP 500.
+      env: buildRunnerEnv(extraEnv),
       stdio: ["pipe", "pipe", "pipe"],
       encoding: "utf-8",
     });
@@ -300,14 +307,6 @@ function runCaptureEx(cmd: readonly string[], opts: Omit<CaptureOptions, "ignore
   } catch (err) {
     throw redactError(err);
   }
-}
-
-/**
- * Shell-quote a value for safe interpolation into bash -c strings.
- * Wraps in single quotes and escapes embedded single quotes.
- */
-function shellQuote(value: RunnerScalar): string {
-  return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
 /**

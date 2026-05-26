@@ -50,6 +50,7 @@ function stageLegacySandboxBuildContext(
   normalizeReadModesForDockerCopy(path.join(buildCtx, "nemoclaw-blueprint"));
   fs.cpSync(path.join(rootDir, "scripts"), path.join(buildCtx, "scripts"), { recursive: true });
   fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), { recursive: true, force: true });
+  normalizeReadModesForDockerCopy(path.join(buildCtx, "nemoclaw"));
 
   return {
     buildCtx,
@@ -83,6 +84,7 @@ function stageOptimizedSandboxBuildContext(
   fs.cpSync(path.join(sourceNemoclawDir, "src"), path.join(stagedNemoclawDir, "src"), {
     recursive: true,
   });
+  normalizeReadModesForDockerCopy(stagedNemoclawDir);
 
   fs.mkdirSync(stagedBlueprintDir, { recursive: true });
   fs.copyFileSync(
@@ -137,6 +139,14 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "seed-wechat-accounts.py"),
     path.join(stagedScriptsDir, "seed-wechat-accounts.py"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-openclaw-tool-catalog.js"),
+    path.join(stagedScriptsDir, "patch-openclaw-tool-catalog.js"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-openclaw-chat-send.js"),
+    path.join(stagedScriptsDir, "patch-openclaw-chat-send.js"),
   );
 
   return { buildCtx, stagedDockerfile };
