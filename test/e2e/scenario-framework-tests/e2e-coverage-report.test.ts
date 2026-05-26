@@ -2,98 +2,62 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 
-import { loadMetadataFromDir, loadMetadataFromObjects } from "../runtime/resolver/load.ts";
-import { renderCoverageReport } from "../runtime/resolver/coverage.ts";
+import { renderCoverageReport, validateCoverage } from "../runtime/resolver/coverage.ts";
+import { assertionRegistry } from "../scenarios/assertions/registry.ts";
+import { listScenarios } from "../scenarios/registry.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const E2E_DIR = path.join(REPO_ROOT, "test/e2e");
 
-describe("coverage report", () => {
-  it("should_render_single_coverage_table", () => {
-    const meta = loadMetadataFromDir(E2E_DIR);
-    const md = renderCoverageReport(meta);
-    // Exactly one primary Scenario Coverage table.
-    const headers = md.match(/\|\s*Scenario\s*\|\s*Platform\s*\|\s*Install\s*\|\s*Runtime\s*\|\s*Onboarding\s*\|\s*Expected state\s*\|\s*Suites\s*\|/g);
-    expect(headers).toBeTruthy();
-    expect(headers?.length).toBe(1);
-    // Every scenario should appear as a row.
-    for (const id of Object.keys(meta.scenarios.setup_scenarios)) {
-      expect(md).toContain(id);
+describe("typed scenario coverage report", () => {
+  it("test_should_report_all_registry_scenarios_manifests_assertions_and_phases", () => {
+    const scenarios = listScenarios();
+    const md = renderCoverageReport();
+
+    expect(md).toContain("# Hybrid Scenario E2E Coverage");
+    expect(md).toMatch(/## Scenario Coverage/);
+    expect(md).toMatch(/## Manifest Coverage/);
+    expect(md).toMatch(/## Assertion Group Coverage/);
+    expect(md).toMatch(/## Phase Coverage/);
+    expect(md).toMatch(/## Runner, Secret, Skip, and Expected Failure Gates/);
+
+    for (const scenario of scenarios) {
+      expect(md).toContain(`| ${scenario.id} |`);
+      expect(scenario.manifestPath, `${scenario.id} should have a manifest`).toBeTruthy();
+      expect(md).toContain(scenario.manifestPath as string);
     }
-    // Rows should be sorted deterministically (alphabetically).
-    const rowOrder = Object.keys(meta.scenarios.setup_scenarios).sort();
-    let pos = 0;
-    for (const id of rowOrder) {
-      const idx = md.indexOf(`| ${id} |`, pos);
-      expect(idx, `row ${id} not found in order. report:\n${md}`).toBeGreaterThanOrEqual(0);
-      pos = idx;
+    for (const group of assertionRegistry.groups) {
+      expect(md).toContain(`| ${group.id} |`);
+    }
+    for (const phase of ["environment", "onboarding", "runtime"]) {
+      expect(md).toMatch(new RegExp(`\\| ${phase} \\|\\s*\\d+\\s*\\|`));
     }
   });
 
-  it("should_flag_scenarios_without_suites", () => {
-    const meta = loadMetadataFromObjects({
-      scenarios: {
-        platforms: { p: {} },
-        installs: { i: {} },
-        runtimes: { r: {} },
-        onboarding: { o: { agent: "openclaw", provider: "nvidia" } },
-        setup_scenarios: {
-          "empty-suite-scenario": {
-            dimensions: { platform: "p", install: "i", runtime: "r", onboarding: "o" },
-            expected_state: "some-state",
-            suites: [],
-          },
-        },
-      },
-      expectedStates: { expected_states: { "some-state": { gateway: { health: "healthy" } } } },
-      suites: { suites: {} },
-    });
-    const md = renderCoverageReport(meta);
-    expect(md).toMatch(/## Gaps/);
-    expect(md).toMatch(/empty-suite-scenario.*no suites|no suites.*empty-suite-scenario/s);
+  it("test_should_fail_when_manifest_or_assertion_coverage_missing", () => {
+    const [scenario] = listScenarios();
+    expect(() => validateCoverage([{ ...scenario, manifestPath: undefined }], assertionRegistry.groups)).toThrow(/manifest/i);
+    expect(() => validateCoverage([{ ...scenario, assertionGroups: [] }], assertionRegistry.groups)).toThrow(/assertion/i);
   });
 
-  it("coverage_report_should_include_legacy_parity_summary", () => {
-    const meta = loadMetadataFromDir(E2E_DIR);
-    const md = renderCoverageReport(meta);
-    expect(md).toMatch(/## Legacy Parity Summary/);
-    expect(md).toMatch(/Unmapped assertions: 0/);
-    expect(md).toMatch(/onboarding-baseline/);
-    expect(md).toMatch(/lifecycle/);
-    expect(md).toMatch(/rebuild-runtime/);
-    expect(md).toMatch(/providers-messaging/);
-    expect(md).toMatch(/final-security-policy-platform-misc/);
+  it("test_should_not_depend_on_yaml_suites_as_source_of_truth", () => {
+    const md = renderCoverageReport();
+    expect(md).not.toContain("validation_suites/suites.yaml");
+    expect(md).not.toContain("test/e2e/{scenarios,expected-states,suites}.yaml");
   });
 
-  it("should_flag_expected_states_not_used_by_any_scenario", () => {
-    const meta = loadMetadataFromObjects({
-      scenarios: {
-        platforms: { p: {} },
-        installs: { i: {} },
-        runtimes: { r: {} },
-        onboarding: { o: { agent: "openclaw", provider: "nvidia" } },
-        setup_scenarios: {
-          s1: {
-            dimensions: { platform: "p", install: "i", runtime: "r", onboarding: "o" },
-            expected_state: "used-state",
-            suites: ["smoke"],
-          },
-        },
-      },
-      expectedStates: {
-        expected_states: {
-          "used-state": { gateway: { health: "healthy" } },
-          "unused-state": { gateway: { health: "healthy" } },
-        },
-      },
-      suites: {
-        suites: { smoke: { steps: [{ id: "a", script: "suites/smoke/a.sh" }] } },
-      },
+  it("test_should_render_github_step_summary_coverage_sections", () => {
+    const result = spawnSync("bash", ["test/e2e/runtime/coverage-report.sh"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
     });
-    const md = renderCoverageReport(meta);
-    expect(md).toMatch(/## Gaps/);
-    expect(md).toMatch(/unused-state/);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/Scenarios:\s*\d+/);
+    expect(result.stdout).toMatch(/Manifests:\s*\d+/);
+    expect(result.stdout).toMatch(/Assertion groups:\s*\d+/);
+    expect(result.stdout).toMatch(/Phases:\s*environment, onboarding, runtime/);
   });
 });
