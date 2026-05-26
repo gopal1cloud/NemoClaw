@@ -877,7 +877,7 @@ Introduce clients/adapters and phase orchestrators while preserving current live
 - Tests verify clients do not encode pass/fail semantics; assertions do.
 - Tests verify clients do not encode retry/timeout policy; phase orchestrators enforce step reliability policy.
 
-## Phase 7: Runtime Entry Point and Workflow Migration
+## Phase 7: Runtime Entry Point and Workflow Migration [COMPLETED: 0a0199ce6]
 
 Move runtime entrypoints and GitHub workflows to the new runner as the only supported execution path.
 
