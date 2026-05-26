@@ -681,7 +681,7 @@ Split setup/onboarding desired state out of current scenario YAML into product-f
 - No raw secret values are allowed in manifests.
 - Plan-only output can show resolved manifest setup/onboarding choices.
 
-## Phase 3: Deterministic Scenario Builders and Registry
+## Phase 3: Deterministic Scenario Builders and Registry [COMPLETED: b9e2fc10e]
 
 Move E2E scenario identity and matrix composition into typed scenario builders.
 
