@@ -324,7 +324,7 @@ Classification vocabulary is exactly: `covered`, `new assertion`, `deferred`, `r
 
 ## Implementation Phases
 
-### Phase 1: Metadata, schema, and coverage inventory
+### Phase 1: Metadata, schema, and coverage inventory [COMPLETED: 24f14e6b3]
 
 - Add platform-remote expectation metadata to the current resolver-owned source metadata under `test/e2e/nemoclaw_scenarios/`. If no assertion-inventory source file exists, add a focused source file such as `test/e2e/nemoclaw_scenarios/platform-remote-inventory.yaml` and load it through the existing resolver/coverage-report path.
 - Do not edit generated inventory artifacts such as `test/e2e/docs/parity-inventory.generated.json` by hand, and do not reintroduce the removed workflow-level parity-map gate.
