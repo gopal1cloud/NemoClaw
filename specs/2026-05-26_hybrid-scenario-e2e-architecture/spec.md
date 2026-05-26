@@ -834,7 +834,7 @@ Implement the compiler that combines selected scenario builders, manifests, and 
 - Plan compiler rejects missing required secrets or clearly marks them as gated/skipped depending on scenario metadata.
 - Plan compiler writes machine-readable and human-readable artifacts under `E2E_CONTEXT_DIR`.
 
-## Phase 6: Shared Clients and Phase Orchestrators
+## Phase 6: Shared Clients and Phase Orchestrators [COMPLETED: 3c13dc2c2]
 
 Introduce clients/adapters and phase orchestrators while preserving current live behavior.
 
