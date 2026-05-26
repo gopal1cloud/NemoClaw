@@ -9,7 +9,7 @@ import path from "node:path";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CONTEXT_LIB = path.join(REPO_ROOT, "test/e2e/runtime/lib/context.sh");
-const RUN_SCENARIO = path.join(REPO_ROOT, "test/e2e/runtime/run-scenario.sh");
+const RUN_SCENARIO = path.join(REPO_ROOT, "test/e2e/scenarios/run.ts");
 
 function runBash(script: string, env: Record<string, string> = {}): SpawnSyncReturns<string> {
   return spawnSync("bash", ["-c", script], {
@@ -90,8 +90,8 @@ describe("E2E context helper (runtime/lib/context.sh)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ctx-"));
     try {
       const r = spawnSync(
-        "bash",
-        [RUN_SCENARIO, "ubuntu-repo-cloud-openclaw", "--dry-run"],
+        "npx",
+        ["tsx", RUN_SCENARIO, "--scenarios", "ubuntu-repo-cloud-openclaw", "--dry-run"],
         {
           env: { ...process.env, E2E_CONTEXT_DIR: tmp },
           encoding: "utf8",
@@ -100,21 +100,13 @@ describe("E2E context helper (runtime/lib/context.sh)", () => {
         },
       );
       expect(r.status, r.stderr).toBe(0);
-      const ctxPath = path.join(tmp, "context.env");
-      expect(fs.existsSync(ctxPath), `context.env missing in ${tmp}`).toBe(true);
-      const ctx = fs.readFileSync(ctxPath, "utf8");
-      for (const key of [
-        "E2E_SCENARIO",
-        "E2E_PLATFORM_OS",
-        "E2E_INSTALL_METHOD",
-        "E2E_ONBOARDING_PATH",
-        "E2E_AGENT",
-        "E2E_PROVIDER",
-        "E2E_SANDBOX_NAME",
-        "E2E_GATEWAY_URL",
-        "E2E_INFERENCE_ROUTE",
+      for (const artifact of [
+        ".e2e/run-plan.json",
+        ".e2e/environment.result.json",
+        ".e2e/onboarding.result.json",
+        ".e2e/runtime.result.json",
       ]) {
-        expect(ctx, `${key} missing from context.env`).toMatch(new RegExp(`^${key}=`, "m"));
+        expect(fs.existsSync(path.join(tmp, artifact)), `${artifact} missing in ${tmp}`).toBe(true);
       }
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

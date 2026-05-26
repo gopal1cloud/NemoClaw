@@ -173,21 +173,17 @@ suites:
   });
 });
 
-describe("run-scenario.sh --plan-only", () => {
+describe("typed scenario runner --plan-only", () => {
   it("run_scenario_plan_only_should_print_plan", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-plan-"));
     try {
       const result = spawnSync(
-        "bash",
-        [
-          path.join(E2E_DIR, "runtime", "run-scenario.sh"),
-          "ubuntu-repo-cloud-openclaw",
-          "--plan-only",
-        ],
+        "npx",
+        ["tsx", "test/e2e/scenarios/run.ts", "--scenarios", "ubuntu-repo-cloud-openclaw", "--plan-only"],
         {
           env: { ...process.env, E2E_CONTEXT_DIR: tmp },
           encoding: "utf8",
-    timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
+          timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
           cwd: REPO_ROOT,
         },
       );
@@ -196,13 +192,13 @@ describe("run-scenario.sh --plan-only", () => {
       expect(result.stdout).toContain("cloud-openclaw-ready");
       expect(result.stdout).toContain("smoke");
       expect(result.stdout).toContain("inference");
-      const planJsonPath = path.join(tmp, "plan.json");
+      const planJsonPath = path.join(tmp, ".e2e", "run-plan.json");
       expect(fs.existsSync(planJsonPath)).toBe(true);
-      const doc = JSON.parse(fs.readFileSync(planJsonPath, "utf8"));
-      expect(doc.scenario_id).toBe("ubuntu-repo-cloud-openclaw");
-      expect(doc.expected_state.id).toBe("cloud-openclaw-ready");
-      expect(Array.isArray(doc.suites)).toBe(true);
-      expect(doc.suites.map((s: { id: string }) => s.id)).toContain("smoke");
+      const [doc] = JSON.parse(fs.readFileSync(planJsonPath, "utf8"));
+      expect(doc.scenarioId).toBe("ubuntu-repo-cloud-openclaw");
+      expect(doc.expectedStateId).toBe("cloud-openclaw-ready");
+      expect(Array.isArray(doc.suiteIds)).toBe(true);
+      expect(doc.suiteIds).toContain("smoke");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -212,16 +208,12 @@ describe("run-scenario.sh --plan-only", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-plan-"));
     try {
       const result = spawnSync(
-        "bash",
-        [
-          path.join(E2E_DIR, "runtime", "run-scenario.sh"),
-          "does-not-exist",
-          "--plan-only",
-        ],
+        "npx",
+        ["tsx", "test/e2e/scenarios/run.ts", "--scenarios", "does-not-exist", "--plan-only"],
         {
           env: { ...process.env, E2E_CONTEXT_DIR: tmp },
           encoding: "utf8",
-    timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
+          timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
           cwd: REPO_ROOT,
         },
       );

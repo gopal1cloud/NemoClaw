@@ -61,6 +61,9 @@ async function main() {
     return;
   }
 
+  if (args.planOnly && args.validateOnly) {
+    throw new Error("--plan-only and --validate-only are mutually exclusive");
+  }
   if (!args.planOnly && !args.dryRun && !args.validateOnly) {
     throw new Error("Use --plan-only, --dry-run, or --validate-only with --scenarios <id[,id...]>");
   }

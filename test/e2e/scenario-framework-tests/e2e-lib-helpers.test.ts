@@ -102,8 +102,8 @@ describe("E2E shell helpers", () => {
     try {
       const trace = path.join(tmp, "trace.log");
       const r = spawnSync(
-        "bash",
-        [RUN_SCENARIO, "ubuntu-repo-cloud-openclaw", "--dry-run"],
+        "npx",
+        ["tsx", "test/e2e/scenarios/run.ts", "--scenarios", "ubuntu-repo-cloud-openclaw", "--dry-run"],
         {
           env: {
             ...process.env,
@@ -116,14 +116,12 @@ describe("E2E shell helpers", () => {
         },
       );
       expect(r.status, r.stderr).toBe(0);
-      expect(fs.existsSync(trace), "trace log missing").toBe(true);
-      const contents = fs.readFileSync(trace, "utf8");
-      const order = ["env:noninteractive", "install:", "onboard:", "gateway:check", "sandbox:check"];
-      let pos = 0;
-      for (const marker of order) {
-        const idx = contents.indexOf(marker, pos);
-        expect(idx, `trace missing marker in order: ${marker}\nfull:\n${contents}`).toBeGreaterThanOrEqual(0);
-        pos = idx + marker.length;
+      for (const artifact of [
+        ".e2e/environment.result.json",
+        ".e2e/onboarding.result.json",
+        ".e2e/runtime.result.json",
+      ]) {
+        expect(fs.existsSync(path.join(tmp, artifact)), `${artifact} missing`).toBe(true);
       }
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

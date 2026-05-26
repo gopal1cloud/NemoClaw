@@ -116,7 +116,7 @@ jobs:
         run: |
           mkdir -p .e2e/parity
           LOG=".e2e/parity/scenario.log"
-          bash test/e2e/runtime/run-scenario.sh "${{ github.event.inputs.scenario }}" 2>&1 | tee "$LOG" || true
+          npx tsx test/e2e/scenarios/run.ts --scenarios "${{ github.event.inputs.scenario }}" --dry-run 2>&1 | tee "$LOG" || true
 
       - name: Compare parity
         env:

@@ -20,21 +20,19 @@ import { resolveScenario } from "../runtime/resolver/plan.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const E2E_DIR = path.join(REPO_ROOT, "test/e2e");
-const RUN_SCENARIO = path.join(E2E_DIR, "runtime", "run-scenario.sh");
-
 function planOnly(scenarioId: string): { stdout: string; stderr: string; status: number | null; plan: Record<string, unknown> } {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-p9-"));
   try {
-    const r = spawnSync("bash", [RUN_SCENARIO, scenarioId, "--plan-only"], {
+    const r = spawnSync("npx", ["tsx", "test/e2e/scenarios/run.ts", "--scenarios", scenarioId, "--plan-only"], {
       env: { ...process.env, E2E_CONTEXT_DIR: tmp },
       encoding: "utf8",
-    timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
+      timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
       cwd: REPO_ROOT,
     });
     let plan = {};
-    const pj = path.join(tmp, "plan.json");
+    const pj = path.join(tmp, ".e2e", "run-plan.json");
     if (fs.existsSync(pj)) {
-      plan = JSON.parse(fs.readFileSync(pj, "utf8"));
+      plan = JSON.parse(fs.readFileSync(pj, "utf8"))[0] ?? {};
     }
     return { stdout: r.stdout, stderr: r.stderr, status: r.status, plan };
   } finally {
@@ -66,15 +64,15 @@ describe("Phase 9: macOS / WSL plan-only", () => {
   it("macos scenario plan identifies macOS platform", () => {
     const { status, plan } = planOnly("macos-repo-cloud-openclaw");
     expect(status).toBe(0);
-    const dims = (plan as { dimensions: { platform: { profile: { os?: string } } } }).dimensions;
-    expect(dims.platform.profile.os).toBe("macos");
+    const manifest = (plan as { manifest: { spec: { setup: { platform: { os?: string } } } } }).manifest;
+    expect(manifest.spec.setup.platform.os).toBe("macos");
   });
 
   it("wsl scenario plan identifies WSL platform", () => {
     const { status, plan } = planOnly("wsl-repo-cloud-openclaw");
     expect(status).toBe(0);
-    const dims = (plan as { dimensions: { platform: { profile: { os?: string } } } }).dimensions;
-    expect(dims.platform.profile.os).toBe("wsl");
+    const manifest = (plan as { manifest: { spec: { setup: { platform: { os?: string } } } } }).manifest;
+    expect(manifest.spec.setup.platform.os).toBe("wsl");
   });
 });
 
@@ -82,14 +80,9 @@ describe("Phase 9: GPU local Ollama plan-only", () => {
   it("runtime indicates GPU/CDI and provider is ollama", () => {
     const { status, plan } = planOnly("gpu-repo-local-ollama-openclaw");
     expect(status).toBe(0);
-    const dims = (plan as {
-      dimensions: {
-        runtime: { profile: { gpu_runtime?: string } };
-        onboarding: { profile: { provider?: string } };
-      };
-    }).dimensions;
-    expect(dims.runtime.profile.gpu_runtime).toBe("cdi");
-    expect(dims.onboarding.profile.provider).toBe("ollama");
+    const manifest = (plan as { manifest: { spec: { setup: { runtime: { gpuRuntime?: string } }; onboarding: { provider?: string } } } }).manifest;
+    expect(manifest.spec.setup.runtime.gpuRuntime).toBe("cdi");
+    expect(manifest.spec.onboarding.provider).toBe("ollama");
   });
 });
 
@@ -108,16 +101,11 @@ describe("Phase 9: Brev launchable scenario (overrides schema)", () => {
   it("plan shows remote target, launchable install, and gateway bind override", () => {
     const { status, stdout, plan } = planOnly("brev-launchable-cloud-openclaw");
     expect(status).toBe(0);
-    const dims = (plan as {
-      dimensions: {
-        platform: { profile: { execution_target?: string } };
-        install: { id: string };
-      };
-    }).dimensions;
-    expect(dims.platform.profile.execution_target).toBe("remote");
-    expect(dims.install.id).toBe("launchable");
-    expect(stdout).toMatch(/Overrides:/);
-    expect(stdout).toMatch(/bind_address/);
+    const manifest = (plan as { manifest: { spec: { setup: { platform: { executionTarget?: string }; install: { source?: string } }; onboarding: { gateway?: { bindAddress?: string } } } } }).manifest;
+    expect(manifest.spec.setup.platform.executionTarget).toBe("remote");
+    expect(manifest.spec.setup.install.source).toBe("launchable");
+    expect(stdout).toMatch(/gateway/i);
+    expect(manifest.spec.onboarding.gateway?.bindAddress).toBe("0.0.0.0");
   });
 });
 
@@ -141,10 +129,10 @@ describe("Phase 9: negative preflight", () => {
     const { status, plan } = planOnly("ubuntu-no-docker-preflight-negative");
     expect(status).toBe(0);
     const p = plan as {
-      dimensions: { runtime: { profile: { container_daemon?: string } } };
-      expected_state: { id: string };
+      manifest: { spec: { setup: { runtime: { containerDaemon?: string } } } };
+      expectedStateId: string;
     };
-    expect(p.dimensions.runtime.profile.container_daemon).toBe("missing");
-    expect(p.expected_state.id).toBe("preflight-failure-no-sandbox");
+    expect(p.manifest.spec.setup.runtime.containerDaemon).toBe("missing");
+    expect(p.expectedStateId).toBe("preflight-failure-no-sandbox");
   });
 });

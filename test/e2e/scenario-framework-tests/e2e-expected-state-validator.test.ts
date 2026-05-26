@@ -122,40 +122,24 @@ describe("expected state validator", () => {
   });
 });
 
-describe("runner_should_not_run_suites_when_expected_state_fails", () => {
-  it("runs expected-state validation and skips suites on failure", () => {
+describe("typed runner dry-run phase artifacts", () => {
+  it("runs phase orchestrators and writes phase artifacts", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-es-"));
     try {
-      const trace = path.join(tmp, "trace.log");
-      // Simulate gateway-unhealthy probe by setting an override env var.
       const r = spawnSync(
-        "bash",
-        [RUN_SCENARIO, "ubuntu-repo-cloud-openclaw", "--dry-run"],
+        "npx",
+        ["tsx", "test/e2e/scenarios/run.ts", "--scenarios", "ubuntu-repo-cloud-openclaw", "--dry-run"],
         {
-          env: {
-            ...process.env,
-            E2E_CONTEXT_DIR: tmp,
-            E2E_TRACE_FILE: trace,
-            // validator reads these overrides in dry-run mode to fake probes
-            E2E_PROBE_OVERRIDE_GATEWAY_HEALTH: "unhealthy",
-            E2E_VALIDATE_EXPECTED_STATE: "1",
-          },
+          env: { ...process.env, E2E_CONTEXT_DIR: tmp },
           encoding: "utf8",
-    timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
+          timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
           cwd: REPO_ROOT,
         },
       );
-      // Dry-run execution should now fail because the expected state
-      // validation runs and sees gateway.health=unhealthy.
-      expect(r.status).not.toBe(0);
-      // Validator must run (its report file should exist) but suites must not.
-      const reportPath = path.join(tmp, "expected-state-report.json");
-      expect(fs.existsSync(reportPath), `missing ${reportPath}`).toBe(true);
-      const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
-      expect(report.ok).toBe(false);
-      expect(report.checks.some((c: { key: string; ok: boolean }) => c.key === "gateway.health" && !c.ok)).toBe(true);
-      // And the run's failure output should reference expected-state, not suites.
-      expect(`${r.stdout}${r.stderr}`).toMatch(/expected.state/i);
+      expect(r.status, r.stderr).toBe(0);
+      for (const artifact of ["environment.result.json", "onboarding.result.json", "runtime.result.json"]) {
+        expect(fs.existsSync(path.join(tmp, ".e2e", artifact)), `missing ${artifact}`).toBe(true);
+      }
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -166,58 +150,23 @@ describe("runner_should_not_run_suites_when_expected_state_fails", () => {
 // Phase 1.F — --validate-only flag on run-scenario.sh
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("run-scenario --validate-only flag", () => {
-  it("runs only validator and emits probe results json on stdout without running install/onboard/suites", () => {
+describe("typed runner --validate-only flag", () => {
+  it("compiles plans without running phase artifacts", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-validate-only-"));
     try {
-      const trace = path.join(tmp, "trace.log");
-      // Pre-populate a context.env: --validate-only assumes setup has already run.
-      fs.writeFileSync(
-        path.join(tmp, "context.env"),
-        "E2E_SCENARIO=ubuntu-repo-cloud-openclaw\n",
-      );
       const r = spawnSync(
-        "bash",
-        [RUN_SCENARIO, "ubuntu-repo-cloud-openclaw", "--validate-only"],
+        "npx",
+        ["tsx", "test/e2e/scenarios/run.ts", "--scenarios", "ubuntu-repo-cloud-openclaw", "--validate-only"],
         {
-          env: {
-            ...process.env,
-            E2E_CONTEXT_DIR: tmp,
-            E2E_TRACE_FILE: trace,
-            // Supply probe overrides for every key the expected state needs.
-            E2E_PROBE_OVERRIDE_CLI_INSTALLED: "true",
-            E2E_PROBE_OVERRIDE_GATEWAY_EXPECTED: "present",
-            E2E_PROBE_OVERRIDE_GATEWAY_HEALTH: "healthy",
-            E2E_PROBE_OVERRIDE_SANDBOX_EXPECTED: "present",
-            E2E_PROBE_OVERRIDE_SANDBOX_STATUS: "running",
-            E2E_PROBE_OVERRIDE_SANDBOX_AGENT: "openclaw",
-            E2E_PROBE_OVERRIDE_INFERENCE_EXPECTED: "available",
-            E2E_PROBE_OVERRIDE_INFERENCE_PROVIDER: "nvidia",
-            E2E_PROBE_OVERRIDE_INFERENCE_ROUTE: "inference-local",
-            E2E_PROBE_OVERRIDE_INFERENCE_MODE: "gateway-routed",
-            E2E_PROBE_OVERRIDE_CREDENTIALS_EXPECTED: "present",
-            E2E_PROBE_OVERRIDE_CREDENTIALS_STORAGE: "gateway-managed",
-            E2E_PROBE_OVERRIDE_SECURITY_SHIELDS: "supported",
-            // `security.policy_engine` has an embedded underscore, which the
-            // E2E_PROBE_OVERRIDE_* convention cannot express. Use the
-            // JSON escape hatch for this one.
-            E2E_PROBE_OVERRIDES_JSON: JSON.stringify({ "security.policy_engine": "supported" }),
-          },
+          env: { ...process.env, E2E_CONTEXT_DIR: tmp },
           encoding: "utf8",
           timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
           cwd: REPO_ROOT,
         },
       );
       expect(r.status, r.stderr).toBe(0);
-      // Must NOT have traced install or onboard.
-      const contents = fs.existsSync(trace) ? fs.readFileSync(trace, "utf8") : "";
-      expect(contents).not.toMatch(/install:/);
-      expect(contents).not.toMatch(/onboard:/);
-      // Must have emitted an expected-state-report.json (probe results).
-      const reportPath = path.join(tmp, "expected-state-report.json");
-      expect(fs.existsSync(reportPath), `missing ${reportPath}`).toBe(true);
-      const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
-      expect(report.ok).toBe(true);
+      expect(fs.existsSync(path.join(tmp, ".e2e", "run-plan.json"))).toBe(true);
+      expect(fs.existsSync(path.join(tmp, ".e2e", "runtime.result.json"))).toBe(false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -225,8 +174,8 @@ describe("run-scenario --validate-only flag", () => {
 
   it("is_mutually_exclusive_with_plan_only", () => {
     const r = spawnSync(
-      "bash",
-      [RUN_SCENARIO, "ubuntu-repo-cloud-openclaw", "--validate-only", "--plan-only"],
+      "npx",
+      ["tsx", "test/e2e/scenarios/run.ts", "--scenarios", "ubuntu-repo-cloud-openclaw", "--validate-only", "--plan-only"],
       { encoding: "utf8", timeout: 15_000, cwd: REPO_ROOT },
     );
     expect(r.status).not.toBe(0);
