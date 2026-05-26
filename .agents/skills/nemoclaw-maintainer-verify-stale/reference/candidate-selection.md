@@ -111,11 +111,17 @@ Run this check for every candidate that survived the label-based filters above; 
 REPORTER=$(gh issue view "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --json author --jq .author.login)
 
 # Most recent unanswered maintainer comment that looks like a question — filters out triage acknowledgments (#1642 surfaced this).
+# Question-detection patterns are chained as separate test() calls so each
+# heuristic is independently readable and a future addition (e.g. "what about",
+# "why does") is a one-line append rather than a regex-alternation patch.
 UNANSWERED_MAINT=$(gh issue view "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --json comments \
   --jq --arg reporter "$REPORTER" --arg cutoff "$SEVEN_DAYS_AGO" '
     (.comments
      | map(select((.authorAssociation == "MEMBER" or .authorAssociation == "OWNER" or .authorAssociation == "COLLABORATOR")
-         and (.body | test("\\?|(?i)\\bplease (confirm|share|provide|clarify|tell|verify|check|let me know|let us know)|(?i)\\b(could|can|would) you\\b|(?i)\\bdo you (have|know|see|use)\\b"))))
+         and (.body | test("\\?")                                                                       # literal "?"
+                   or test("(?i)\\bplease (confirm|share|provide|clarify|tell|verify|check|let me know|let us know)")  # polite imperative
+                   or test("(?i)\\b(could|can|would) you\\b")                                            # modal interrogative
+                   or test("(?i)\\bdo you (have|know|see|use)\\b"))))                                    # "do you ..."
      | sort_by(.createdAt) | last) as $maint
     | if $maint == null then null
       else
@@ -182,10 +188,15 @@ Collect every match from sources 2 and 3 (a single body may mention multiple ver
 - Future roadmap labels that slipped past source 1.
 - Versions parsed from prose that happen to look semver-ish but aren't releases.
 
+**Normalize to tag form before validating.** The body/comment regex captures only the digit portion (`(\d+\.\d+\.\d+)`) — the leading `v?` sits outside the capture group on purpose. Tags carry the `v`, labels carry the `v`, and `REPORTED_VERSION` (set on L196 below) must carry the `v`. Without an explicit prepend, `grep -Fxq "0.0.32"` against a tag list whose entries are `v0.0.32` would drop every body-sourced candidate.
+
 ```bash
 gh api repos/NVIDIA/NemoClaw/tags --paginate --jq '.[].name' > /tmp/nemoclaw-tags.txt
 
-# For each candidate version V:
+# For each candidate version V — normalize to full tag form, then validate.
+# Label-sourced candidates already have the `v` (idempotent); body/comment-sourced
+# candidates do not.
+[[ "$V" =~ ^v ]] || V="v$V"
 grep -Fxq "$V" /tmp/nemoclaw-tags.txt || drop_version "$V"
 ```
 
