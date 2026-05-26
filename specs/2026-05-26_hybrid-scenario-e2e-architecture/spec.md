@@ -799,7 +799,7 @@ Move assertion composition from YAML suite lists and onboarding assertion lists 
 - Existing shell assertion scripts continue to run through the new assertion module path.
 - No assertion group migration is marked complete while one of its current script steps remains `needs-manual-classification` in the reliability inventory.
 
-## Phase 5: Plan Compiler and Plan-Only Preview
+## Phase 5: Plan Compiler and Plan-Only Preview [COMPLETED: 59948215d]
 
 Implement the compiler that combines selected scenario builders, manifests, and assertion modules into a run plan.
 
