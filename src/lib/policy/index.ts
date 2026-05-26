@@ -13,7 +13,9 @@ const YAML = require("yaml");
 const { ROOT, run, runCapture } = require("../runner");
 const registry = require("../state/registry");
 const { loadAgent } = require("../agent/defs");
-const { resolveOpenshell } = require("../adapters/openshell/resolve");
+// Late-binding access via the module exports so tests can spy on
+// resolveOpenshell without rewiring requires.
+const openshellResolveModule = require("../adapters/openshell/resolve");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
@@ -327,11 +329,30 @@ function parseCurrentPolicy(raw: string | null | undefined): string {
 /**
  * Resolve the openshell binary, preferring an absolute path so spawnSync does
  * not raise ENOENT in non-interactive shells where ~/.local/bin/ is absent
- * from PATH (issue #4224). Falls back to the literal "openshell" so callers
- * that handle the missing binary themselves still surface an error.
+ * from PATH (issue #4224). When nothing resolves, exits with an actionable
+ * error that names every location checked, instead of letting the call fall
+ * through to an opaque `spawnSync openshell ENOENT`.
  */
 function resolveOpenshellBinary(): string {
-  return resolveOpenshell() ?? "openshell";
+  const resolved = openshellResolveModule.resolveOpenshell();
+  if (resolved) return resolved;
+
+  const home = process.env.HOME;
+  const override = process.env.NEMOCLAW_OPENSHELL_BIN;
+  const checked: string[] = [];
+  if (override) checked.push(`NEMOCLAW_OPENSHELL_BIN=${override}`);
+  checked.push("$PATH (via `command -v openshell`)");
+  if (home?.startsWith("/")) checked.push(`${home}/.local/bin/openshell`);
+  checked.push("/usr/local/bin/openshell", "/usr/bin/openshell");
+
+  console.error("  openshell binary not found. Checked:");
+  for (const location of checked) {
+    console.error(`    - ${location}`);
+  }
+  console.error(
+    "  Install OpenShell (https://github.com/NVIDIA/OpenShell) or set NEMOCLAW_OPENSHELL_BIN to an absolute, executable path.",
+  );
+  process.exit(1);
 }
 
 /**

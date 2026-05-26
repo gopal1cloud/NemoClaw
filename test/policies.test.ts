@@ -15,6 +15,9 @@ const requireForTest = createRequire(import.meta.url);
 const readline = requireForTest("node:readline") as typeof import("node:readline");
 const YAML = requireForTest("yaml");
 const REPO_ROOT = path.join(import.meta.dirname, "..");
+const resolveOpenshellModule = requireForTest(
+  path.join(REPO_ROOT, "dist", "lib", "adapters", "openshell", "resolve.js"),
+) as { resolveOpenshell: (...args: unknown[]) => string | null };
 const CLI_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "nemoclaw.js"));
 const CREDENTIALS_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "credentials", "store.js"));
 const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "policy", "index.js"));
@@ -892,6 +895,41 @@ exit 1
       const cmd = policies.buildPolicyGetCommand("my-assistant");
       expect(cmd[0]).toBe(fakeOpenshell);
       expect(cmd).toEqual([fakeOpenshell, "policy", "get", "--full", "my-assistant"]);
+    });
+
+    it("emits an actionable error listing every checked location when openshell cannot be resolved", () => {
+      const resolveSpy = vi
+        .spyOn(resolveOpenshellModule, "resolveOpenshell")
+        .mockReturnValue(null);
+      const errors: string[] = [];
+      const errSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+        errors.push(args.map((a) => String(a)).join(" "));
+      });
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+        throw new Error("__test_exit__");
+      }) as never);
+
+      process.env.HOME = tmpHome;
+      process.env.PATH = "/nonexistent-nemoclaw-path";
+      process.env.NEMOCLAW_OPENSHELL_BIN = "/nonexistent/openshell";
+
+      try {
+        expect(() => policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant"))
+          .toThrow(/__test_exit__/);
+        expect(exitSpy).toHaveBeenCalledWith(1);
+        const combined = errors.join("\n");
+        expect(combined).toMatch(/openshell binary not found/);
+        expect(combined).toMatch(/NEMOCLAW_OPENSHELL_BIN=\/nonexistent\/openshell/);
+        expect(combined).toMatch(/\$PATH/);
+        expect(combined).toContain(`${tmpHome}/.local/bin/openshell`);
+        expect(combined).toContain("/usr/local/bin/openshell");
+        expect(combined).toContain("/usr/bin/openshell");
+        expect(combined).toMatch(/Install OpenShell|NEMOCLAW_OPENSHELL_BIN/);
+      } finally {
+        resolveSpy.mockRestore();
+        errSpy.mockRestore();
+        exitSpy.mockRestore();
+      }
     });
   });
 
