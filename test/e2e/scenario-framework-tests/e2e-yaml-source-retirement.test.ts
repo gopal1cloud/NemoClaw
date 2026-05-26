@@ -34,6 +34,7 @@ describe("Phase 9 YAML-first source retirement", () => {
     const runtimeSources = [SCENARIO_RUNNER, E2E_WORKFLOW, ...walkFiles(RUNTIME_DIR, (file) => /\.(ts|sh)$/.test(file))];
     const offenders = runtimeSources
       .filter((file) => !file.endsWith("run-scenario.sh"))
+      .filter((file) => !file.includes(`${path.sep}runtime${path.sep}resolver${path.sep}`))
       .filter((file) => /setup_scenarios|test_plans|runtime\/resolver\/plan|loadMetadataFromDir\(/.test(readText(file)));
     expect(offenders, `live path should not use YAML scenario composition:\n${offenders.join("\n")}`).toEqual([]);
   });

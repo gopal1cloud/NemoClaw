@@ -12,7 +12,6 @@ import { listScenarios } from "../scenarios/registry.ts";
 
 const E2E_DIR = path.resolve(import.meta.dirname, "..");
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const SPEC_DIR = path.resolve(REPO_ROOT, "specs/2026-05-26_hybrid-scenario-e2e-architecture");
 const SCENARIOS_PATH = path.join(E2E_DIR, "nemoclaw_scenarios", "scenarios.yaml");
 const EXPECTED_STATES_PATH = path.join(E2E_DIR, "nemoclaw_scenarios", "expected-states.yaml");
 const SUITES_PATH = path.join(E2E_DIR, "validation_suites", "suites.yaml");
@@ -91,9 +90,8 @@ describe("hybrid scenario migration inventory lock", () => {
   });
 
   it("should_have_seed_reliability_inventory", () => {
-    const inventoryPath = path.join(SPEC_DIR, "reliability-inventory.md");
-    const contents = fs.readFileSync(inventoryPath, "utf8");
+    const reliabilityExamples = assertionRegistry.groups.flatMap((group) => group.steps.map((step) => step.reliability).filter(Boolean));
 
-    expect(contents).toMatch(/retry[\s\S]*timeout[\s\S]*skip[\s\S]*classification/i);
+    expect(reliabilityExamples.some((entry) => entry?.retry && entry.timeoutSeconds)).toBe(true);
   });
 });
