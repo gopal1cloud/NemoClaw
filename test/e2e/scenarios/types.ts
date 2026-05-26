@@ -12,6 +12,11 @@ export type TransientClassifier =
   | "runner-infra"
   | "wrong-installed-ref";
 
+export interface SutBoundary {
+  id: "host-cli" | "gateway" | "sandbox" | "agent" | "provider" | "state";
+  client: string;
+}
+
 export interface NemoClawInstanceManifest {
   apiVersion: "nemoclaw.io/v1";
   kind: "NemoClawInstance";
@@ -116,6 +121,7 @@ export interface RunPlan {
   requiredSecrets: string[];
   skippedCapabilities: Array<Record<string, unknown>>;
   expectedFailure?: Record<string, unknown>;
+  sutBoundaries: SutBoundary[];
 }
 
 export interface RunContext {

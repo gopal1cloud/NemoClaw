@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { compileRunPlans, renderPlanText } from "./compiler.ts";
+import { compileRunPlans, renderPlanText, writePlanArtifacts } from "./compiler.ts";
 import { listScenarios } from "./registry.ts";
 
 interface Args {
@@ -57,7 +57,14 @@ function main() {
     throw new Error("--plan-only requires --scenarios <id[,id...]> in the Phase 1 skeleton");
   }
 
+  if (process.env.E2E_SUITE_FILTER) {
+    throw new Error("E2E_SUITE_FILTER is not supported; define assertion selection in scenario builders.");
+  }
+
   const plans = compileRunPlans(args.scenarios);
+  if (process.env.E2E_CONTEXT_DIR) {
+    writePlanArtifacts(plans, process.env.E2E_CONTEXT_DIR);
+  }
   console.log(renderPlanText(plans));
 }
 

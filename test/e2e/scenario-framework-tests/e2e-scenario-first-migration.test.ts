@@ -37,7 +37,7 @@ describe("Phase 1: hybrid scenario skeleton", () => {
     expect(plan).toEqual(
       expect.objectContaining({
         scenarioId: "ubuntu-repo-cloud-openclaw",
-        status: "skeleton",
+        status: "compiled",
         manifestPath: "test/e2e/manifests/openclaw-nvidia.yaml",
       }),
     );
@@ -57,6 +57,6 @@ describe("Phase 1: hybrid scenario skeleton", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("Scenario: ubuntu-repo-cloud-openclaw");
-    expect(result.stdout).toContain("not-yet-implemented skeleton plan");
+    expect(result.stdout).toContain("compiled plan-only preview");
   });
 });
