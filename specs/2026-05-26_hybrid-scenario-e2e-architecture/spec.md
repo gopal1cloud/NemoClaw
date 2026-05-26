@@ -8,7 +8,7 @@
 The current scenario-based E2E framework is partway through a migration from one-off shell scripts to declarative scenario metadata. It already introduced useful concepts — base scenarios, onboarding profiles, test plans, expected states, onboarding assertions, validation suites, reports, and workflow dispatch — but the current YAML-first scenario model is starting to overload YAML with two different responsibilities:
 
 1. **Product-facing desired setup/onboarding state** that should remain durable, backup/update-friendly, and eventually useful for materializing a real NemoClaw instance.
-2. **E2E test scenario composition** such as matrix rules, assertion group selection, targeted scenario IDs, and framework-only compatibility behavior.
+2. **E2E test scenario composition** such as matrix rules, assertion group selection, targeted scenario IDs, and framework-only execution behavior.
 
 This spec converts the existing scenario-based suite to a hybrid architecture:
 
@@ -20,7 +20,7 @@ This spec converts the existing scenario-based suite to a hybrid architecture:
 - **Phase orchestrators** own phase-local actions, observations, assertions, lightweight retry/timeout enforcement, and phase results: Environment, Onboarding, and Runtime.
 - **Shared E2E clients/adapters** wrap real NemoClaw system boundaries for reusable act/observe primitives.
 
-All current scenario-based tests must go through this architecture. That means every existing `setup_scenarios` alias, `test_plans` entry, expected state, onboarding assertion, validation suite, scenario framework test, workflow entrypoint, coverage report path, and current PR/child-issue work that adds scenario-based coverage must be accounted for. This is not a partial replacement for only the happy path.
+All current scenario-based tests must go through this architecture as the only supported pattern. Existing YAML-first scenario metadata, suite metadata, compatibility aliases, and legacy entrypoints should be deleted or replaced once their coverage is represented in typed builders, manifests, and assertion modules. This is not a partial replacement for only the happy path.
 
 ## Current State Analysis
 
@@ -47,7 +47,7 @@ Current scenario-based E2E files live under `test/e2e/`:
 
 Current `test/e2e/nemoclaw_scenarios/scenarios.yaml` contains:
 
-- 7 `setup_scenarios` compatibility aliases:
+- 7 existing `setup_scenarios` entries to replace:
   - `ubuntu-repo-cloud-openclaw`
   - `ubuntu-repo-cloud-hermes`
   - `gpu-repo-local-ollama-openclaw`
@@ -69,7 +69,7 @@ Current `test/e2e/nemoclaw_scenarios/scenarios.yaml` contains:
   - `preflight-passed`
   - `preflight-expected-failed`
 
-All of these must be represented in the new architecture before the YAML-first scenario resolver can be retired.
+All of these must be represented directly in the new architecture; the YAML-first scenario resolver is removed rather than maintained as a compatibility path.
 
 ### Current suite inventory that must be converted
 
@@ -84,7 +84,7 @@ Current `test/e2e/validation_suites/suites.yaml` includes implemented and alias-
   - `platform-macos`
   - `platform-wsl`
   - `hermes-specific`
-- Existing suite-family aliases or placeholders that must be converted into assertion modules or retained intentionally:
+- Existing suite-family aliases or placeholders that must be converted into real assertion modules and wired into at least one canonical scenario plan:
   - `gateway-health`
   - `sandbox-shell`
   - `cloud-inference`
@@ -109,7 +109,7 @@ Current `test/e2e/validation_suites/suites.yaml` includes implemented and alias-
   - `security-policy`
   - `security-injection`
 
-All concrete scripts currently under `test/e2e/validation_suites/**` and `test/e2e/onboarding_assertions/**` must be reachable through assertion modules in the new design, unless explicitly retired with rationale in the cleanup phase.
+All concrete scripts currently under `test/e2e/validation_suites/**` and `test/e2e/onboarding_assertions/**` must be reachable through assertion modules in the new design. No current validation suite key may be dropped during this architecture conversion; if a suite is currently only an alias or placeholder, the migration must turn it into a real assertion group with at least one assertion step and at least one canonical scenario that uses it.
 
 ### Current pain points
 
@@ -433,7 +433,7 @@ Inputs:
 - `--plan-only`
 - `--dry-run`
 - `--validate-only` where applicable
-- Existing `E2E_CONTEXT_DIR` and `E2E_SUITE_FILTER` semantics during compatibility only. Do not add a new general-purpose assertion filter unless a converted workflow still needs it.
+- `E2E_CONTEXT_DIR`. Do not support `E2E_SUITE_FILTER`; assertion selection is defined by typed scenario builders.
 
 Outputs:
 
@@ -524,33 +524,21 @@ Real SUT boundaries:
 
 Clients do not decide pass/fail. Assertions and phase orchestrators decide what observed state means. Clients also should not know scenario IDs, assertion IDs, retry policy, expected-failure policy, or transient-skip policy. They may expose raw status, timing, exit code, stdout/stderr, and product/runtime version observations.
 
-#### 8. Compatibility with existing workflows during migration
+#### 8. Runtime entrypoints and workflows
 
-The current shell entrypoint should become a compatibility shim rather than the source of truth:
+The TypeScript runner is the only supported runtime entrypoint:
 
 ```text
-test/e2e/runtime/run-scenario.sh
-  → invokes test/e2e/scenarios/run.ts
+test/e2e/scenarios/run.ts
 ```
 
-Existing GitHub Action inputs must continue to work while workflows are updated:
+Delete or fail-fast old shell entrypoints that imply YAML-first execution, including `test/e2e/runtime/run-scenario.sh`, unless they are still needed internally as private helpers with no documented user-facing contract. GitHub Actions should expose only the new scenario-builder interface:
 
-- `scenario`
-- `suite_filter`
-- WSL routing
-- macOS optional Docker behavior
-- artifact upload
+- `scenarios` comma-separated input
+- typed registry-driven WSL/macOS/GPU/Brev routing
+- artifact upload for run plans, phase results, result summaries, and logs
 
-New workflow input should support multiple scenario IDs:
-
-```yaml
-workflow_dispatch:
-  inputs:
-    scenarios:
-      description: "Comma-separated scenario IDs"
-    assertions:
-      description: "Optional comma-separated assertion groups or IDs"
-```
+Do not preserve the old `scenario` input or `suite_filter` behavior.
 
 ## Configuration & Deployment Changes
 
@@ -595,14 +583,14 @@ AGENTS.md
 
 No new required environment variables should be introduced for the architecture conversion.
 
-Existing variables to preserve where applicable:
+Supported variables:
 
 - `E2E_CONTEXT_DIR`
-- `E2E_SUITE_FILTER` during compatibility period
-- `E2E_VALIDATE_EXPECTED_STATE` during migration, then replaced by phase-owned assertions/observations if no longer needed
 - `E2E_DRY_RUN`
 - `NVIDIA_API_KEY`
 - Existing provider/messaging secrets
+
+Do not support `E2E_SUITE_FILTER` or `E2E_VALIDATE_EXPECTED_STATE`; suite selection and expected-state checks belong to assertion modules and phase-owned observations.
 
 ### Dependencies
 
@@ -610,7 +598,7 @@ No new runtime dependency should be added unless necessary. Prefer the existing 
 
 If YAML schema validation requires stronger typing, use existing project dependencies first. Avoid adding a large validation framework unless it materially reduces risk.
 
-## Phase 1: Inventory Lock and Target Skeleton
+## Phase 1: Inventory Lock and Target Skeleton [COMPLETED: 903f03844]
 
 Create the new framework skeleton and lock down the current inventory so every existing scenario-based test has an explicit migration target.
 
@@ -635,7 +623,7 @@ Create the new framework skeleton and lock down the current inventory so every e
    - every `onboarding_assertions` key
    - every `validation_suites.suites` key
    - every script currently referenced by onboarding assertions and validation suites
-3. Add `test/e2e/scenarios/migration-inventory.ts` or equivalent to hold explicit mapping metadata during the conversion.
+3. Add `test/e2e/scenarios/migration-inventory.ts` or equivalent as a temporary deletion checklist that maps old YAML keys/scripts to their new owner or explicit removal rationale. It must not be consumed by runtime paths.
 4. Use `specs/2026-05-26_hybrid-scenario-e2e-architecture/reliability-inventory.md` as the seed reliability inventory for current E2E timeout/retry/skip classification, and convert it into typed migration metadata as assertion steps are migrated.
 5. Add initial types for:
    - `NemoClawInstanceManifest`
@@ -657,7 +645,7 @@ Create the new framework skeleton and lock down the current inventory so every e
 - A test fails if any current scenario YAML key or suite key lacks a migration target.
 - `npx tsx test/e2e/scenarios/run.ts --list` prints the new registry skeleton.
 - `npx tsx test/e2e/scenarios/run.ts --scenarios <known-id> --plan-only` returns a clear not-yet-implemented or skeleton plan for at least one ID.
-- Existing scenario framework tests still pass or are updated with explicit transitional expectations.
+- Existing scenario framework tests are replaced or updated so the new architecture is the only expected path.
 - The reliability inventory exists and identifies current tests or steps that need retry, timeout, expected-failure, external-skip, or manual classification treatment.
 
 ## Phase 2: Product-Facing Onboarding Manifests
@@ -683,11 +671,11 @@ Split setup/onboarding desired state out of current scenario YAML into product-f
    - resume/repair/double-onboard/token-rotation lifecycle variants
 4. Add manifest loader and validation tests.
 5. Ensure manifests contain only setup/onboarding/durable desired state, not assertion or suite selection.
-6. Preserve required secrets, runner requirements, skipped capabilities, and expected failure metadata in a product-compatible form or adjacent scenario metadata if test-only.
+6. Move required secrets, runner requirements, skipped capabilities, and expected failure metadata into manifests only when product-facing; otherwise put them in typed scenario metadata.
 
 ### Acceptance Criteria
 
-- Every current `test_plans` entry has a corresponding manifest or explicit manifest composition path.
+- Every current `test_plans` entry has coverage through a canonical manifest or explicit removal rationale; no runtime path reads `test_plans`.
 - Manifests validate through TypeScript tests.
 - Tests fail if a manifest includes assertion group IDs or suite IDs.
 - No raw secret values are allowed in manifests.
@@ -701,15 +689,15 @@ Move E2E scenario identity and matrix composition into typed scenario builders.
 
 1. Implement `scenario(id)` builder API.
 2. Implement scenario registry and stable ID lookup.
-3. Add scenario definitions for all current 7 `setup_scenarios` aliases and all 19 current `test_plans`.
-4. Preserve current legacy scenario IDs as first-class scenario IDs or aliases, not YAML-only aliases.
+3. Add canonical scenario definitions that cover all current 7 `setup_scenarios` entries and all 19 current `test_plans`.
+4. Do not add compatibility aliases solely to preserve old YAML names; keep an old ID only if it is selected as the canonical typed scenario ID.
 5. Add matrix helpers for common environment/onboarding combinations.
 6. Implement targeted selection:
    - one scenario ID
    - comma-separated scenario IDs
    - list all scenario IDs
    - error on unknown scenario ID with available IDs
-7. Add compatibility checks for:
+7. Add compile-time checks for:
    - manifest + environment compatibility
    - runner requirements
    - required secrets
@@ -718,16 +706,16 @@ Move E2E scenario identity and matrix composition into typed scenario builders.
 
 ### Acceptance Criteria
 
-- All current `setup_scenarios` and `test_plans` are selectable through the new registry.
+- All canonical scenarios that replace current `setup_scenarios` and `test_plans` are selectable through the new registry.
 - Unknown scenario ID errors are actionable.
 - Duplicate scenario IDs fail tests.
-- `--list` includes all migrated IDs and aliases.
+- `--list` includes only canonical supported IDs.
 - `--plan-only --scenarios ubuntu-repo-cloud-openclaw` produces a plan equivalent to the current YAML resolver plan at the semantic level.
 - `--plan-only --scenarios id1,id2` produces two targeted run plans.
 
 ## Phase 4: Assertion Modules and Existing Suite Conversion
 
-Move assertion composition from YAML suite lists and onboarding assertion lists into logical code modules.
+Move assertion composition from YAML suite lists and onboarding assertion lists into logical code modules. This work is split by suite domain so every current validation suite key becomes a real assertion group and is exercised by at least one canonical scenario plan.
 
 ### Implementation
 
@@ -742,38 +730,68 @@ Move assertion composition from YAML suite lists and onboarding assertion lists 
    - `security.ts`
    - `lifecycle.ts`
    - `platform.ts`
+   - `diagnostics.ts`
    - `negative.ts`
 3. Convert all current onboarding assertions into assertion groups.
-4. Convert all current concrete validation suites into assertion groups:
+4. Convert baseline and platform suites into real assertion groups and wire each into at least one canonical scenario:
    - `smoke`
-   - `inference`
-   - `credentials`
-   - `local-ollama-inference`
-   - `ollama-proxy`
+   - `gateway-health`
+   - `sandbox-shell`
    - `platform-macos`
    - `platform-wsl`
+5. Convert inference suites into real assertion groups and wire each into at least one canonical scenario:
+   - `inference`
+   - `cloud-inference`
+   - `local-ollama-inference`
+   - `ollama-proxy`
+   - `ollama-auth-proxy`
+   - `openai-compatible-inference`
+   - `inference-routing`
+   - `inference-switch`
+   - `kimi-compatibility`
+6. Convert security suites into real assertion groups and wire each into at least one canonical scenario:
+   - `credentials`
+   - `security-credentials`
+   - `security-shields`
+   - `security-policy`
+   - `security-injection`
+7. Convert messaging suites into real assertion groups and wire each into at least one canonical scenario:
+   - `messaging-telegram`
+   - `messaging-discord`
+   - `messaging-slack`
+   - `messaging-token-rotation`
+8. Convert lifecycle/operations suites into real assertion groups and wire each into at least one canonical scenario:
+   - `sandbox-lifecycle`
+   - `sandbox-operations`
+   - `snapshot`
+   - `rebuild`
+   - `upgrade`
+9. Convert diagnostics, docs, and agent-specific suites into real assertion groups and wire each into at least one canonical scenario:
+   - `diagnostics`
+   - `docs-validation`
    - `hermes-specific`
-5. Convert all current suite aliases/placeholders into explicit assertion group definitions, even when they initially wrap existing concrete steps or are marked intentionally pending.
-6. Ensure every assertion step has:
+10. Ensure every assertion step has:
    - stable ID
    - phase owner
    - implementation reference
    - evidence output path or log convention
    - skip/gate metadata where needed
    - optional step-level reliability metadata for timeout/retry behavior
-7. Convert recent flake-handling patterns into step-level examples where applicable:
+11. Convert recent flake-handling patterns into step-level examples where applicable:
    - empty TUI/webchat event capture retry
    - live provider 5xx/timeout classification
    - model/tool-call transient classification
    - Cloudflare quick-tunnel external classification
    - wrong installed-ref detection as a hard failure class
-8. Keep existing shell scripts as implementations where practical.
-9. Update convention tests to block new top-level legacy `test/e2e/test-*.sh` entrypoints and new YAML suite definitions that bypass assertion modules.
+12. Keep existing shell scripts as implementations where practical, but every current suite key must have a real assertion group; alias-only assertion groups are not allowed.
+13. Update convention tests to block top-level legacy `test/e2e/test-*.sh` entrypoints and YAML suite definitions that bypass assertion modules.
 
 ### Acceptance Criteria
 
 - Every current `onboarding_assertions` key is represented by an assertion group/step.
-- Every current `validation_suites.suites` key is represented by an assertion group or explicit pending/retired mapping.
+- Every current `validation_suites.suites` key is represented by a canonical assertion group; deletion is not allowed for current suite keys.
+- Every canonical assertion group has at least one assertion step.
+- Every canonical assertion group is used by at least one canonical scenario plan.
 - Plan-only output shows expanded assertion groups and steps grouped by phase.
 - Tests fail if an assertion group references a missing script.
 - Tests fail if an assertion step lacks a stable ID or phase owner.
@@ -803,8 +821,8 @@ Implement the compiler that combines selected scenario builders, manifests, and 
    - skipped capabilities
    - expected failure metadata
    - selected SUT boundaries and clients
-5. Add semantic parity tests comparing new plan output with old resolver output for all current scenario IDs.
-6. Preserve legacy `E2E_SUITE_FILTER` only as a visible compatibility shim when needed by existing workflows. Do not add new assertion filtering unless a current converted scenario requires it.
+5. Add semantic coverage tests proving new plan output covers the required behavior from the old resolver for all current scenarios.
+6. Reject `E2E_SUITE_FILTER` and do not add assertion filtering unless a new first-class scenario-builder use case requires it.
 
 ### Acceptance Criteria
 
@@ -861,33 +879,28 @@ Introduce clients/adapters and phase orchestrators while preserving current live
 
 ## Phase 7: Runtime Entry Point and Workflow Migration
 
-Move runtime entrypoints and GitHub workflows to the new runner while preserving targeted execution.
+Move runtime entrypoints and GitHub workflows to the new runner as the only supported execution path.
 
 ### Implementation
 
-1. Update `test/e2e/runtime/run-scenario.sh` to invoke `test/e2e/scenarios/run.ts` as the source of truth.
-2. Keep shell entrypoint compatibility for existing calls:
-   - `bash test/e2e/runtime/run-scenario.sh <id> --plan-only`
-   - `--dry-run`
-   - `--validate-only` if retained
-3. Update `.github/workflows/e2e-scenarios.yaml`:
-   - accept `scenarios` comma-separated input
-   - preserve old `scenario` input during transition if needed
-   - preserve `suite_filter` behavior or map it to assertion filtering visibly
-   - preserve WSL/macOS runner routing
-   - preserve artifact upload
+1. Delete or fail-fast `test/e2e/runtime/run-scenario.sh`; documented usage must call `test/e2e/scenarios/run.ts`.
+2. Update `.github/workflows/e2e-scenarios.yaml`:
+   - accept only `scenarios` comma-separated input
+   - remove old `scenario` input
+   - remove `suite_filter` behavior
+   - route WSL/macOS/GPU/Brev scenarios from typed registry metadata
+   - upload artifacts
 4. Update `.github/workflows/e2e-parity-compare.yaml` if still required during migration.
 5. Update coverage report command to read scenario builder registry and assertion modules rather than YAML suite metadata.
 6. Ensure CodeRabbit/E2E advisor dispatch paths can still target scenarios.
 
 ### Acceptance Criteria
 
-- Existing workflow dispatch for a single scenario still works.
-- New workflow dispatch for multiple scenario IDs works.
-- WSL and macOS scenarios still route to the correct runner.
+- Workflow dispatch through `scenarios` works for one or more scenario IDs.
+- WSL and macOS scenarios route from typed registry metadata to the correct runner.
 - Plan summary appears in GitHub Step Summary.
 - Artifact uploads include run plan, phase results, result summary, and logs.
-- Existing E2E advisor paths can target new scenario IDs or have a documented migration path.
+- E2E advisor paths target only canonical typed scenario IDs.
 
 ## Phase 8: Coverage, Reporting, and Migration Metadata
 
@@ -911,8 +924,8 @@ Update coverage and reporting so maintainers can see scenario, manifest, asserti
    - manifest
    - assertion group/domain
    - phase
-   - legacy YAML source retired or still transitional
-5. Keep parity inventory/map tests if still needed for legacy script migration, but decouple them from the new scenario architecture where possible.
+   - old YAML source deleted or explicitly non-runtime reference only
+5. Delete parity inventory/map tests when they only support old script migration; keep only tests that validate current registry/assertion coverage.
 6. Add reports to `.e2e/reports/` or current report output path.
 
 ### Acceptance Criteria
@@ -921,69 +934,32 @@ Update coverage and reporting so maintainers can see scenario, manifest, asserti
 - Coverage report lists all current scenario IDs and assertion groups.
 - Missing manifest/scenario/assertion coverage fails tests.
 - GitHub Step Summary includes the new coverage summary.
-- Existing parity assets are either integrated intentionally or marked as legacy migration-only.
+- Obsolete parity assets are deleted; any retained assets validate current architecture only.
 
-## Phase 9: Remove YAML-First Scenario Resolver
+## Phase 9: Delete YAML-First Scenario Resolver
 
-Retire the old YAML-first scenario source of truth once all current scenarios and suites run through the new architecture.
+Delete the old YAML-first scenario source of truth and make the hybrid architecture the only supported runtime model.
 
 ### Implementation
 
-1. Remove or demote `setup_scenarios`, `test_plans`, and suite selection from `test/e2e/nemoclaw_scenarios/scenarios.yaml` after equivalent builder coverage exists.
+1. Delete `setup_scenarios`, `test_plans`, and suite selection from `test/e2e/nemoclaw_scenarios/scenarios.yaml`; if the file remains, it may contain only product-facing manifest-compatible data.
 2. Decide whether `expected-states.yaml` remains as product-like expected-state contract input or is converted into assertion modules/manifest-adjacent defaults.
 3. Remove obsolete resolver code:
-   - `runtime/resolver/plan.ts` if no longer used
+   - `runtime/resolver/plan.ts`
    - old schema/load fields that only support YAML scenario composition
-   - old suite requires_state validation if replaced by assertion modules
-4. Update tests that referred to old YAML as source of truth.
-5. Keep setup/onboarding shell dispatch helpers only if still used by clients/orchestrators.
-6. Remove transitional aliases only after workflows and docs use new scenario IDs.
+   - old suite `requires_state` validation
+4. Replace tests that referred to old YAML as source of truth with builder/compiler/assertion tests.
+5. Keep setup/onboarding shell dispatch helpers only if still used by clients/orchestrators as implementation details.
 
 ### Acceptance Criteria
 
 - No live E2E path uses YAML `test_plans` or `setup_scenarios` as source of truth.
-- All current scenario-based IDs still run or have documented replacement IDs.
+- Only canonical typed scenario IDs are supported.
 - Old resolver tests are removed or replaced by builder/compiler tests.
 - No duplicate source of truth remains for suite/assertion composition.
-- `bash test/e2e/runtime/run-scenario.sh <existing-id> --plan-only` still works through the new runner or returns a documented replacement message.
+- Old shell entrypoints and workflow inputs are gone or fail with a message pointing to `test/e2e/scenarios/run.ts`.
 
-## Phase 10: Current Child Issue and PR Alignment
-
-Align in-flight child issues and PRs with the new architecture so they do not keep adding YAML-first scenario metadata. This is a coordination checklist, not product-code implementation work.
-
-### Implementation
-
-1. Review and update open/in-flight child issues under #3588, including at minimum:
-   - #3589 reporting
-   - #3805 onboard negative paths migration
-   - #3806 additional onboard negative paths
-   - #3809 baseline onboarding/install assertions
-   - #3811 Hermes feature coverage / PR #4252
-   - #3816 platform/remote coverage
-   - #3817 diagnostics/state/runtime services
-   - #3818 negative/failure-mode coverage
-   - #4021 channels-stop-start scenario migration
-   - #4042 model-specific runtime dependency coverage
-   - #4258 hybrid architecture pivot
-2. For each issue/PR, identify whether work belongs in:
-   - onboarding manifest
-   - scenario builder
-   - assertion module
-   - phase orchestrator
-   - shared client
-   - report/coverage logic
-   - product code outside E2E
-3. Update PR #4252 or any successor Hermes work so Hermes assertion coverage is implemented as assertion modules and scenario builders rather than more YAML suite entries.
-4. Prevent new child work from adding additional YAML-first `test_plans` or `suites.yaml` source-of-truth entries except as temporary compatibility shims.
-
-### Acceptance Criteria
-
-- Every open child issue has an architecture-aligned implementation note or linked follow-up.
-- PR #4252 has a clear rework path or replacement path under assertion modules/builders.
-- No new child issue can be considered complete if it bypasses the builder/manifest/assertion-module architecture.
-- Epic #3588 points to this spec and #4258 as the architecture pivot.
-
-## Phase 11: Clean the House
+## Phase 10: Clean the House
 
 Remove dead code, update docs, and make the hybrid architecture the documented default.
 
@@ -1005,7 +981,7 @@ Remove dead code, update docs, and make the hybrid architecture the documented d
    - coverage report
    - `npm test` where feasible
    - `npx prek run --all-files` or documented unrelated failures
-7. Ensure no new legacy `test/e2e/test-*.sh` entrypoints were added.
+7. Ensure no legacy `test/e2e/test-*.sh` entrypoints remain in supported paths.
 
 ### Acceptance Criteria
 
@@ -1014,5 +990,5 @@ Remove dead code, update docs, and make the hybrid architecture the documented d
 - Docs clearly state that scenarios are deterministic code builders.
 - Docs clearly state that assertions are logical code modules owned by phases.
 - No obsolete resolver/YAML suite composition code remains in active execution paths.
-- All current scenario-based tests run through the new architecture or have explicit retired/replacement evidence.
+- All supported scenario-based tests run through the new architecture; removed tests have explicit deletion rationale.
 - Final checks pass or have documented unrelated failures.
