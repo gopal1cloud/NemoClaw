@@ -61,7 +61,7 @@ Test Spec: `specs/2026-05-26_hybrid-scenario-e2e-architecture/tests.md`
 
 **Validation Steps**:
 1. **Setup**: Bash: ensure manifests exist for current test plan combinations.
-2. **Execute**: Bash: `npm test -- --project cli test/e2e/scenario-framework-tests`.
+2. **Execute**: Bash: `npm test -- --project e2e-scenario-framework`.
 3. **Verify**: Bash: check manifest validation tests pass.
 
 **Tools Required**: Bash, Vitest.

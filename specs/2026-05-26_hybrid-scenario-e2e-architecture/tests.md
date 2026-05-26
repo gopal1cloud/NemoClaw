@@ -376,7 +376,7 @@ Primary test locations:
 Use targeted commands during implementation phases:
 
 ```bash
-npm test -- --project cli test/e2e/scenario-framework-tests
+npm test -- --project e2e-scenario-framework
 npx tsx test/e2e/scenarios/run.ts --list
 npx tsx test/e2e/scenarios/run.ts --scenarios ubuntu-repo-cloud-openclaw --plan-only
 bash test/e2e/runtime/run-scenario.sh ubuntu-repo-cloud-openclaw --plan-only
