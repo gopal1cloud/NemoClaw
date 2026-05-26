@@ -82,6 +82,18 @@ describe("E2E scenario resolver", () => {
     expect(reonboard.runner_requirements).toEqual(expect.arrayContaining(["self-hosted-gpu", "docker-cdi"]));
   });
 
+
+
+  it("should_resolve_brev_platform_remote_scenarios", () => {
+    const meta = realMetadata();
+    const launchable = resolveScenario("brev-launchable-cloud-openclaw", meta);
+    expect(launchable.suites.map((s) => s.id)).toContain("platform-remote-launchable");
+    expect(launchable.required_secrets).toContain("NVIDIA_API_KEY");
+    const branch = resolveScenario("brev-remote-branch-validation", meta);
+    expect(branch.suites.map((s) => s.id)).toContain("platform-remote-brev-branch");
+    expect(branch.runner_requirements).toEqual(expect.arrayContaining(["brev-api-token"]));
+  });
+
   it("should_fail_for_unknown_scenario", () => {
     const meta = realMetadata();
     expect(() => resolveScenario("does-not-exist", meta)).toThrow(/does-not-exist/);

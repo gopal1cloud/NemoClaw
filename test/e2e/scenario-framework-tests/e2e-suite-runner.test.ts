@@ -138,6 +138,24 @@ describe("Issue #3816 platform remote GPU suites", () => {
   });
 });
 
+describe("Issue #3816 platform remote Brev suites", () => {
+  it("test_should_emit_launchable_and_brev_branch_assertion_ids_in_dry_run", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-platform-brev-"));
+    try {
+      seedContext(tmp, { ...fullContext(), E2E_SCENARIO: "brev-launchable-cloud-openclaw" });
+      const r = runSuites(["platform-remote-launchable", "platform-remote-brev-branch"], { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" });
+      expect(r.status, `stderr:${r.stderr}\nstdout:${r.stdout}`).toBe(0);
+      for (const id of [
+        "expected.platform_remote.launchable.prereq-nvidia-api-key",
+        "expected.platform_remote.launchable.openclaw-agent-thinking-off-42",
+        "expected.platform_remote.brev.registry-default-e2e-test",
+        "expected.platform_remote.brev.gpu-bridge-reachability-live",
+      ]) expect(r.stdout).toContain(id);
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+});
+
+
 describe("run-suites.sh", () => {
   it("security_credentials_suite_should_emit_stable_assertion_ids", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-security-credentials-"));

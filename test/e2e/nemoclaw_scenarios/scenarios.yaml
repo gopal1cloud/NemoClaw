@@ -193,13 +193,13 @@ setup_scenarios:
       onboarding: cloud-openclaw
     expected_state: cloud-openclaw-ready
     suites:
-    - smoke
-    - inference
-    - baseline-onboarding
+    - platform-remote-launchable
     runner_requirements:
     - ubuntu-latest
     - brev-api-token
     - launchable-image
+    required_secrets:
+    - NVIDIA_API_KEY
     overrides:
       onboarding:
         gateway:
@@ -442,12 +442,22 @@ test_plans:
     - base-installed
     - preflight-passed
     suites:
-    - smoke
-    - inference
+    - platform-remote-launchable
+    required_secrets:
+    - NVIDIA_API_KEY
     overrides:
       onboarding:
         gateway:
           bind_address: 0.0.0.0
+  brev-remote-branch-validation:
+    base: brev-launchable-remote
+    onboarding: cloud-nvidia-openclaw
+    expected_state: cloud-openclaw-ready
+    suites:
+    - platform-remote-brev-branch
+    runner_requirements:
+    - ubuntu-latest
+    - brev-api-token
   ubuntu-repo-no-docker__cloud-nvidia-openclaw:
     base: ubuntu-repo-no-docker
     onboarding: cloud-nvidia-openclaw

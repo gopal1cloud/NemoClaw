@@ -297,3 +297,15 @@ suites:
     steps:
     - id: reonboard-assertions
       script: platform_remote/gpu-reonboard/00-reonboard-assertions.sh
+
+  platform-remote-launchable:
+    requires_state:
+      sandbox.status: running
+      inference.provider: nvidia
+    steps:
+    - id: launchable-assertions
+      script: platform_remote/launchable/00-launchable-assertions.sh
+  platform-remote-brev-branch:
+    steps:
+    - id: brev-branch-assertions
+      script: platform_remote/brev-branch/00-brev-branch-assertions.sh
