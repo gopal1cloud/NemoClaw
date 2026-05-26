@@ -67,25 +67,27 @@ const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
 const CLI_PATH = path.join(REPO_DIR, "bin", "nemoclaw.js");
 const GPU_TEST_SUITE = TEST_SUITE === "gpu";
-const BREV_PROVIDER = process.env.BREV_PROVIDER || (GPU_TEST_SUITE ? "" : "gcp");
+const HERMES_GPU_TEST_SUITE = TEST_SUITE === "hermes-gpu";
+const GPU_BREV_TEST_SUITE = GPU_TEST_SUITE || HERMES_GPU_TEST_SUITE;
+const BREV_PROVIDER = process.env.BREV_PROVIDER || (GPU_BREV_TEST_SUITE ? "" : "gcp");
 const BREV_CREATE_TIMEOUT_SECONDS = parseInt(
-  process.env.BREV_CREATE_TIMEOUT_SECONDS || (GPU_TEST_SUITE ? "1200" : "180"),
+  process.env.BREV_CREATE_TIMEOUT_SECONDS || (GPU_BREV_TEST_SUITE ? "1200" : "180"),
   10,
 );
 const BREV_CREATE_TIMEOUT_MS =
   (Number.isFinite(BREV_CREATE_TIMEOUT_SECONDS) && BREV_CREATE_TIMEOUT_SECONDS > 0
     ? BREV_CREATE_TIMEOUT_SECONDS
-    : GPU_TEST_SUITE
+    : GPU_BREV_TEST_SUITE
       ? 1200
       : 180) * 1000;
 const BREV_SSH_READY_TIMEOUT_SECONDS = parseInt(
-  process.env.BREV_SSH_READY_TIMEOUT_SECONDS || (GPU_TEST_SUITE ? "1800" : "900"),
+  process.env.BREV_SSH_READY_TIMEOUT_SECONDS || (GPU_BREV_TEST_SUITE ? "1800" : "900"),
   10,
 );
 const BREV_SSH_READY_TIMEOUT_MS =
   (Number.isFinite(BREV_SSH_READY_TIMEOUT_SECONDS) && BREV_SSH_READY_TIMEOUT_SECONDS > 0
     ? BREV_SSH_READY_TIMEOUT_SECONDS
-    : GPU_TEST_SUITE
+    : GPU_BREV_TEST_SUITE
       ? 1800
       : 900) * 1000;
 const OPENSHELL_GATEWAY_PORT = 8080;
@@ -264,18 +266,22 @@ function sshEnv(
   { timeout = 600_000, stream = false }: { timeout?: number; stream?: boolean } = {},
 ): string {
   const gpuE2eModel = process.env.NEMOCLAW_GPU_E2E_MODEL || "qwen2.5:7b";
+  const sandboxName = HERMES_GPU_TEST_SUITE ? "hermes-3764-brev-v0050" : "e2e-test";
   const envParts = [
     `export NVIDIA_API_KEY='${shellEscape(process.env.NVIDIA_API_KEY)}'`,
     `export GITHUB_TOKEN='${shellEscape(process.env.GITHUB_TOKEN)}'`,
     `export NEMOCLAW_NON_INTERACTIVE=1`,
     `export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`,
-    `export NEMOCLAW_SANDBOX_NAME=e2e-test`,
+    `export NEMOCLAW_SANDBOX_NAME=${sandboxName}`,
   ];
   if (GPU_TEST_SUITE) {
     // This suite validates Docker GPU passthrough and sandbox inference wiring.
     // Pin a small model so Brev's cheaper GPU shapes do not fail before
     // sandbox creation while auto-loading a very large default Ollama model.
     envParts.push(`export NEMOCLAW_MODEL='${shellEscape(gpuE2eModel)}'`);
+  }
+  if (HERMES_GPU_TEST_SUITE) {
+    envParts.push(`export NEMOCLAW_AGENT=hermes`);
   }
   // Forward optional messaging tokens for the messaging-providers test
   for (const key of [
@@ -406,7 +412,7 @@ function runRemoteTest(scriptPath: string): string {
 
   // Stream test output to CI log AND capture it for assertions
   try {
-    sshEnv(cmd, { timeout: GPU_TEST_SUITE ? 1_800_000 : 900_000, stream: true });
+    sshEnv(cmd, { timeout: GPU_BREV_TEST_SUITE ? 1_800_000 : 900_000, stream: true });
   } catch (error) {
     printRemoteFailureDiagnostics();
     throw error;
@@ -506,7 +512,7 @@ function refreshAndWaitForSsh(elapsed: () => string): void {
 
 function createBrevInstanceAndWaitForSsh(elapsed: () => string): void {
   const configuredAttempts = Number(process.env.BREV_PROVISION_ATTEMPTS || 2);
-  const maxAttempts = GPU_TEST_SUITE
+  const maxAttempts = GPU_BREV_TEST_SUITE
     ? Math.max(1, Number.isFinite(configuredAttempts) ? configuredAttempts : 2)
     : 1;
   let lastError: unknown = null;
@@ -567,7 +573,7 @@ function summarizeBrevCandidates(output: string, maxLines = 10): string {
  * check if the instance exists anyway.
  */
 function createBrevInstance(elapsed: () => string): void {
-  const instanceKind = GPU_TEST_SUITE ? "gpu" : "cpu";
+  const instanceKind = GPU_BREV_TEST_SUITE ? "gpu" : "cpu";
   console.log(
     `[${elapsed()}] Creating ${instanceKind} instance via launchable...`,
   );
@@ -575,7 +581,7 @@ function createBrevInstance(elapsed: () => string): void {
   console.log(
     `[${elapsed()}]   create timeout: ${Math.round(BREV_CREATE_TIMEOUT_MS / 1000)}s`,
   );
-  if (GPU_TEST_SUITE) {
+  if (GPU_BREV_TEST_SUITE) {
     if (BREV_GPU_TYPE) {
       console.log(`[${elapsed()}]   gpu type: ${BREV_GPU_TYPE}`);
     } else {
@@ -606,7 +612,7 @@ function createBrevInstance(elapsed: () => string): void {
   }
 
   try {
-    if (GPU_TEST_SUITE) {
+    if (GPU_BREV_TEST_SUITE) {
       const createArgs = [
         "create",
         requireInstanceName(),
@@ -802,7 +808,7 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
   // When TEST_SUITE=full or gpu, the shell test runs install.sh which handles
   // plugin build, npm link, and onboard from scratch. Skip those steps
   // to avoid ~8 min of redundant work.
-  if (TEST_SUITE === "full" || GPU_TEST_SUITE) {
+  if (TEST_SUITE === "full" || GPU_BREV_TEST_SUITE) {
     console.log(
       `[${elapsed()}] Skipping plugin build, npm link, and onboard (TEST_SUITE=${TEST_SUITE} — install.sh handles it)`,
     );
@@ -1108,7 +1114,7 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       console.log(`[${elapsed()}] Waiting for launchable setup to complete...`);
       waitForLaunchableReady();
 
-      if (GPU_TEST_SUITE) {
+      if (GPU_BREV_TEST_SUITE) {
         prepareGpuDockerRuntime(elapsed);
       }
 
@@ -1122,7 +1128,7 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     }
 
     // Verify sandbox registry (only when beforeAll created a sandbox)
-    if (TEST_SUITE !== "full" && !GPU_TEST_SUITE) {
+    if (TEST_SUITE !== "full" && !GPU_BREV_TEST_SUITE) {
       console.log(`[${elapsed()}] Verifying sandbox registry...`);
       const registry = JSON.parse(ssh(`cat ~/.nemoclaw/sandboxes.json`, { timeout: 10_000 }));
       expect(registry.defaultSandbox).toBe("e2e-test");
@@ -1169,6 +1175,16 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     () => {
       const output = runRemoteTest("test/e2e/test-gpu-e2e.sh");
       expect(output).toContain("GPU E2E PASSED");
+      expect(output).not.toMatch(/FAIL:/);
+    },
+    1_800_000,
+  );
+
+  it.runIf(HERMES_GPU_TEST_SUITE)(
+    "Hermes E2E suite passes on Brev GPU VM",
+    () => {
+      const output = runRemoteTest("test/e2e/test-hermes-e2e.sh");
+      expect(output).toContain("Hermes E2E PASSED");
       expect(output).not.toMatch(/FAIL:/);
     },
     1_800_000,

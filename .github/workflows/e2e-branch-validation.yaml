@@ -45,6 +45,8 @@ name: E2E / Branch Validation
 #   dashboard-remote-bind    — Verifies opt-in remote dashboard forwards bind 0.0.0.0.
 #   gpu                      — Provisions a Brev GPU VM and runs the Ollama GPU E2E
 #                              sandbox proof suite from source. (~45 min)
+#   hermes-gpu               — Provisions a Brev GPU VM and runs the Hermes E2E
+#                              sandbox proof suite from source. (~45 min)
 #   all                      — Runs credential-sanitization + telegram-injection (NOT full,
 #                              which destroys the sandbox the security tests need).
 #
@@ -70,6 +72,7 @@ on:
           - messaging-providers
           - dashboard-remote-bind
           - gpu
+          - hermes-gpu
           - all
       use_launchable:
         description: "Use CI launchable (true) or bare brev create + brev-setup.sh (false)"
@@ -189,7 +192,7 @@ jobs:
       - name: Checkout target branch
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ env.RESOLVED_BRANCH || inputs.branch || 'main' }}
+          ref: ${{ env.RESOLVED_BRANCH || inputs.branch || github.ref_name || 'main' }}
 
       - name: Create check run (pending)
         if: inputs.pr_number != ''
