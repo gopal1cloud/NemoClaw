@@ -276,10 +276,11 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
     });
 
     if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
+    const confirmedSandboxName = sandboxName;
     const resourceProfile = await deps.selectResourceProfileForSandbox();
-    if (fresh) deps.stopStaleDashboardListenersForSandbox(deps.listRegistrySandboxes().sandboxes, sandboxName);
+    if (fresh) deps.stopStaleDashboardListenersForSandbox(deps.listRegistrySandboxes().sandboxes, confirmedSandboxName);
     sandboxName = await withSandboxPhaseTrace(
-      sandboxName,
+      confirmedSandboxName,
       provider,
       model,
       (agent as { name?: string } | null)?.name,
@@ -289,7 +290,7 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
           model,
           provider,
           preferredInferenceApi,
-          sandboxName,
+          confirmedSandboxName,
           nextWebSearchConfig,
           selectedMessagingChannels,
           fromDockerfile,

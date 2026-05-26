@@ -229,8 +229,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     }
 
     const selected = requireSelection(provider, model, deps);
-    provider = selected.provider;
-    model = selected.model;
+    const selectedProvider = selected.provider;
+    const selectedModel = selected.model;
+    provider = selectedProvider;
+    model = selectedModel;
     if (shouldRecordProviderSelection) {
       session = await deps.recordStepComplete(
         "provider_selection",
@@ -259,17 +261,18 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         let inferenceResult: ProviderInferenceRetry;
         try {
           if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
+          const confirmedSandboxName = sandboxName;
           await deps.startRecordedStep("inference", { provider, model });
           inferenceResult = await withInferenceTrace(
-            sandboxName,
-            provider,
-            model,
+            confirmedSandboxName,
+            selectedProvider,
+            selectedModel,
             credentialEnv,
             () =>
               deps.setupInference(
-                sandboxName,
-                model,
-                provider,
+                confirmedSandboxName,
+                selectedModel,
+                selectedProvider,
                 endpointUrl,
                 credentialEnv,
                 hermesAuthMethod,
@@ -314,6 +317,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     let inferenceResult: ProviderInferenceRetry;
     try {
       if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
+      const confirmedSandboxName = sandboxName;
       const buildEstimateNote =
         env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1"
           ? null
@@ -327,7 +331,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           webSearchConfig,
           hermesToolGateways,
           enabledChannels: selectedMessagingChannels.length > 0 ? selectedMessagingChannels : null,
-          sandboxName,
+          sandboxName: confirmedSandboxName,
           notes: buildEstimateNote ? [buildEstimateNote] : [],
         }),
       );
@@ -343,15 +347,15 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
 
       await deps.startRecordedStep("inference", { provider, model });
       inferenceResult = await withInferenceTrace(
-        sandboxName,
-        provider,
-        model,
+        confirmedSandboxName,
+        selectedProvider,
+        selectedModel,
         credentialEnv,
         () =>
           deps.setupInference(
-            sandboxName,
-            model,
-            provider,
+            confirmedSandboxName,
+            selectedModel,
+            selectedProvider,
             endpointUrl,
             credentialEnv,
             hermesAuthMethod,
