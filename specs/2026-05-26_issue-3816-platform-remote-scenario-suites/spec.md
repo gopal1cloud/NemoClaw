@@ -356,7 +356,7 @@ Classification vocabulary is exactly: `covered`, `new assertion`, `deferred`, `r
 - Represent DGX Spark and Jetson assertions with plan-only metadata even when live execution is manual/deferred.
 - Add negative expected-state assertions for Jetson forced GPU fail-fast and WSL fake GPU rejection.
 
-### Phase 6: macOS, WSL, workflow metadata, and public installer target-ref
+### Phase 6: macOS, WSL, workflow metadata, and public installer target-ref [COMPLETED: 24b8d9a2a]
 
 - Extend `platform-remote-macos` and `platform-remote-wsl` suites.
 - Add `platform-remote-public-install` suite and `ubuntu-public-cloud-openclaw-target-ref` scenario.
