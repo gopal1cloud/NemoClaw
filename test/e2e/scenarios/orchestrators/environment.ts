@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { PhaseResult, RunContext, RunPlanPhase } from "../types.ts";
+import { PhaseOrchestrator } from "./phase.ts";
 
-export class EnvironmentOrchestrator {
-  async run(_ctx: RunContext, _phase: RunPlanPhase): Promise<PhaseResult> {
-    return { phase: "environment", status: "skipped", assertions: [] };
+export class EnvironmentOrchestrator extends PhaseOrchestrator {
+  constructor() {
+    super("environment");
   }
 }

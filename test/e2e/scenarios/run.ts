@@ -2,16 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { compileRunPlans, renderPlanText, writePlanArtifacts } from "./compiler.ts";
+import { ScenarioRunner } from "./orchestrators/runner.ts";
 import { listScenarios } from "./registry.ts";
 
 interface Args {
   list: boolean;
   planOnly: boolean;
+  dryRun: boolean;
+  validateOnly: boolean;
   scenarios: string[];
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { list: false, planOnly: false, scenarios: [] };
+  const args: Args = { list: false, planOnly: false, dryRun: false, validateOnly: false, scenarios: [] };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--list") {
@@ -20,6 +23,14 @@ function parseArgs(argv: string[]): Args {
     }
     if (arg === "--plan-only") {
       args.planOnly = true;
+      continue;
+    }
+    if (arg === "--dry-run") {
+      args.dryRun = true;
+      continue;
+    }
+    if (arg === "--validate-only") {
+      args.validateOnly = true;
       continue;
     }
     if (arg === "--scenarios") {
@@ -43,18 +54,18 @@ function printList() {
   }
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.list) {
     printList();
     return;
   }
 
-  if (!args.planOnly) {
-    throw new Error("Phase 1 skeleton supports --list and --plan-only only");
+  if (!args.planOnly && !args.dryRun && !args.validateOnly) {
+    throw new Error("Use --plan-only, --dry-run, or --validate-only with --scenarios <id[,id...]>");
   }
   if (args.scenarios.length === 0) {
-    throw new Error("--plan-only requires --scenarios <id[,id...]> in the Phase 1 skeleton");
+    throw new Error("scenario execution requires --scenarios <id[,id...]>");
   }
 
   if (process.env.E2E_SUITE_FILTER) {
@@ -62,14 +73,20 @@ function main() {
   }
 
   const plans = compileRunPlans(args.scenarios);
-  if (process.env.E2E_CONTEXT_DIR) {
-    writePlanArtifacts(plans, process.env.E2E_CONTEXT_DIR);
-  }
+  const contextDir = process.env.E2E_CONTEXT_DIR ?? process.cwd();
+  writePlanArtifacts(plans, contextDir);
   console.log(renderPlanText(plans));
+
+  if (args.dryRun) {
+    const runner = new ScenarioRunner();
+    for (const plan of plans) {
+      await runner.run({ contextDir, dryRun: true }, plan);
+    }
+  }
 }
 
 try {
-  main();
+  await main();
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;

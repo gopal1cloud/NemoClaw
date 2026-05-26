@@ -38,7 +38,7 @@ describe("phase orchestrators", () => {
     const [plan] = compileRunPlans(["ubuntu-repo-cloud-openclaw"]);
     const calls: string[] = [];
     const fakeOrchestrator = (phase: PhaseName) => ({
-      run: async (_ctx: RunContext, runPhase: RunPlanPhase): Promise<PhaseResult> => {
+      run: async (_ctx: RunContext, runPhase: RunPlanPhase, _prior?: PhaseResult[]): Promise<PhaseResult> => {
         calls.push(runPhase.name);
         return { phase, status: "passed", assertions: [] };
       },
