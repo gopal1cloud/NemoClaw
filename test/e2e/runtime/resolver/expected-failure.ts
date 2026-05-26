@@ -1,49 +1,46 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/**
- * Expected-failure matcher.
- *
- * Negative scenarios declare an `expected_failure` contract on their
- * expected state. The runner captures the failed setup's log plus a small
- * side-effect inventory (sandbox-created, gateway-started, credentials-written)
- * and asks this module whether the observation matches the contract.
- *
- * The contract has four parts:
- *   - phase: which setup stage produced the failure (informational; the
- *     runner is responsible for invoking the matcher only when that phase
- *     actually ran).
- *   - error_class: stable identifier for the failure mode.
- *   - message_pattern: regex applied to the captured log when present.
- *   - forbidden_side_effects: effects that MUST NOT be observed.
- *
- * Match result is structured (`ExpectedFailureReport`) so the runner can
- * write `expected-vs-actual.json` and surface a useful diff in CI.
- */
+/** Expected-failure matcher for typed negative E2E scenarios. */
 
-import { compileMessagePattern } from "./load.ts";
-import type {
-  ExpectedFailure,
-  ExpectedFailurePhase,
-  ExpectedFailureErrorClass,
-  ExpectedFailureSideEffect,
-} from "./schema.ts";
+export const EXPECTED_FAILURE_PHASES = [
+  "preflight",
+  "install",
+  "onboard",
+  "onboarding",
+  "readiness",
+  "suite",
+] as const;
+export type ExpectedFailurePhase = (typeof EXPECTED_FAILURE_PHASES)[number];
+
+export const EXPECTED_FAILURE_ERROR_CLASSES = [
+  "docker-missing",
+  "credentials-missing",
+  "gpu-missing",
+  "unsupported-platform",
+  "invalid-nvidia-api-key",
+  "gateway-port-conflict",
+] as const;
+export type ExpectedFailureErrorClass = (typeof EXPECTED_FAILURE_ERROR_CLASSES)[number];
+
+export const EXPECTED_FAILURE_SIDE_EFFECTS = [
+  "sandbox-created",
+  "gateway-started",
+  "credentials-written",
+] as const;
+export type ExpectedFailureSideEffect = (typeof EXPECTED_FAILURE_SIDE_EFFECTS)[number];
+
+export interface ExpectedFailure {
+  phase: ExpectedFailurePhase;
+  error_class: ExpectedFailureErrorClass;
+  message_pattern?: string;
+  forbidden_side_effects?: ExpectedFailureSideEffect[];
+}
 
 export interface ObservedFailure {
-  /** Phase the runner attempted; matched against `expected_failure.phase`. */
   phase: ExpectedFailurePhase;
-  /**
-   * Structured reason if the runner could derive one (preferred). When
-   * absent, matching falls back to log-content heuristics in the runner.
-   */
   error_class?: ExpectedFailureErrorClass;
-  /** Captured setup log; matched against `expected_failure.message_pattern`. */
   log: string;
-  /**
-   * Side effects the runner positively observed after the failure. Each
-   * effect in `expected_failure.forbidden_side_effects` is checked against
-   * this set; presence is a failure.
-   */
   observed_side_effects: ExpectedFailureSideEffect[];
 }
 
@@ -62,6 +59,11 @@ export interface ExpectedFailureReport {
   checks: ExpectedFailureCheck[];
 }
 
+function compileMessagePattern(pattern: string): RegExp {
+  const inline = pattern.match(/^\(\?i\)(.*)$/s);
+  return inline ? new RegExp(inline[1], "i") : new RegExp(pattern);
+}
+
 export function matchExpectedFailure(
   expected: ExpectedFailure,
   observed: ObservedFailure,
@@ -74,9 +76,7 @@ export function matchExpectedFailure(
     ok: phaseOk,
     expected: expected.phase,
     actual: observed.phase,
-    message: phaseOk
-      ? undefined
-      : `phase mismatch: expected '${expected.phase}' but observed '${observed.phase}'`,
+    message: phaseOk ? undefined : `phase mismatch: expected '${expected.phase}' but observed '${observed.phase}'`,
   });
 
   if (observed.error_class !== undefined) {
@@ -86,14 +86,9 @@ export function matchExpectedFailure(
       ok: classOk,
       expected: expected.error_class,
       actual: observed.error_class,
-      message: classOk
-        ? undefined
-        : `error_class mismatch: expected '${expected.error_class}' but observed '${observed.error_class}'`,
+      message: classOk ? undefined : `error_class mismatch: expected '${expected.error_class}' but observed '${observed.error_class}'`,
     });
   } else {
-    // No structured class from the runner; defer to message_pattern as
-    // the discriminator. Record a SKIPPED entry so the report makes it
-    // obvious that the class was not asserted structurally.
     checks.push({
       name: "error_class",
       ok: true,
@@ -123,24 +118,20 @@ export function matchExpectedFailure(
       ok,
       expected: expected.message_pattern,
       actual: ok ? "<match>" : "<no match>",
-      message: ok
-        ? undefined
-        : `message_pattern '${expected.message_pattern}' did not match captured log`,
+      message: ok ? undefined : `message_pattern '${expected.message_pattern}' did not match captured log`,
     });
   }
 
   if (expected.forbidden_side_effects?.length) {
     const observedSet = new Set(observed.observed_side_effects);
-    const found = expected.forbidden_side_effects.filter((e) => observedSet.has(e));
+    const found = expected.forbidden_side_effects.filter((effect) => observedSet.has(effect));
     const ok = found.length === 0;
     checks.push({
       name: "forbidden_side_effects",
       ok,
       expected: expected.forbidden_side_effects.join(","),
       actual: observed.observed_side_effects.join(",") || "<none>",
-      message: ok
-        ? undefined
-        : `forbidden side effects observed after failure: ${found.join(", ")}`,
+      message: ok ? undefined : `forbidden side effects observed after failure: ${found.join(", ")}`,
     });
   }
 
@@ -152,16 +143,16 @@ function finalize(
   observed: ObservedFailure,
   checks: ExpectedFailureCheck[],
 ): ExpectedFailureReport {
-  return { ok: checks.every((c) => c.ok), expected, observed, checks };
+  return { ok: checks.every((check) => check.ok), expected, observed, checks };
 }
 
 export function formatExpectedFailureReport(report: ExpectedFailureReport): string {
   const lines: string[] = [];
   lines.push(`expected-failure: ${report.ok ? "OK" : "FAILED"}`);
-  for (const c of report.checks) {
-    const status = c.ok ? "PASS" : "FAIL";
-    lines.push(`  ${status} ${c.name} expected=${c.expected} actual=${c.actual}`);
-    if (c.message) lines.push(`       ${c.message}`);
+  for (const check of report.checks) {
+    const status = check.ok ? "PASS" : "FAIL";
+    lines.push(`  ${status} ${check.name} expected=${check.expected} actual=${check.actual}`);
+    if (check.message) lines.push(`       ${check.message}`);
   }
   return lines.join("\n");
 }

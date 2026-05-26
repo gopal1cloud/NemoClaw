@@ -17,6 +17,7 @@ export type ExpectedStateConfig = Record<string, unknown>;
 export interface ResolvedSuite {
   id: string;
   requires_state?: Record<string, unknown>;
+  steps?: Array<Record<string, unknown>>;
 }
 
 export interface ValidatorInput {

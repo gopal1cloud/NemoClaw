@@ -68,7 +68,8 @@ describe("NemoClawInstance manifests", () => {
     const [plan] = compileRunPlans(["ubuntu-repo-cloud-openclaw"]);
 
     expect(plan.manifestPath).toBe("test/e2e/manifests/openclaw-nvidia.yaml");
-    expect(plan.manifest).toEqual(loadManifest(path.join(REPO_ROOT, plan.manifestPath)).document);
+    expect(plan.manifestPath).toBeDefined();
+    expect(plan.manifest).toEqual(loadManifest(path.join(REPO_ROOT, plan.manifestPath as string)).document);
     expect(plan.manifest?.spec.setup.install.source).toBe("repo-current");
     expect(plan.manifest?.spec.onboarding.agent).toBe("openclaw");
     expect(plan.manifest?.spec.onboarding.provider).toBe("nvidia");

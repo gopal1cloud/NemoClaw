@@ -138,6 +138,22 @@ const credentialsSteps = [
     phase: "runtime",
     ref: "test/e2e/validation_suites/security/credentials/00-credentials-present.sh",
   }),
+  shellStep({
+    id: "security.credentials.no-plaintext-host-store",
+    phase: "runtime",
+    ref: "test/e2e/validation_suites/security/credentials/01-no-plaintext-host-store.sh",
+  }),
+];
+
+const baselineOnboardingSteps = [
+  shellStep({ id: "baseline.cli-and-openshell", phase: "runtime", ref: "test/e2e/validation_suites/baseline-onboarding/00-cli-and-openshell.sh" }),
+  shellStep({ id: "baseline.sandbox-state", phase: "runtime", ref: "test/e2e/validation_suites/baseline-onboarding/01-sandbox-state.sh" }),
+  shellStep({ id: "baseline.route-and-smoke", phase: "runtime", ref: "test/e2e/validation_suites/baseline-onboarding/02-route-and-smoke.sh" }),
+];
+
+const onboardingStateSteps = [
+  shellStep({ id: "onboarding.state.registry", phase: "runtime", ref: "test/e2e/validation_suites/onboarding/state/00-registry-provider-model-policies.sh" }),
+  shellStep({ id: "onboarding.state.session", phase: "runtime", ref: "test/e2e/validation_suites/onboarding/state/01-session-provider-model-policies.sh" }),
 ];
 
 const ollamaSteps = [
@@ -184,25 +200,54 @@ export const validationSuiteGroups: AssertionGroup[] = [
   suiteGroup("cloud-inference", cloudInferenceSteps),
   suiteGroup("local-ollama-inference", ollamaSteps),
   suiteGroup("ollama-proxy", ollamaProxySteps),
-  suiteGroup("ollama-auth-proxy", ollamaProxySteps),
+  suiteGroup("ollama-auth-proxy", [
+    ...ollamaProxySteps,
+    shellStep({ id: "runtime.ollama-auth-proxy.auth-enforcement", phase: "runtime", ref: "test/e2e/validation_suites/inference/ollama-auth-proxy/01-auth-enforcement.sh" }),
+  ]),
+  suiteGroup("baseline-onboarding", baselineOnboardingSteps),
+  suiteGroup("onboarding-state", onboardingStateSteps),
+  suiteGroup("model-router", [
+    shellStep({ id: "runtime.model-router.healthy-endpoint", phase: "runtime", ref: "test/e2e/validation_suites/inference/model-router/00-healthy-endpoint.sh" }),
+    shellStep({ id: "runtime.model-router.provider-routed-completion", phase: "runtime", ref: "test/e2e/validation_suites/inference/model-router/01-provider-routed-completion.sh" }),
+  ]),
   suiteGroup("openai-compatible-inference", cloudInferenceSteps),
   suiteGroup("inference-routing", cloudInferenceSteps),
   suiteGroup("inference-switch", cloudInferenceSteps),
-  suiteGroup("kimi-compatibility", [probeStep("runtime.kimi.compatibility", "runtime", "kimiCompatibilityProbe", { timeoutSeconds: 30, retry: { attempts: 2, on: ["model-toolcall-transient"] } })]),
+  suiteGroup("kimi-compatibility", [
+    shellStep({ id: "runtime.kimi.plugin-wiring", phase: "runtime", ref: "test/e2e/validation_suites/inference/kimi-compatibility/00-plugin-wiring.sh", reliability: { timeoutSeconds: 30, retry: { attempts: 2, on: ["model-toolcall-transient"] } } }),
+    shellStep({ id: "runtime.kimi.compatible-models-route", phase: "runtime", ref: "test/e2e/validation_suites/inference/kimi-compatibility/01-kimi-compatible-models-route.sh", reliability: { timeoutSeconds: 30, retry: { attempts: 2, on: ["model-toolcall-transient"] } } }),
+  ]),
   suiteGroup("credentials", credentialsSteps),
   suiteGroup("security-credentials", credentialsSteps),
   suiteGroup("security-shields", [probeStep("security.shields.config", "runtime", "shieldsConfigProbe")]),
   suiteGroup("security-policy", [probeStep("security.policy.enforced", "runtime", "networkPolicyProbe")]),
   suiteGroup("security-injection", [probeStep("security.injection.blocked", "runtime", "injectionBlockedProbe")]),
-  suiteGroup("messaging-telegram", [probeStep("messaging.telegram.bridge", "runtime", "telegramBridgeProbe", { timeoutSeconds: 30, retry: { attempts: 2, on: ["external-tunnel"] } })]),
-  suiteGroup("messaging-discord", [probeStep("messaging.discord.bridge", "runtime", "discordBridgeProbe", { timeoutSeconds: 30, retry: { attempts: 2, on: ["external-tunnel"] } })]),
-  suiteGroup("messaging-slack", [probeStep("messaging.slack.bridge", "runtime", "slackBridgeProbe", { timeoutSeconds: 30, retry: { attempts: 2, on: ["external-tunnel"] } })]),
-  suiteGroup("messaging-token-rotation", [probeStep("messaging.token-rotation", "runtime", "messagingTokenRotationProbe")]),
-  suiteGroup("sandbox-lifecycle", [probeStep("lifecycle.sandbox.lifecycle", "runtime", "sandboxLifecycleProbe")]),
-  suiteGroup("sandbox-operations", [probeStep("lifecycle.sandbox.operations", "runtime", "sandboxOperationsProbe")]),
-  suiteGroup("snapshot", [probeStep("lifecycle.snapshot", "runtime", "snapshotProbe")]),
-  suiteGroup("rebuild", [probeStep("lifecycle.rebuild", "runtime", "rebuildProbe", { timeoutSeconds: 120, retry: { attempts: 2, on: ["runner-infra"] } })]),
-  suiteGroup("upgrade", [probeStep("lifecycle.upgrade", "runtime", "upgradeProbe", { timeoutSeconds: 120, retry: { attempts: 2, on: ["wrong-installed-ref"] } })]),
+  suiteGroup("messaging-telegram", [
+    shellStep({ id: "messaging.telegram.injection-safety", phase: "runtime", ref: "test/e2e/validation_suites/messaging/telegram/00-telegram-injection-safety.sh", reliability: { timeoutSeconds: 30, retry: { attempts: 2, on: ["external-tunnel"] } } }),
+    shellStep({ id: "messaging.telegram.injection-payload-classes", phase: "runtime", ref: "test/e2e/validation_suites/messaging/telegram/01-telegram-injection-payload-classes.sh", reliability: { timeoutSeconds: 30, retry: { attempts: 2, on: ["external-tunnel"] } } }),
+  ]),
+  suiteGroup("messaging-discord", [shellStep({ id: "messaging.discord.gateway-path", phase: "runtime", ref: "test/e2e/validation_suites/messaging/discord/00-discord-gateway-path.sh", reliability: { timeoutSeconds: 30, retry: { attempts: 2, on: ["external-tunnel"] } } })]),
+  suiteGroup("messaging-slack", [shellStep({ id: "messaging.slack.provider-state", phase: "runtime", ref: "test/e2e/validation_suites/messaging/slack/00-slack-provider-state.sh", reliability: { timeoutSeconds: 30, retry: { attempts: 2, on: ["external-tunnel"] } } })]),
+  suiteGroup("messaging-token-rotation", [shellStep({ id: "messaging.token-rotation", phase: "runtime", ref: "test/e2e/validation_suites/messaging/token-rotation/00-provider-rotation-isolated.sh" })]),
+  suiteGroup("sandbox-lifecycle", [
+    shellStep({ id: "lifecycle.sandbox.gateway-health", phase: "runtime", ref: "test/e2e/validation_suites/sandbox/lifecycle/00-gateway-health.sh" }),
+    shellStep({ id: "lifecycle.sandbox.gateway-recovery", phase: "runtime", ref: "test/e2e/validation_suites/sandbox/lifecycle/01-gateway-recovery.sh" }),
+  ]),
+  suiteGroup("sandbox-operations", [
+    shellStep({ id: "lifecycle.sandbox.list-and-status", phase: "runtime", ref: "test/e2e/validation_suites/sandbox/operations/00-list-and-status.sh" }),
+    shellStep({ id: "lifecycle.sandbox.logs-and-exec", phase: "runtime", ref: "test/e2e/validation_suites/sandbox/operations/01-logs-and-exec.sh" }),
+  ]),
+  suiteGroup("snapshot", [shellStep({ id: "lifecycle.snapshot.create-list-restore", phase: "runtime", ref: "test/e2e/validation_suites/sandbox/snapshot/00-create-list-restore.sh" })]),
+  suiteGroup("snapshot-lifecycle", [shellStep({ id: "lifecycle.snapshot.create-list-restore", phase: "runtime", ref: "test/e2e/validation_suites/sandbox/snapshot/00-create-list-restore.sh" })]),
+  suiteGroup("rebuild", [
+    shellStep({ id: "lifecycle.rebuild.state-preserved", phase: "runtime", ref: "test/e2e/validation_suites/rebuild_upgrade/00-state-preserved.sh", reliability: { timeoutSeconds: 120, retry: { attempts: 2, on: ["runner-infra"] } } }),
+    shellStep({ id: "lifecycle.rebuild.agent-version-upgraded", phase: "runtime", ref: "test/e2e/validation_suites/rebuild_upgrade/01-agent-version-upgraded.sh", reliability: { timeoutSeconds: 120, retry: { attempts: 2, on: ["runner-infra"] } } }),
+    shellStep({ id: "lifecycle.rebuild.post-rebuild-inference", phase: "runtime", ref: "test/e2e/validation_suites/rebuild_upgrade/02-post-rebuild-inference.sh", reliability: { timeoutSeconds: 120, retry: { attempts: 2, on: ["runner-infra"] } } }),
+  ]),
+  suiteGroup("upgrade", [
+    shellStep({ id: "lifecycle.upgrade.policy-config-preserved", phase: "runtime", ref: "test/e2e/validation_suites/rebuild_upgrade/03-policy-config-preserved.sh", reliability: { timeoutSeconds: 120, retry: { attempts: 2, on: ["wrong-installed-ref"] } } }),
+    shellStep({ id: "lifecycle.upgrade.survivor-reachable", phase: "runtime", ref: "test/e2e/validation_suites/rebuild_upgrade/04-upgrade-survivor-reachable.sh", reliability: { timeoutSeconds: 120, retry: { attempts: 2, on: ["wrong-installed-ref"] } } }),
+  ]),
   suiteGroup("diagnostics", [probeStep("diagnostics.bundle", "runtime", "diagnosticsProbe")]),
   suiteGroup("docs-validation", [probeStep("docs.validation", "runtime", "docsValidationProbe")]),
   suiteGroup("hermes-specific", [shellStep({ id: "runtime.hermes.health", phase: "runtime", ref: "test/e2e/validation_suites/hermes/00-hermes-health.sh", reliability: { timeoutSeconds: 30, retry: { attempts: 2, on: ["gateway-transient"] } } })]),

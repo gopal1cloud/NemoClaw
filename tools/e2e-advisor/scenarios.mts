@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 
 import { getChangedFiles } from "../advisors/git.mts";
 import { parseArgs, writeJson } from "../advisors/io.mts";
+import { listScenarios } from "../../test/e2e/scenarios/registry.ts";
 
 const SCENARIO_WORKFLOW = "e2e-scenarios.yaml";
 const SCENARIO_ALL_WORKFLOW = "e2e-scenarios-all.yaml";
@@ -278,17 +279,16 @@ export function renderScenarioSummary(result: ScenarioAdvisorResult): string {
   return `${lines.join("\n")}\n`;
 }
 
-function loadScenarios(root: string): Record<string, ScenarioEntry> {
-  const filePath = path.join(
-    root,
-    "test/e2e/nemoclaw_scenarios/scenarios.yaml",
+function loadScenarios(_root: string): Record<string, ScenarioEntry> {
+  return Object.fromEntries(
+    listScenarios().map((scenario) => [
+      scenario.id,
+      {
+        suites: scenario.suiteIds ?? [],
+        runner_requirements: scenario.runnerRequirements ?? [],
+      },
+    ]),
   );
-  if (!fs.existsSync(filePath)) return {};
-  const text = fs.readFileSync(filePath, "utf8");
-  return {
-    ...parseScenarioSection(text, "test_plans"),
-    ...parseScenarioSection(text, "setup_scenarios"),
-  };
 }
 
 function loadSuiteScriptMap(root: string): Record<string, string[]> {

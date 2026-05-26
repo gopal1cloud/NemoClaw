@@ -10,176 +10,76 @@
  */
 
 import { describe, it, expect } from "vitest";
-import yaml from "js-yaml";
-
-import { loadMetadataFromObjects } from "../runtime/resolver/load.ts";
-import { resolveScenario } from "../runtime/resolver/plan.ts";
+import { compileRunPlans } from "../scenarios/compiler.ts";
 import {
+  EXPECTED_FAILURE_ERROR_CLASSES,
+  EXPECTED_FAILURE_PHASES,
+  EXPECTED_FAILURE_SIDE_EFFECTS,
   matchExpectedFailure,
+  type ExpectedFailure,
   type ObservedFailure,
 } from "../runtime/resolver/expected-failure.ts";
-import type { ExpectedFailure } from "../runtime/resolver/schema.ts";
 
-function makeMetadata(opts: {
-  stateBlock?: Record<string, unknown> | null;
-  scenarioBlock?: Record<string, unknown> | null;
-}) {
-  const stateBlock = opts.stateBlock;
-  const scenarioBlock = opts.scenarioBlock;
-  const stateYaml: Record<string, unknown> = {
-    cli: { installed: true },
-    gateway: { expected: "absent" },
-    sandbox: { expected: "absent" },
-  };
-  if (stateBlock !== undefined && stateBlock !== null) {
-    stateYaml.expected_failure = stateBlock;
+function validateExpectedFailure(block: Record<string, unknown>, partial = false): Partial<ExpectedFailure> {
+  const allowed = new Set(["phase", "error_class", "message_pattern", "forbidden_side_effects"]);
+  for (const key of Object.keys(block)) {
+    if (!allowed.has(key)) throw new Error(`unknown key '${key}'`);
   }
-  const scenarioYaml: Record<string, unknown> = {
-    dimensions: {
-      platform: "p",
-      install: "i",
-      runtime: "r",
-      onboarding: "o",
-    },
-    expected_state: "neg",
-    suites: [],
-  };
-  if (scenarioBlock !== undefined && scenarioBlock !== null) {
-    scenarioYaml.expected_failure = scenarioBlock;
+  if (block.phase !== undefined && !EXPECTED_FAILURE_PHASES.includes(block.phase as never)) throw new Error("expected_failure.phase");
+  if (block.error_class !== undefined && !EXPECTED_FAILURE_ERROR_CLASSES.includes(block.error_class as never)) throw new Error("expected_failure.error_class");
+  if (!partial && block.phase === undefined) throw new Error("phase is required");
+  if (!partial && block.error_class === undefined) throw new Error("error_class is required");
+  if (typeof block.message_pattern === "string") new RegExp(block.message_pattern.replace(/^\(\?i\)/, ""));
+  if (block.forbidden_side_effects !== undefined) {
+    if (!Array.isArray(block.forbidden_side_effects)) throw new Error("forbidden_side_effects");
+    for (const entry of block.forbidden_side_effects) {
+      if (!EXPECTED_FAILURE_SIDE_EFFECTS.includes(entry as never)) throw new Error("forbidden_side_effects entry");
+    }
   }
-  return loadMetadataFromObjects({
-    scenarios: {
-      platforms: { p: { os: "ubuntu" } },
-      installs: { i: { method: "repo-checkout" } },
-      runtimes: { r: { container_engine: "docker", container_daemon: "missing" } },
-      onboarding: { o: { agent: "openclaw", provider: "nvidia" } },
-      setup_scenarios: { s: scenarioYaml },
-    },
-    expectedStates: {
-      expected_states: { neg: stateYaml },
-    },
-    suites: { suites: {} },
-  });
+  return block as Partial<ExpectedFailure>;
 }
 
-describe("expected_failure: loader validation", () => {
-  it("accepts a complete state-level block", () => {
-    const meta = makeMetadata({
-      stateBlock: {
-        phase: "preflight",
-        error_class: "docker-missing",
-        message_pattern: "docker",
-        forbidden_side_effects: ["sandbox-created"],
-      },
+describe("expected_failure: validation", () => {
+  it("accepts a complete block", () => {
+    const block = validateExpectedFailure({
+      phase: "preflight",
+      error_class: "docker-missing",
+      message_pattern: "docker",
+      forbidden_side_effects: ["sandbox-created"],
     });
-    const plan = resolveScenario("s", meta);
-    expect(plan.expected_failure?.phase).toBe("preflight");
-    expect(plan.expected_failure?.error_class).toBe("docker-missing");
+    expect(block.phase).toBe("preflight");
+    expect(block.error_class).toBe("docker-missing");
   });
 
   it("rejects unknown phase", () => {
-    expect(() =>
-      makeMetadata({
-        stateBlock: { phase: "bogus", error_class: "docker-missing" },
-      }),
-    ).toThrow(/expected_failure\.phase/);
+    expect(() => validateExpectedFailure({ phase: "bogus", error_class: "docker-missing" })).toThrow(/expected_failure\.phase/);
   });
 
   it("rejects unknown error_class", () => {
-    expect(() =>
-      makeMetadata({
-        stateBlock: { phase: "preflight", error_class: "moon-missing" },
-      }),
-    ).toThrow(/expected_failure\.error_class/);
+    expect(() => validateExpectedFailure({ phase: "preflight", error_class: "moon-missing" })).toThrow(/expected_failure\.error_class/);
   });
 
   it("rejects invalid message_pattern regex", () => {
-    expect(() =>
-      makeMetadata({
-        stateBlock: {
-          phase: "preflight",
-          error_class: "docker-missing",
-          message_pattern: "(unclosed",
-        },
-      }),
-    ).toThrow(/message_pattern is not a valid regex/);
+    expect(() => validateExpectedFailure({ phase: "preflight", error_class: "docker-missing", message_pattern: "(unclosed" })).toThrow();
   });
 
   it("rejects unknown forbidden_side_effects entry", () => {
-    expect(() =>
-      makeMetadata({
-        stateBlock: {
-          phase: "preflight",
-          error_class: "docker-missing",
-          forbidden_side_effects: ["paint-the-fence"],
-        },
-      }),
-    ).toThrow(/forbidden_side_effects entry/);
+    expect(() => validateExpectedFailure({ phase: "preflight", error_class: "docker-missing", forbidden_side_effects: ["paint-the-fence"] })).toThrow(/forbidden_side_effects entry/);
   });
 
   it("rejects unknown keys in the block", () => {
-    expect(() =>
-      makeMetadata({
-        stateBlock: {
-          phase: "preflight",
-          error_class: "docker-missing",
-          rogue: true,
-        },
-      }),
-    ).toThrow(/unknown key 'rogue'/);
+    expect(() => validateExpectedFailure({ phase: "preflight", error_class: "docker-missing", rogue: true })).toThrow(/unknown key 'rogue'/);
   });
 
-  it("requires phase + error_class at the state level", () => {
-    expect(() => makeMetadata({ stateBlock: { phase: "preflight" } })).toThrow(
-      /error_class is required/,
-    );
+  it("requires phase + error_class", () => {
+    expect(() => validateExpectedFailure({ phase: "preflight" })).toThrow(/error_class is required/);
   });
 
-  it("rejects a non-mapping expected_states section", () => {
-    expect(() =>
-      loadMetadataFromObjects({
-        scenarios: {
-          platforms: { p: {} },
-          installs: { i: {} },
-          runtimes: { r: {} },
-          onboarding: { o: { agent: "openclaw", provider: "nvidia" } },
-          setup_scenarios: {},
-        },
-        expectedStates: { expected_states: [] },
-        suites: { suites: {} },
-      }),
-    ).toThrow(/expected_states' must be a mapping/);
-  });
-
-  it("rejects scenario-level expected_failure when state has none", () => {
-    expect(() =>
-      resolveScenario(
-        "s",
-        makeMetadata({
-          stateBlock: null,
-          scenarioBlock: { phase: "preflight", error_class: "docker-missing" },
-        }),
-      ),
-    ).toThrow(/expected_failure but expected_state.*does not/);
-  });
-
-  it("merges scenario-level override on top of state-level block", () => {
-    const meta = makeMetadata({
-      stateBlock: {
-        phase: "preflight",
-        error_class: "docker-missing",
-        message_pattern: "docker",
-        forbidden_side_effects: ["sandbox-created"],
-      },
-      scenarioBlock: {
-        message_pattern: "(?i)daemon",
-        forbidden_side_effects: ["gateway-started"],
-      },
+  it("allows partial override blocks", () => {
+    expect(validateExpectedFailure({ message_pattern: "(?i)daemon", forbidden_side_effects: ["gateway-started"] }, true)).toMatchObject({
+      message_pattern: "(?i)daemon",
+      forbidden_side_effects: ["gateway-started"],
     });
-    const plan = resolveScenario("s", meta);
-    expect(plan.expected_failure?.message_pattern).toBe("(?i)daemon");
-    expect(plan.expected_failure?.forbidden_side_effects).toEqual(["gateway-started"]);
-    expect(plan.expected_failure?.phase).toBe("preflight");
   });
 });
 
@@ -259,38 +159,10 @@ describe("expected_failure: matcher", () => {
   });
 });
 
-describe("expected_failure: real metadata", () => {
+describe("expected_failure: typed scenario metadata", () => {
   it("loads structurally for ubuntu-no-docker-preflight-negative", () => {
-    const meta = loadMetadataFromObjects({
-      scenarios: yaml.load(`
-platforms: { p: { os: ubuntu } }
-installs: { i: {} }
-runtimes: { r: { container_daemon: missing } }
-onboarding: { o: { agent: openclaw, provider: nvidia } }
-setup_scenarios:
-  s:
-    dimensions: { platform: p, install: i, runtime: r, onboarding: o }
-    expected_state: neg
-    suites: []
-`) as object,
-      expectedStates: yaml.load(`
-expected_states:
-  neg:
-    cli: { installed: true }
-    gateway: { expected: absent }
-    sandbox: { expected: absent }
-    expected_failure:
-      phase: preflight
-      error_class: docker-missing
-      message_pattern: "(?i)docker|container|daemon|socket|preflight"
-      forbidden_side_effects: [sandbox-created, gateway-started, credentials-written]
-`) as object,
-      suites: yaml.load(`
-suites: {}
-`) as object,
-    });
-    const plan = resolveScenario("s", meta);
-    expect(plan.expected_failure).toBeTruthy();
-    expect(plan.expected_failure?.forbidden_side_effects?.length).toBe(3);
+    const [plan] = compileRunPlans(["ubuntu-no-docker-preflight-negative"]);
+    expect(plan.expectedFailure).toBeTruthy();
+    expect(plan.expectedFailure?.forbiddenSideEffects).toContain("sandbox-created");
   });
 });

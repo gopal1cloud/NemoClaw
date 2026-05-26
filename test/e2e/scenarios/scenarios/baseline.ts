@@ -151,7 +151,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     manifestName: "openclaw-nvidia-telegram",
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-telegram"),
     expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke"],
+    suiteIds: ["smoke", "messaging-telegram"],
     requiredSecrets: ["NVIDIA_API_KEY", "TELEGRAM_BOT_TOKEN"],
   },
   {
@@ -159,7 +159,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     manifestName: "openclaw-nvidia-discord",
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-discord"),
     expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke"],
+    suiteIds: ["smoke", "messaging-discord"],
     requiredSecrets: ["NVIDIA_API_KEY", "DISCORD_BOT_TOKEN"],
   },
   {
@@ -167,7 +167,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     manifestName: "openclaw-nvidia-slack",
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-slack"),
     expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke"],
+    suiteIds: ["smoke", "messaging-slack"],
     requiredSecrets: ["NVIDIA_API_KEY", "SLACK_BOT_TOKEN"],
   },
   {
@@ -223,8 +223,44 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     manifestName: "openclaw-nvidia-token-rotation",
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-token-rotation"),
     expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke"],
+    suiteIds: ["smoke", "messaging-token-rotation"],
     requiredSecrets: ["NVIDIA_API_KEY"],
+  },
+  {
+    id: "ubuntu-repo-cloud-openclaw-custom-policies",
+    manifestName: "openclaw-nvidia-custom-policies",
+    environment: ubuntuRepoDocker("cloud-openclaw-custom-policies"),
+    expectedStateId: "cloud-openclaw-custom-policies-ready",
+    suiteIds: ["smoke", "inference", "credentials", "onboarding-state", "baseline-onboarding", "model-router", "snapshot-lifecycle"],
+    requiredSecrets: ["NVIDIA_API_KEY"],
+  },
+  {
+    id: "ubuntu-invalid-nvidia-key-negative",
+    manifestName: "openclaw-nvidia-invalid-key",
+    environment: ubuntuRepoDocker("cloud-openclaw-invalid-nvidia-key"),
+    expectedStateId: "onboarding-failure-invalid-nvidia-key",
+    onboardingAssertionIds: ["base-installed"],
+    suiteIds: [],
+    requiredSecrets: ["NVIDIA_API_KEY"],
+    expectedFailure: {
+      phase: "onboarding",
+      errorClass: "invalid-nvidia-api-key",
+      forbiddenSideEffects: ["gateway-started", "sandbox-created"],
+    },
+  },
+  {
+    id: "ubuntu-gateway-port-conflict-negative",
+    manifestName: "openclaw-nvidia-gateway-port-conflict",
+    environment: ubuntuRepoDocker("cloud-openclaw-gateway-port-conflict"),
+    expectedStateId: "onboarding-failure-gateway-port-conflict",
+    onboardingAssertionIds: ["base-installed"],
+    suiteIds: [],
+    requiredSecrets: ["NVIDIA_API_KEY"],
+    expectedFailure: {
+      phase: "onboarding",
+      errorClass: "gateway-port-conflict",
+      forbiddenSideEffects: ["gateway-started", "sandbox-created"],
+    },
   },
 ];
 
