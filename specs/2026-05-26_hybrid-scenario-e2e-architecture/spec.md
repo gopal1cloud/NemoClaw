@@ -936,7 +936,7 @@ Update coverage and reporting so maintainers can see scenario, manifest, asserti
 - GitHub Step Summary includes the new coverage summary.
 - Obsolete parity assets are deleted; any retained assets validate current architecture only.
 
-## Phase 9: Delete YAML-First Scenario Resolver
+## Phase 9: Delete YAML-First Scenario Resolver [COMPLETED: 4eca7f00c]
 
 Delete the old YAML-first scenario source of truth and make the hybrid architecture the only supported runtime model.
 
