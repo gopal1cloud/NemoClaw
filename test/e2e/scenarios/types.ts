@@ -67,6 +67,9 @@ export interface AssertionGroup {
   id: string;
   phase: PhaseName;
   description?: string;
+  suiteId?: string;
+  onboardingAssertionId?: string;
+  migrationStatus?: "complete" | "pending";
   steps: AssertionStep[];
 }
 

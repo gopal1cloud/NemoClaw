@@ -1,9 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { environmentBaseline } from "../assertions/environment.ts";
-import { onboardingBaseline } from "../assertions/onboarding.ts";
-import { runtimeSmokeSkeleton } from "../assertions/runtime.ts";
+import { assertionGroupsForScenario } from "../assertions/registry.ts";
 import { scenario } from "../builder.ts";
 import {
   brevLaunchableRemote,
@@ -13,13 +11,7 @@ import {
   ubuntuRepoNoDocker,
   wslRepoDocker,
 } from "../matrix.ts";
-import type { AssertionGroup, ScenarioDefinition, ScenarioEnvironment } from "../types.ts";
-
-const skeletonAssertions = (): AssertionGroup[] => [
-  environmentBaseline(),
-  onboardingBaseline(),
-  runtimeSmokeSkeleton(),
-];
+import type { ScenarioDefinition, ScenarioEnvironment } from "../types.ts";
 
 interface CanonicalScenarioInput {
   id: string;
@@ -42,8 +34,9 @@ function canonicalScenario(input: CanonicalScenarioInput): ScenarioDefinition {
     .environment(input.environment)
     .expectedState(input.expectedStateId)
     .onboardingAssertions(input.onboardingAssertionIds ?? ["base-installed", "preflight-passed"])
-    .suites(input.suiteIds)
-    .assertions(skeletonAssertions());
+    .suites(input.suiteIds);
+
+  builder = builder.assertions(assertionGroupsForScenario(builder.build()));
 
   if (input.runnerRequirements) {
     builder = builder.runnerRequirements(input.runnerRequirements);
