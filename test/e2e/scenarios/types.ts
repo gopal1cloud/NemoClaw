@@ -19,9 +19,26 @@ export interface NemoClawInstanceManifest {
     name: string;
   };
   spec: {
-    setup: Record<string, unknown>;
-    onboarding: Record<string, unknown>;
-    state?: Record<string, unknown>;
+    setup: {
+      install: Record<string, unknown>;
+      runtime: Record<string, unknown>;
+      platform: Record<string, unknown>;
+    };
+    onboarding: {
+      agent: string;
+      provider: string;
+      modelRoute?: string;
+      policyTier?: string;
+      messaging?: string[];
+      features?: Record<string, unknown>;
+      lifecycle?: string;
+      gateway?: Record<string, unknown>;
+    };
+    state?: {
+      workspaceRef?: string;
+      credentialRefs?: string[];
+      [key: string]: unknown;
+    };
   };
 }
 
@@ -75,6 +92,7 @@ export interface RunPlan {
   status: "skeleton" | "compiled";
   note?: string;
   manifestPath?: string;
+  manifest?: NemoClawInstanceManifest;
   phases: RunPlanPhase[];
   runnerRequirements: string[];
   skippedCapabilities: Array<Record<string, unknown>>;
