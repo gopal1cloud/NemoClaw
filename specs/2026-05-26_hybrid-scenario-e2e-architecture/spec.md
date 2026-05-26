@@ -959,7 +959,7 @@ Delete the old YAML-first scenario source of truth and make the hybrid architect
 - No duplicate source of truth remains for suite/assertion composition.
 - Old shell entrypoints and workflow inputs are gone or fail with a message pointing to `test/e2e/scenarios/run.ts`.
 
-## Phase 10: Clean the House
+## Phase 10: Clean the House [COMPLETED: 80e2a48f6]
 
 Remove dead code, update docs, and make the hybrid architecture the documented default.
 
