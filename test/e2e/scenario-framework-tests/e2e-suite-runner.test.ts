@@ -100,6 +100,44 @@ describe("Issue #3810 messaging suite wiring", () => {
   });
 });
 
+
+describe("Issue #3816 platform remote GPU suites", () => {
+  it("test_should_emit_gpu_ollama_and_proxy_and_reonboard_assertion_ids_in_dry_run", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-platform-gpu-"));
+    try {
+      seedContext(tmp, {
+        ...fullContext(),
+        E2E_SCENARIO: "gpu-repo-local-ollama-openclaw",
+        E2E_PROVIDER: "ollama",
+        E2E_PLATFORM_OS: "ubuntu",
+        E2E_PROXY_URL: "http://127.0.0.1:11435",
+        E2E_PROXY_TOKEN_PATH: path.join(tmp, "token"),
+      });
+      const r = runSuites([
+        "platform-remote-gpu-ollama",
+        "platform-remote-ollama-proxy",
+        "platform-remote-gpu-cleanup",
+        "platform-remote-gpu-reonboard",
+      ], { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" });
+      expect(r.status, `stderr:${r.stderr}\nstdout:${r.stdout}`).toBe(0);
+      for (const id of [
+        "expected.platform_remote.prereq.docker-running.gpu",
+        "expected.platform_remote.gpu.proof-nvidia-smi",
+        "expected.platform_remote.gpu.sandbox-inference-local-pong",
+        "expected.platform_remote.ollama_proxy.token-mode-600",
+        "expected.platform_remote.ollama_proxy.docker-gpu-topology-skip",
+        "expected.platform_remote.cleanup.uninstall-delete-models",
+        "expected.platform_remote.reonboard.first-token-accepted",
+        "expected.platform_remote.reonboard.second-sandbox-inference-pong-not-401",
+      ]) {
+        expect(r.stdout).toContain(id);
+      }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("run-suites.sh", () => {
   it("security_credentials_suite_should_emit_stable_assertion_ids", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-security-credentials-"));

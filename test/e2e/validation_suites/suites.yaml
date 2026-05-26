@@ -268,3 +268,32 @@ suites:
     steps:
     - id: telegram-message-not-shell-executed
       script: security/injection/00-telegram-message-not-shell-executed.sh
+
+  platform-remote-gpu-ollama:
+    requires_state:
+      sandbox.status: running
+      inference.provider: ollama
+    steps:
+    - id: gpu-ollama-assertions
+      script: platform_remote/gpu-ollama/00-gpu-ollama-assertions.sh
+  platform-remote-ollama-proxy:
+    requires_state:
+      sandbox.status: running
+      inference.provider: ollama
+    steps:
+    - id: ollama-proxy-assertions
+      script: platform_remote/ollama-proxy/00-ollama-proxy-assertions.sh
+  platform-remote-gpu-cleanup:
+    requires_state:
+      sandbox.status: running
+      inference.provider: ollama
+    steps:
+    - id: cleanup-assertions
+      script: platform_remote/gpu-cleanup/00-cleanup-assertions.sh
+  platform-remote-gpu-reonboard:
+    requires_state:
+      sandbox.status: running
+      inference.provider: ollama
+    steps:
+    - id: reonboard-assertions
+      script: platform_remote/gpu-reonboard/00-reonboard-assertions.sh

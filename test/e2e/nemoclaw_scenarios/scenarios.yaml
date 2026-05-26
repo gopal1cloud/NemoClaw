@@ -132,9 +132,22 @@ setup_scenarios:
       onboarding: local-ollama-openclaw
     expected_state: local-ollama-openclaw-ready
     suites:
-    - smoke
-    - local-ollama-inference
-    - ollama-proxy
+    - platform-remote-gpu-ollama
+    - platform-remote-ollama-proxy
+    - platform-remote-gpu-cleanup
+    runner_requirements:
+    - self-hosted-gpu
+    - docker-cdi
+  gpu-repo-local-ollama-openclaw-reonboard:
+    alias_for_plan: gpu-repo-docker-cdi__local-ollama-openclaw-reonboard
+    dimensions:
+      platform: gpu-runner
+      install: repo-current
+      runtime: gpu-docker-cdi
+      onboarding: local-ollama-openclaw
+    expected_state: local-ollama-openclaw-ready
+    suites:
+    - platform-remote-gpu-reonboard
     runner_requirements:
     - self-hosted-gpu
     - docker-cdi
@@ -384,9 +397,18 @@ test_plans:
     - base-installed
     - preflight-passed
     suites:
-    - smoke
-    - local-ollama-inference
-    - ollama-proxy
+    - platform-remote-gpu-ollama
+    - platform-remote-ollama-proxy
+    - platform-remote-gpu-cleanup
+  gpu-repo-docker-cdi__local-ollama-openclaw-reonboard:
+    base: gpu-repo-docker-cdi
+    onboarding: local-ollama-openclaw
+    expected_state: local-ollama-openclaw-ready
+    onboarding_assertions:
+    - base-installed
+    - preflight-passed
+    suites:
+    - platform-remote-gpu-reonboard
   macos-repo-docker__cloud-nvidia-openclaw:
     base: macos-repo-docker
     onboarding: cloud-nvidia-openclaw

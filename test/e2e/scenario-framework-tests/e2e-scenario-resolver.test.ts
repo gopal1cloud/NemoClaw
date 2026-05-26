@@ -66,6 +66,22 @@ describe("E2E scenario resolver", () => {
     });
   });
 
+
+
+  it("should_resolve_gpu_platform_remote_scenarios", () => {
+    const meta = realMetadata();
+    const gpu = resolveScenario("gpu-repo-local-ollama-openclaw", meta);
+    expect(gpu.suites.map((s) => s.id)).toEqual(expect.arrayContaining([
+      "platform-remote-gpu-ollama",
+      "platform-remote-ollama-proxy",
+      "platform-remote-gpu-cleanup",
+    ]));
+    expect(gpu.runner_requirements).toEqual(expect.arrayContaining(["self-hosted-gpu", "docker-cdi"]));
+    const reonboard = resolveScenario("gpu-repo-local-ollama-openclaw-reonboard", meta);
+    expect(reonboard.suites.map((s) => s.id)).toContain("platform-remote-gpu-reonboard");
+    expect(reonboard.runner_requirements).toEqual(expect.arrayContaining(["self-hosted-gpu", "docker-cdi"]));
+  });
+
   it("should_fail_for_unknown_scenario", () => {
     const meta = realMetadata();
     expect(() => resolveScenario("does-not-exist", meta)).toThrow(/does-not-exist/);
