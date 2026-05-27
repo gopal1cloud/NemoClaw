@@ -44,7 +44,10 @@ function runLegacyFakeSshTransport(
 
   const sshBin = process.env.NEMOCLAW_GRPC_TEST_FAKE_SSH_BIN || "ssh";
   const remoteCommand = legacyFakeRemoteCommand(request.argv);
-  const result = spawnSync(sshBin, [`openshell-${request.sandboxName}`, remoteCommand], {
+  const helperArgs = [`openshell-${request.sandboxName}`, remoteCommand];
+  const helperCommand = /\.(?:c|m)?js$/i.test(sshBin) ? process.execPath : sshBin;
+  const helperArgv = helperCommand === process.execPath ? [sshBin, ...helperArgs] : helperArgs;
+  const result = spawnSync(helperCommand, helperArgv, {
     input,
     timeout:
       request.opts?.timeoutMs && request.opts.timeoutMs > 0

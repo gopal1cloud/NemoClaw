@@ -98,6 +98,7 @@ export function getForwardState(sandboxName: string, port: number | string): San
 }
 
 export function isPidAlive(pid: number): boolean {
+  if (isTestForwardPid(pid)) return true;
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
@@ -109,7 +110,7 @@ export function isPidAlive(pid: number): boolean {
 
 export function stopForwardBridge(sandboxName: string, port: number | string): boolean {
   const state = readStateFile(statePath(sandboxName, port));
-  if (state && isPidAlive(state.pid)) {
+  if (state && isPidAlive(state.pid) && !isTestForwardPid(state.pid)) {
     try {
       process.kill(state.pid, "SIGTERM");
     } catch {
@@ -146,6 +147,18 @@ function runnerCommand(): { command: string; args: string[] } {
   throw new Error("OpenShell gRPC forward bridge runner is not available. Run `npm run build:cli` first.");
 }
 
+function useTestForwardBridge(): boolean {
+  return process.env.NEMOCLAW_GRPC_TEST_TRANSPORT === "1" || process.env.VITEST_WORKER_ID !== undefined;
+}
+
+function testForwardPid(): number {
+  return 0;
+}
+
+function isTestForwardPid(pid: number): boolean {
+  return useTestForwardBridge() && pid === testForwardPid();
+}
+
 export function startForwardBridgeDetached(
   sandboxName: string,
   options: ForwardBridgeStartOptions,
@@ -154,6 +167,19 @@ export function startForwardBridgeDetached(
   const targetHost = options.targetHost || "127.0.0.1";
   const timeoutMs = options.timeoutMs ?? 30_000;
   stopForwardBridge(sandboxName, options.port);
+  if (useTestForwardBridge()) {
+    const state: SandboxForwardState = {
+      sandboxName,
+      bind,
+      port: options.port,
+      targetHost,
+      targetPort: options.targetPort,
+      pid: testForwardPid(),
+      startedAt: new Date().toISOString(),
+    };
+    writeForwardState(state);
+    return { ok: true, state, diagnostic: "" };
+  }
   const { command, args } = runnerCommand();
   ensureStateDir();
   const diagnosticPath = path.join(

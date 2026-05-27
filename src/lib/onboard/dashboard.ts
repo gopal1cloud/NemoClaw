@@ -41,6 +41,7 @@ export interface OnboardDashboardDeps {
   isWsl(): boolean;
   redact(value: unknown): string;
   sleep(seconds: number): void;
+  fetchGatewayAuthTokenFromSandbox?: (sandboxName: string) => string | null;
   printAgentDashboardUi(
     sandboxName: string,
     token: string | null,
@@ -335,7 +336,9 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const showNim = shouldShowNimLine(nimContainer, nimStat.running);
     const nimLabel = nimStat.running ? "running" : "not running";
     const providerLabel = deps.getProviderLabel(provider);
-    const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
+    const token = (deps.fetchGatewayAuthTokenFromSandbox ?? fetchGatewayAuthTokenFromSandbox)(
+      sandboxName,
+    );
     const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
     const chain = buildChain({
       chatUiUrl,

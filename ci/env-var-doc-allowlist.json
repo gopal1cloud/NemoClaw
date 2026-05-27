@@ -32,6 +32,18 @@
     "reason": "Internal installer sentinel exported only during OpenShell gateway replacement so onboard restores the pre-upgrade sandbox backup. Not user-facing."
   },
   {
+    "name": "NEMOCLAW_GRPC_TEST_FAKE_SSH_BIN",
+    "reason": "Vitest-only compatibility shim used by the OpenShell gRPC sync runner to drive existing hermetic fake OpenShell fixtures. Never user-set in production."
+  },
+  {
+    "name": "NEMOCLAW_GRPC_TEST_LEGACY_FAKE_SSH",
+    "reason": "Vitest-only sentinel that enables the OpenShell gRPC sync runner's legacy fake transport while CLI tests migrate away from SSH-shaped fixtures. Never user-set in production."
+  },
+  {
+    "name": "NEMOCLAW_GRPC_TEST_TRANSPORT",
+    "reason": "Vitest-only sentinel that prevents hermetic CLI tests from loading real OpenShell gateway metadata and routes sandbox exec calls through test fixtures. Never user-set in production."
+  },
+  {
     "name": "NEMOCLAW_TEST_NO_SLEEP",
     "reason": "Test sentinel that bypasses real-time sleep() calls in onboard inference probes. Set to '1' only by Vitest tests; never user-set."
   },

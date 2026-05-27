@@ -120,6 +120,9 @@ async function executeSandboxExecCommandForStatus(
   sandboxName: string,
   command: string,
 ): Promise<SandboxCommandResult | null> {
+  if (process.env.NEMOCLAW_GRPC_TEST_TRANSPORT === "1") {
+    return executeSandboxExecCommand(sandboxName, command, OPENSHELL_PROBE_TIMEOUT_MS);
+  }
   const markedCommand = `printf '%s\n' '${SANDBOX_EXEC_STARTED_MARKER}'; ${command}`;
   const client = createSandboxGrpcClient();
   try {

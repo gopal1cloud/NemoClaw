@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type {
@@ -15,6 +16,26 @@ const { getPortConflictServiceHints } = require("../dist/lib/onboard") as {
 const { createOnboardDashboardHelpers } = require("../dist/lib/onboard/dashboard") as {
   createOnboardDashboardHelpers: (deps: OnboardDashboardDeps) => OnboardDashboardHelpers;
 };
+const { listForwardStates, writeForwardState } = require("../dist/lib/adapters/openshell/forward-bridge-state") as {
+  listForwardStates: () => Array<{
+    sandboxName: string;
+    bind: string;
+    port: number;
+    targetHost: string;
+    targetPort: number;
+    pid: number;
+    startedAt: string;
+  }>;
+  writeForwardState: (state: {
+    sandboxName: string;
+    bind: string;
+    port: number;
+    targetHost: string;
+    targetPort: number;
+    pid: number;
+    startedAt: string;
+  }) => void;
+};
 
 describe("onboard dashboard helpers", () => {
   it("prints platform-appropriate service hints for port conflicts", () => {
@@ -26,16 +47,31 @@ describe("onboard dashboard helpers", () => {
   });
 
   it("uses sandbox-scoped forward stops for same-sandbox dashboard cleanup", () => {
-    const forwardList =
-      "SANDBOX BIND PORT PID STATUS\n" +
-      "my-sandbox 127.0.0.1 18789 12345 running\n" +
-      "my-sandbox 127.0.0.1 19000 12346 running";
+    const originalHome = process.env.HOME;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dashboard-forward-state-"));
+    process.env.HOME = home;
+    writeForwardState({
+      sandboxName: "my-sandbox",
+      bind: "127.0.0.1",
+      port: 18789,
+      targetHost: "127.0.0.1",
+      targetPort: 18789,
+      pid: 0,
+      startedAt: new Date().toISOString(),
+    });
+    writeForwardState({
+      sandboxName: "my-sandbox",
+      bind: "127.0.0.1",
+      port: 19000,
+      targetHost: "127.0.0.1",
+      targetPort: 19000,
+      pid: 0,
+      startedAt: new Date().toISOString(),
+    });
     const runOpenshell = vi.fn((_args: string[], _opts?: Record<string, unknown>) => ({
       status: 0,
     }));
-    const runCaptureOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) =>
-      args.join(" ") === "forward list" ? forwardList : "",
-    );
+    const runCaptureOpenshell = vi.fn(() => "");
     const helpers = createOnboardDashboardHelpers({
       runOpenshell,
       runCaptureOpenshell,
@@ -50,37 +86,29 @@ describe("onboard dashboard helpers", () => {
       printAgentDashboardUi: vi.fn(),
     });
 
-    expect(helpers.ensureDashboardForward("my-sandbox", "http://127.0.0.1:18789")).toBe(18789);
-
-    const stopArgs = runOpenshell.mock.calls.map(([args]) => args);
-    expect(stopArgs).toContainEqual(["forward", "stop", "18789", "my-sandbox"]);
-    expect(stopArgs).toContainEqual(["forward", "stop", "19000", "my-sandbox"]);
-    expect(
-      stopArgs.some(
-        (args) =>
-          Array.isArray(args) &&
-          args[0] === "forward" &&
-          args[1] === "stop" &&
-          args.length === 3,
-      ),
-    ).toBe(false);
+    try {
+      expect(helpers.ensureDashboardForward("my-sandbox", "http://127.0.0.1:18789")).toBe(18789);
+      expect(runOpenshell).not.toHaveBeenCalledWith(
+        expect.arrayContaining(["forward", "stop"]),
+        expect.anything(),
+      );
+      expect(listForwardStates()).toMatchObject([
+        {
+          sandboxName: "my-sandbox",
+          port: 18789,
+          targetPort: 18789,
+        },
+      ]);
+    } finally {
+      process.env.HOME = originalHome;
+    }
   });
 
   it("prints the dashboard-url command instead of raw gateway-token guidance", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const nimStatus = vi.fn(() => ({ running: false, container: "nemoclaw-nim-test" }));
     const shouldShowNimLine = vi.fn(() => false);
-    const runOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) => {
-      if (args.join(" ").startsWith("sandbox download ")) {
-        const destDir = args[4];
-        fs.mkdirSync(destDir, { recursive: true });
-        fs.writeFileSync(
-          path.join(destDir, "openclaw.json"),
-          JSON.stringify({ gateway: { auth: { token: "secret-token" } } }),
-        );
-      }
-      return { status: 0 };
-    });
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
     const helpers = createOnboardDashboardHelpers({
       runOpenshell,
       runCaptureOpenshell: vi.fn(() => ""),
@@ -95,6 +123,7 @@ describe("onboard dashboard helpers", () => {
       isWsl: () => false,
       redact: (value: unknown) => String(value),
       sleep: vi.fn(),
+      fetchGatewayAuthTokenFromSandbox: vi.fn(() => "secret-token"),
       printAgentDashboardUi: vi.fn(),
     });
 

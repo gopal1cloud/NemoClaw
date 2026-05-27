@@ -14,6 +14,7 @@ import path from "node:path";
 import { execTimeout } from "./helpers/timeouts";
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
+const GRPC_FAKE_SSH = path.join(import.meta.dirname, "helpers", "grpc-fake-ssh.cjs");
 
 type CliRunResult = { code: number; out: string };
 
@@ -26,6 +27,9 @@ function runCli(args: string, env: Record<string, string | undefined> = {}): Cli
         ...process.env,
         NEMOCLAW_HEALTH_POLL_COUNT: "1",
         NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+        NEMOCLAW_GRPC_TEST_TRANSPORT: "1",
+        NEMOCLAW_GRPC_TEST_LEGACY_FAKE_SSH: "1",
+        NEMOCLAW_GRPC_TEST_FAKE_SSH_BIN: GRPC_FAKE_SSH,
         ...env,
       },
     });
@@ -121,16 +125,29 @@ function makeHealthyVmGatewayEnv(prefix: string): Record<string, string> {
   // VM-driver snapshots should trust gateway metadata, not the legacy cluster
   // container probe.
   writeExecutable(path.join(localBin, "openshell"), [
+    'printf "%s\\n" "$*" >> "$HOME/openshell-calls.log"',
     'case "$1 $2" in',
     '  "gateway info") printf "Gateway Info\\n\\nGateway: nemoclaw\\nGateway endpoint: https://127.0.0.1:8080/\\n"; exit 0 ;;',
     '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
-    '  "sandbox ssh-config") printf "Host openshell-alpha\\n  HostName 127.0.0.1\\n  User sandbox\\n"; exit 0 ;;',
     "esac",
+    'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+    '  printf "Sandbox:\\n\\n  Id: abc\\n  Name: alpha\\n  Namespace: openshell\\n  Phase: Ready\\n"',
+    "  exit 0",
+    "fi",
+    'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+    '  cmd="$8"',
+    '  if printf "%s" "$cmd" | grep -q "awk .!seen"; then',
+    "    exit 0",
+    "  fi",
+    '  if printf "%s" "$cmd" | grep -q "find "; then',
+    "    exit 0",
+    "  fi",
+    "  exit 2",
+    "fi",
     'if [ "$1" = "status" ]; then exit 0; fi',
     "exit 0",
   ]);
 
-  writeExecutable(path.join(localBin, "ssh"), ["exit 0"]);
   writeExecutable(path.join(localBin, "docker"), [
     'if [ "$1" = "inspect" ]; then echo "false"; exit 0; fi',
     "exit 0",
@@ -162,7 +179,9 @@ describe("snapshot VM-driver gateway guard", () => {
   it("snapshot create accepts healthy macOS VM-driver gateways without legacy cluster container", () => {
     const env = makeHealthyVmGatewayEnv("nemoclaw-snap-vm-gw-create-");
     const r = runCli("alpha snapshot create --name baseline", env);
-    expect(r.code).toBe(0);
+    const callsPath = path.join(env.HOME, "openshell-calls.log");
+    const calls = fs.existsSync(callsPath) ? fs.readFileSync(callsPath, "utf-8") : "";
+    expect(r.code, `${r.out}\n--- calls ---\n${calls}`).toBe(0);
     expect(r.out).toContain("Snapshot v1 name=baseline created");
     expect(r.out).not.toContain("Failed to query live sandbox state");
   });

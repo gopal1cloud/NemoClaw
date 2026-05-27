@@ -12,6 +12,7 @@ import { execTimeout, testTimeout, testTimeoutOptions } from "./helpers/timeouts
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
 const HERMES_CLI = path.join(import.meta.dirname, "..", "bin", "nemohermes.js");
+const GRPC_FAKE_SSH = path.join(import.meta.dirname, "helpers", "grpc-fake-ssh.cjs");
 const PARSER_EXIT_CODE = 2;
 
 type CliRunResult = {
@@ -93,6 +94,9 @@ function runWithEnv(
         HOME: "/tmp/nemoclaw-cli-test-" + Date.now(),
         NEMOCLAW_HEALTH_POLL_COUNT: "1",
         NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+        NEMOCLAW_GRPC_TEST_TRANSPORT: "1",
+        NEMOCLAW_GRPC_TEST_LEGACY_FAKE_SSH: "1",
+        NEMOCLAW_GRPC_TEST_FAKE_SSH_BIN: GRPC_FAKE_SSH,
         ...env,
       },
     });
@@ -2638,9 +2642,9 @@ describe("CLI dispatch", () => {
     const log = fs.readFileSync(markerFile, "utf8");
     expect(r.code).toBe(0);
     expect(log).toContain(
-      'sandbox exec -n alpha -- sh -c tail -n 200 /tmp/gateway.log 2>/dev/null | grep -cE "getUpdates conflict|409[[:space:]:]+Conflict" || true',
+      'sandbox exec --name alpha -- sh -c tail -n 200 /tmp/gateway.log 2>/dev/null | grep -cE "getUpdates conflict|409[[:space:]:]+Conflict" || true',
     );
-    expect(log).toContain("sandbox exec -n alpha -- sh -c tail -n 10 /tmp/gateway.log 2>/dev/null");
+    expect(log).toContain("sandbox exec --name alpha -- sh -c tail -n 10 /tmp/gateway.log 2>/dev/null");
     expect(log).not.toContain("sandbox exec alpha sh -c");
   });
 
@@ -3569,7 +3573,7 @@ describe("CLI dispatch", () => {
     expect(fs.existsSync(sshMarkerFile)).toBe(false);
   });
 
-  it("connect --probe-only falls back to SSH when sandbox exec never starts", testTimeoutOptions(15_000), () => {
+  it("connect --probe-only does not fall back to SSH when sandbox exec never starts", testTimeoutOptions(15_000), () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-exec-fallback-"),
     );
@@ -3637,18 +3641,16 @@ describe("CLI dispatch", () => {
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("Probe complete: recovered OpenClaw gateway");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Probe failed: could not inspect the OpenClaw gateway inside sandbox 'alpha'.");
     const openshellLog = fs.readFileSync(openshellCalls, "utf8");
-    const sshLog = fs.readFileSync(sshCalls, "utf8");
     expect(openshellLog).toContain("sandbox exec --name alpha -- sh -c");
-    expect(openshellLog).toContain("sandbox ssh-config alpha");
+    expect(openshellLog).not.toContain("sandbox ssh-config alpha");
     expect(openshellLog).not.toContain("sandbox connect");
-    expect(sshLog).toContain('OPENCLAW="$(command -v openclaw)"');
-    expect(sshLog).not.toMatch(/(^|\s)-tt?(\s|$)/);
+    expect(fs.existsSync(sshCalls)).toBe(false);
   });
 
-  it("connect --probe-only falls back to SSH when sandbox exec times out after starting", () => {
+  it("connect --probe-only does not fall back to SSH when sandbox exec cannot prove health", () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-exec-timeout-"),
     );
@@ -3676,7 +3678,6 @@ describe("CLI dispatch", () => {
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
         "  echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
-        "  sleep 1",
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "alpha" ]; then',
@@ -3714,19 +3715,17 @@ describe("CLI dispatch", () => {
     const r = runWithEnv("alpha connect --probe-only", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
-      NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS: "50",
     });
 
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("Probe complete: recovered OpenClaw gateway");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Probe failed: could not inspect the OpenClaw gateway inside sandbox 'alpha'.");
     const openshellLog = fs.readFileSync(openshellCalls, "utf8");
-    const sshLog = fs.readFileSync(sshCalls, "utf8");
     expect(openshellLog).toContain("sandbox exec --name alpha -- sh -c");
-    expect(openshellLog).toContain("sandbox ssh-config alpha");
-    expect(sshLog).toContain('OPENCLAW="$(command -v openclaw)"');
+    expect(openshellLog).not.toContain("sandbox ssh-config alpha");
+    expect(fs.existsSync(sshCalls)).toBe(false);
   });
 
-  it("recovers non-OpenClaw agents over SSH instead of root sandbox exec", () => {
+  it("recovers non-OpenClaw agents over gRPC sandbox exec", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-agent-"));
     const localBin = path.join(home, "bin");
     const openshellCalls = path.join(home, "openshell-calls");
@@ -3753,15 +3752,15 @@ describe("CLI dispatch", () => {
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
         '  cmd="$8"',
+        '  if [[ "$cmd" == *"HERMES_HOME=/sandbox/.hermes"* || "$cmd" == *"AGENT_BIN="* ]]; then',
+        '    echo recovered > "$state_file"',
+        "    echo 'GATEWAY_PID=789'",
+        "    exit 0",
+        "  fi",
         '  if [[ "$cmd" == *"curl -so"* ]]; then',
         "    echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
         '    if [ "$(cat "$state_file")" = recovered ]; then echo RUNNING; else echo STOPPED; fi',
         "    exit 0",
-        "  fi",
-        '  if [[ "$cmd" == *"HERMES_HOME=/sandbox/.hermes"* || "$cmd" == *"AGENT_BIN="* ]]; then',
-        "    echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
-        "    echo UNEXPECTED_ROOT_EXEC_RECOVERY",
-        "    exit 1",
         "  fi",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "alpha" ]; then',
@@ -3804,15 +3803,12 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("Probe complete: recovered Hermes Agent gateway");
     const openshellLog = fs.readFileSync(openshellCalls, "utf8");
-    const sshLog = fs.readFileSync(sshCalls, "utf8");
     expect(openshellLog).toContain("sandbox exec --name alpha -- sh -c");
-    expect(openshellLog).toContain("sandbox ssh-config alpha");
-    expect(openshellLog).not.toContain("HERMES_HOME=/sandbox/.hermes");
-    expect(openshellLog).not.toContain("AGENT_BIN=");
+    expect(openshellLog).not.toContain("sandbox ssh-config alpha");
+    expect(openshellLog).toContain("HERMES_HOME=/sandbox/.hermes");
+    expect(openshellLog).toContain("AGENT_BIN=");
     expect(openshellLog).not.toContain("sandbox connect");
-    expect(sshLog).toContain("HERMES_HOME=/sandbox/.hermes");
-    expect(sshLog).toContain("AGENT_BIN='/usr/local/bin/hermes'");
-    expect(sshLog).not.toMatch(/(^|\s)-tt?(\s|$)/);
+    expect(fs.existsSync(sshCalls)).toBe(false);
   });
 
   it("waits for sandbox readiness before connecting", () => {
@@ -4849,14 +4845,8 @@ describe("CLI dispatch", () => {
         "#!/usr/bin/env bash",
         `state_file=${JSON.stringify(stateFile)}`,
         'count=$(cat "$state_file" 2>/dev/null || echo 0)',
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
-        "  count=$((count + 1))",
-        '  echo "$count" > "$state_file"',
-        '  if [ "$count" -eq 1 ]; then',
-        "    echo 'Error: transport error: Connection refused' >&2",
-        "    exit 1",
-        "  fi",
-        "  echo 'Sandbox: alpha'",
+        'if [ "$1" = "--version" ]; then',
+        "  echo 'openshell 0.0.44'",
         "  exit 0",
         "fi",
         'if [ "$1" = "status" ]; then',
@@ -4866,10 +4856,20 @@ describe("CLI dispatch", () => {
         "  echo '  Status: Connected'",
         "  exit 0",
         "fi",
-        'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
         "  echo 'Gateway Info'",
         "  echo",
         "  echo '  Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        "  count=$((count + 1))",
+        '  echo "$count" > "$state_file"',
+        '  if [ "$count" -eq 1 ]; then',
+        "    echo 'Error: transport error: Connection refused' >&2",
+        "    exit 1",
+        "  fi",
+        "  echo 'Sandbox: alpha'",
         "  exit 0",
         "fi",
         "exit 0",
@@ -4913,6 +4913,23 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
+        'if [ "$1" = "--version" ]; then',
+        "  echo 'openshell 0.0.44'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "status" ]; then',
+        "  echo 'Server Status'",
+        "  echo",
+        "  echo '  Gateway: nemoclaw'",
+        "  echo '  Status: Connected'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  echo 'Gateway Info'",
+        "  echo",
+        "  echo '  Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
         "  echo 'Sandbox: alpha'",
         "  exit 0",
@@ -5034,6 +5051,23 @@ describe("CLI dispatch", () => {
       [
         "#!/usr/bin/env bash",
         `printf '%s\\n' "$*" >> ${JSON.stringify(markerFile)}`,
+        'if [ "$1" = "--version" ]; then',
+        "  echo 'openshell 0.0.44'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "status" ]; then',
+        "  echo 'Server Status'",
+        "  echo",
+        "  echo '  Gateway: nemoclaw'",
+        "  echo '  Status: Connected'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  echo 'Gateway Info'",
+        "  echo",
+        "  echo '  Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
         "  echo 'Sandbox:'",
         "  echo",

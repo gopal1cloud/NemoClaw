@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { execTimeout, testTimeoutOptions } from "./helpers/timeouts";
 
 const tmpFixtures: string[] = [];
+const GRPC_FAKE_SSH = path.join(import.meta.dirname, "helpers", "grpc-fake-ssh.cjs");
 
 // Each fixture grabs a unique high port. Sharing port 18789 across tests
 // collides with real nemoclaw installs on the developer's machine: the
@@ -28,16 +29,14 @@ afterEach(() => {
 interface Fixture {
   tmpDir: string;
   sandboxName: string;
+  port: string;
   invocationLog: string;
 }
 
 function setupFixture(opts: {
   sandboxName: string;
   gatewayProbe: "RUNNING" | "STOPPED";
-  forwardListStatus: "running" | "dead" | "missing";
-  /** When false, `forward start` exits 0 but the post-restart probe keeps
-   *  reporting the original dead/missing state — models a failed restart. */
-  forwardStartHeals?: boolean;
+  forwardListStatus: "running" | "dead" | "missing" | "occupied";
   port?: string;
 }): Fixture {
   const sandboxName = opts.sandboxName;
@@ -48,9 +47,11 @@ function setupFixture(opts: {
   const registryDir = path.join(tmpDir, ".nemoclaw");
   const openshellPath = path.join(homeLocalBin, "openshell");
   const invocationLog = path.join(tmpDir, "openshell-calls.log");
+  const forwardDir = path.join(registryDir, "forwards");
 
   fs.mkdirSync(homeLocalBin, { recursive: true });
   fs.mkdirSync(registryDir, { recursive: true });
+  fs.mkdirSync(forwardDir, { recursive: true });
 
   fs.writeFileSync(
     path.join(registryDir, "sandboxes.json"),
@@ -70,19 +71,35 @@ function setupFixture(opts: {
     { mode: 0o600 },
   );
 
-  const initialForwardListBody =
-    opts.forwardListStatus === "missing"
-      ? ""
-      : `${sandboxName} 127.0.0.1 ${port} 12345 ${opts.forwardListStatus}\n`;
-  const recoveredForwardListBody = `${sandboxName} 127.0.0.1 ${port} 99999 running\n`;
-  const forwardStateFile = path.join(tmpDir, "forward-state");
-  fs.writeFileSync(forwardStateFile, "initial");
+  const writeForwardState = (
+    owner: string,
+    pid: number,
+  ) => {
+    fs.writeFileSync(
+      path.join(forwardDir, `${owner}-${port}.json`),
+      JSON.stringify({
+        sandboxName: owner,
+        bind: "127.0.0.1",
+        port: Number(port),
+        targetHost: "127.0.0.1",
+        targetPort: Number(port),
+        pid,
+        startedAt: new Date().toISOString(),
+      }),
+      { mode: 0o600 },
+    );
+  };
+  if (opts.forwardListStatus === "running") {
+    writeForwardState(sandboxName, 0);
+  } else if (opts.forwardListStatus === "dead") {
+    writeForwardState(sandboxName, 999999);
+  } else if (opts.forwardListStatus === "occupied") {
+    writeForwardState("other-sandbox", 0);
+  }
 
-  // Fake openshell: emits the requested gateway-probe and forward-list
-  // shapes, swallows mutating subcommands (forward stop / forward start)
-  // while logging every invocation so the test can assert the order. The
-  // forward state flips to "running" after `forward start` to model the
-  // post-recovery probe.
+  // Fake openshell: emits the requested gateway-probe while logging every
+  // invocation so the test can assert that SSH-backed OpenShell forwards are
+  // not used by the gRPC bridge path.
   fs.writeFileSync(
     openshellPath,
     `#!${process.execPath}
@@ -121,26 +138,6 @@ if (args[0] === "sandbox" && args[1] === "exec") {
   process.exit(0);
 }
 
-if (args[0] === "forward" && args[1] === "list") {
-  const state = fs.readFileSync(${JSON.stringify(forwardStateFile)}, "utf-8");
-  process.stdout.write(state === "running"
-    ? ${JSON.stringify(recoveredForwardListBody)}
-    : ${JSON.stringify(initialForwardListBody)});
-  process.exit(0);
-}
-
-if (args[0] === "forward" && args[1] === "start") {
-  if (${opts.forwardStartHeals === false ? "false" : "true"}) {
-    fs.writeFileSync(${JSON.stringify(forwardStateFile)}, "running");
-  }
-  process.exit(0);
-}
-
-if (args[0] === "forward") {
-  // forward stop swallowed; forward state untouched.
-  process.exit(0);
-}
-
 if (args[0] === "policy" && args[1] === "get") {
   process.exit(1);
 }
@@ -157,7 +154,7 @@ process.exit(0);
     { mode: 0o755 },
   );
 
-  return { tmpDir, sandboxName, invocationLog };
+  return { tmpDir, sandboxName, port, invocationLog };
 }
 
 function runRecover(fixture: Fixture) {
@@ -173,10 +170,20 @@ function runRecover(fixture: Fixture) {
         HOME: fixture.tmpDir,
         PATH: "/usr/bin:/bin",
         NEMOCLAW_NO_CONNECT_HINT: "1",
+        NEMOCLAW_GRPC_TEST_TRANSPORT: "1",
+        NEMOCLAW_GRPC_TEST_LEGACY_FAKE_SSH: "1",
+        NEMOCLAW_GRPC_TEST_FAKE_SSH_BIN: GRPC_FAKE_SSH,
       },
       timeout: execTimeout(15_000),
     },
   );
+}
+
+function recoverFailureMessage(fixture: Fixture, result: ReturnType<typeof runRecover>): string {
+  const calls = fs.existsSync(fixture.invocationLog)
+    ? fs.readFileSync(fixture.invocationLog, "utf-8")
+    : "";
+  return `${result.stderr || ""}${result.stdout || ""}\n--- calls ---\n${calls}`;
 }
 
 describe("nemoclaw <name> recover", () => {
@@ -190,7 +197,7 @@ describe("nemoclaw <name> recover", () => {
         forwardListStatus: "dead",
       });
       const result = runRecover(fixture);
-      expect(result.status).toBe(0);
+      expect(result.status, recoverFailureMessage(fixture, result)).toBe(0);
 
       const combined = (result.stdout || "") + (result.stderr || "");
       expect(combined).toContain(
@@ -198,31 +205,32 @@ describe("nemoclaw <name> recover", () => {
       );
 
       const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
-      const stopIdx = calls.findIndex((l) => l.startsWith("forward stop "));
-      const startIdx = calls.findIndex((l) => l.startsWith("forward start "));
-      expect(stopIdx).toBeGreaterThanOrEqual(0);
-      expect(startIdx).toBeGreaterThan(stopIdx);
+      expect(calls.some((l) => l.startsWith("forward "))).toBe(false);
     },
   );
 
   it(
-    "reports a failure when forward start succeeds but the post-restart probe still shows dead",
+    "leaves an occupied dashboard port-forward unchanged",
     testTimeoutOptions(20_000),
     () => {
       const fixture = setupFixture({
         sandboxName: "stuck-sandbox",
         gatewayProbe: "RUNNING",
-        forwardListStatus: "dead",
-        forwardStartHeals: false,
+        forwardListStatus: "occupied",
       });
       const result = runRecover(fixture);
-      expect(result.status).toBe(0);
+      expect(result.status, recoverFailureMessage(fixture, result)).toBe(0);
 
       const combined = (result.stdout || "") + (result.stderr || "");
-      // Probe wrapper falls back to the plain "is running" line; the success
-      // suffix must not appear because the forward never came back.
       expect(combined).toContain("gateway is running in 'stuck-sandbox'");
       expect(combined).not.toContain("restored dashboard port forward");
+      const occupiedState = JSON.parse(
+        fs.readFileSync(
+          path.join(fixture.tmpDir, ".nemoclaw", "forwards", `other-sandbox-${fixture.port}.json`),
+          "utf-8",
+        ),
+      );
+      expect(occupiedState.sandboxName).toBe("other-sandbox");
     },
   );
 
@@ -236,7 +244,7 @@ describe("nemoclaw <name> recover", () => {
         forwardListStatus: "running",
       });
       const result = runRecover(fixture);
-      expect(result.status).toBe(0);
+      expect(result.status, recoverFailureMessage(fixture, result)).toBe(0);
 
       const combined = (result.stdout || "") + (result.stderr || "");
       expect(combined).toContain("gateway is running in 'healthy-sandbox'");
@@ -244,8 +252,7 @@ describe("nemoclaw <name> recover", () => {
       expect(combined).not.toContain("restored dashboard port forward");
 
       const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
-      expect(calls.some((l) => l.startsWith("forward stop "))).toBe(false);
-      expect(calls.some((l) => l.startsWith("forward start "))).toBe(false);
+      expect(calls.some((l) => l.startsWith("forward "))).toBe(false);
     },
   );
 });

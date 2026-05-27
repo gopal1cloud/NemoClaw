@@ -125,6 +125,12 @@ jobs:
             print("::error::env_json must be a JSON object", file=sys.stderr)
             sys.exit(1)
 
+          # Nightly runners commonly lack CAP_SETPCAP inside OpenShell sandboxes.
+          # The sandbox image remains fail-closed by default; E2E jobs opt in so
+          # they can validate product behavior while gateway-isolation covers the
+          # fail-closed residual-capability posture.
+          values.setdefault("NEMOCLAW_ALLOW_RESIDUAL_CAPS", "1")
+
           name_pattern = re.compile(r"^[A-Z_][A-Z0-9_]*$")
           reserved_prefixes = ("ACTIONS_", "GITHUB_", "INPUT_", "RUNNER_")
           reserved_names = {"CI", "HOME", "PATH", "PWD", "SHELL"}
