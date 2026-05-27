@@ -54,12 +54,24 @@ record_check() {
     "$OUT" > "$OUT.tmp" && mv "$OUT.tmp" "$OUT"
   case "$status" in
     fail)
-      jq --arg k "$key" '.verdict = "SKIP" | .skip_reason = "check failed: \($k)"' \
-        "$OUT" > "$OUT.tmp" && mv "$OUT.tmp" "$OUT" ;;
+      # Accumulate failed-check names into skip_reasons (array); set verdict
+      # to SKIP. Earlier impl used a single skip_reason string and the LAST
+      # fail won, hiding earlier failures from the operator log.
+      jq --arg k "$key" \
+        '.verdict = "SKIP"
+         | .skip_reasons = ((.skip_reasons // []) + [$k])
+         | .skip_reason = "check failed: " + (.skip_reasons | join(", "))' \
+        "$OUT" > "$OUT.tmp" && mv "$OUT.tmp" "$OUT"
+      ;;
     caveat)
-      # Only downgrade to PROCEED-WITH-CAVEATS if not already SKIP.
+      # Only downgrade to PROCEED-WITH-CAVEATS if currently PROCEED. Use
+      # `if` instead of `[ ] && ...` because the chain's exit status under
+      # `set -e` would kill the script when the condition is false.
+      local current
       current=$(jq -r '.verdict' "$OUT")
-      [ "$current" = "PROCEED" ] && jq '.verdict = "PROCEED-WITH-CAVEATS"' "$OUT" > "$OUT.tmp" && mv "$OUT.tmp" "$OUT"
+      if [ "$current" = "PROCEED" ]; then
+        jq '.verdict = "PROCEED-WITH-CAVEATS"' "$OUT" > "$OUT.tmp" && mv "$OUT.tmp" "$OUT"
+      fi
       ;;
   esac
 }

@@ -339,7 +339,7 @@ if [ -n "$stragglers" ]; then
   warn "  found stragglers:"
   printf '%s\n' "$stragglers" | sed 's/^/    - /' >&2
   while IFS= read -r box; do
-    [ -z "$box" ] && continue
+    if [ -z "$box" ]; then continue; fi
     info "    brev delete $box"
     brev delete "$box" >/dev/null 2>&1 || warn "      failed to delete $box (manual cleanup needed)"
   done <<<"$stragglers"
@@ -415,10 +415,14 @@ jq '{candidate_count, verdict_histogram, total_cost_usd}' "$SUMMARY"
 info "Phase 9 — wrap-up Gist (visibility: $DOGFOOD_GIST_VISIBILITY)"
 
 GIST_FLAGS=()
-[ "$DOGFOOD_GIST_VISIBILITY" = "public" ] && GIST_FLAGS+=("--public")
+if [ "$DOGFOOD_GIST_VISIBILITY" = "public" ]; then
+  GIST_FLAGS+=("--public")
+fi
 
 GIST_ARGS=("$RUN_DIR/run-config.json" "$RUN_DIR/run-summary.json" "$RUN_DIR/candidates.json")
-[ -f "$RUN_DIR/activity.md" ] && GIST_ARGS+=("$RUN_DIR/activity.md")
+if [ -f "$RUN_DIR/activity.md" ]; then
+  GIST_ARGS+=("$RUN_DIR/activity.md")
+fi
 
 GIST_URL=$(gh gist create "${GIST_FLAGS[@]}" \
   --desc "verify-stale dogfood run $RUN_ID (dry_run=$VERIFY_STALE_DRY_RUN, cap=$VERIFY_STALE_BATCH_CAP)" \
