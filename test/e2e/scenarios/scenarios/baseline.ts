@@ -269,5 +269,9 @@ export function canonicalScenarios(): ScenarioDefinition[] {
 }
 
 export function ubuntuRepoCloudOpenClawScenario(): ScenarioDefinition {
-  return canonicalScenarios().find((entry) => entry.id === "ubuntu-repo-cloud-openclaw") as ScenarioDefinition;
+  const scenario = canonicalScenarios().find((entry) => entry.id === "ubuntu-repo-cloud-openclaw");
+  if (!scenario) {
+    throw new Error("Missing canonical scenario 'ubuntu-repo-cloud-openclaw'");
+  }
+  return scenario;
 }

@@ -11,7 +11,6 @@ import { migrationInventory } from "../scenarios/migration-inventory.ts";
 import { listScenarios } from "../scenarios/registry.ts";
 
 const E2E_DIR = path.resolve(import.meta.dirname, "..");
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const SCENARIOS_PATH = path.join(E2E_DIR, "nemoclaw_scenarios", "scenarios.yaml");
 const EXPECTED_STATES_PATH = path.join(E2E_DIR, "nemoclaw_scenarios", "expected-states.yaml");
 const SUITES_PATH = path.join(E2E_DIR, "validation_suites", "suites.yaml");
@@ -60,13 +59,19 @@ describe("hybrid scenario migration inventory lock", () => {
 
   it("should_fail_when_old_expected_state_missing_new_owner_or_removal_rationale", () => {
     const states = loadYaml(EXPECTED_STATES_PATH);
+    expect(states).toHaveProperty("expected_states");
+    const expectedStateIds = keysFrom(states.expected_states);
+    expect(expectedStateIds.length).toBeGreaterThan(0);
 
-    expectCovered("expectedStates", keysFrom(states.expected_states));
+    expectCovered("expectedStates", expectedStateIds);
   });
 
   it("test_should_fail_when_old_validation_suite_script_missing_new_owner_or_removal_rationale", () => {
-    const suites = loadYaml(SUITES_PATH).suites as Record<string, { steps?: Array<{ script?: string }> }>;
+    const suitesDoc = loadYaml(SUITES_PATH);
+    expect(suitesDoc).toHaveProperty("suites");
+    const suites = suitesDoc.suites as Record<string, { steps?: Array<{ script?: string }> }>;
     const suiteIds = keysFrom(suites);
+    expect(suiteIds.length).toBeGreaterThan(0);
     const scriptIds = Array.from(
       new Set(
         Object.values(suites)

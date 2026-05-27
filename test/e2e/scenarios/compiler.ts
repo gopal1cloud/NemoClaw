@@ -17,10 +17,9 @@ function groupsForPhase(scenario: ScenarioDefinition, phase: PhaseName): Asserti
 
 function resolveScenarioInputs(inputs: Array<string | ScenarioDefinition>): ScenarioDefinition[] {
   const ids = inputs.filter((input): input is string => typeof input === "string");
-  const inlineScenarios = inputs.filter(
-    (input): input is ScenarioDefinition => typeof input !== "string",
-  );
-  return [...requireScenarios(ids), ...inlineScenarios];
+  const resolvedById = requireScenarios(ids);
+  let idCursor = 0;
+  return inputs.map((input) => (typeof input === "string" ? resolvedById[idCursor++] : input));
 }
 
 function expectedPlatform(platformId: string): { os: string; executionTarget: string } | undefined {

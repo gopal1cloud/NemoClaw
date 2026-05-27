@@ -71,7 +71,7 @@ export function resolveScenario(scenarioId: string, meta: ResolverInput): Resolv
     suites: suiteIds.map((id: unknown) => suite(String(id), suites)),
     runner_requirements: Array.isArray(legacy.runner_requirements) ? legacy.runner_requirements as string[] : undefined,
     required_secrets: Array.isArray(legacy.required_secrets) ? legacy.required_secrets as string[] : undefined,
-    expected_failure: mergeExpectedFailure(expectedStateConfig.expected_failure, legacy.expected_failure, expectedStateId),
+    expected_failure: mergeExpectedFailure(expectedStateConfig.expected_failure, legacy.expected_failure, scenarioId),
   };
 }
 

@@ -61,11 +61,9 @@ async function main() {
     return;
   }
 
-  if (args.planOnly && args.validateOnly) {
-    throw new Error("--plan-only and --validate-only are mutually exclusive");
-  }
-  if (!args.planOnly && !args.dryRun && !args.validateOnly) {
-    throw new Error("Use --plan-only, --dry-run, or --validate-only with --scenarios <id[,id...]>");
+  const modeCount = [args.planOnly, args.dryRun, args.validateOnly].filter(Boolean).length;
+  if (modeCount !== 1) {
+    throw new Error("Use exactly one of --plan-only, --dry-run, or --validate-only with --scenarios <id[,id...]>");
   }
   if (args.scenarios.length === 0) {
     throw new Error("scenario execution requires --scenarios <id[,id...]>");

@@ -40,25 +40,25 @@ capabilities, and expected failures.
 
 | Scenario ID | Manifest | Phase coverage | Status |
 |---|---|---|---|
-| `brev-launchable-cloud-openclaw` | `openclaw-nvidia-brev-launchable.yaml` | environment, onboarding, runtime | ✅ typed runtime |
-| `gpu-repo-local-ollama-openclaw` | `openclaw-ollama-gpu.yaml` | environment, onboarding, runtime | ✅ typed runtime |
-| `macos-repo-cloud-openclaw` | `openclaw-nvidia-macos.yaml` | environment, onboarding, runtime | ✅ typed runtime |
-| `ubuntu-no-docker-preflight-negative` | `openclaw-nvidia-no-docker-negative.yaml` | environment, onboarding, runtime | ✅ typed runtime |
-| `ubuntu-repo-cloud-hermes` | `hermes-nvidia.yaml` | environment, onboarding, runtime | ✅ typed runtime |
-| `ubuntu-repo-cloud-hermes-discord` | `hermes-nvidia-discord.yaml` | environment, onboarding, runtime | ✅ typed runtime |
-| `ubuntu-repo-cloud-hermes-slack` | `hermes-nvidia-slack.yaml` | environment, onboarding, runtime | ✅ typed runtime |
-| `ubuntu-repo-cloud-openclaw` | `openclaw-nvidia.yaml` | environment, onboarding, runtime | ✅ typed runtime |
-| `ubuntu-repo-cloud-openclaw-brave` | `openclaw-nvidia-brave.yaml` | environment, onboarding, runtime | ✅ typed runtime |
-| `ubuntu-repo-cloud-openclaw-discord` | `openclaw-nvidia-discord.yaml` | environment, onboarding, runtime | ✅ typed runtime |
-| `ubuntu-repo-cloud-openclaw-double-provider-switch` | `openclaw-nvidia-double-provider-switch.yaml` | environment, onboarding, runtime | ✅ typed runtime |
-| `ubuntu-repo-cloud-openclaw-double-same-provider` | `openclaw-nvidia-double-same-provider.yaml` | environment, onboarding, runtime | ✅ typed runtime |
-| `ubuntu-repo-cloud-openclaw-repair` | `openclaw-nvidia-repair.yaml` | environment, onboarding, runtime | ✅ typed runtime |
-| `ubuntu-repo-cloud-openclaw-resume` | `openclaw-nvidia-resume.yaml` | environment, onboarding, runtime | ✅ typed runtime |
-| `ubuntu-repo-cloud-openclaw-slack` | `openclaw-nvidia-slack.yaml` | environment, onboarding, runtime | ✅ typed runtime |
-| `ubuntu-repo-cloud-openclaw-telegram` | `openclaw-nvidia-telegram.yaml` | environment, onboarding, runtime | ✅ typed runtime |
-| `ubuntu-repo-cloud-openclaw-token-rotation` | `openclaw-nvidia-token-rotation.yaml` | environment, onboarding, runtime | ✅ typed runtime |
-| `ubuntu-repo-openai-compatible-openclaw` | `openclaw-openai-compatible.yaml` | environment, onboarding, runtime | ✅ typed runtime |
-| `wsl-repo-cloud-openclaw` | `openclaw-nvidia-wsl.yaml` | environment, onboarding, runtime | ✅ typed runtime |
+| `brev-launchable-cloud-openclaw` | `openclaw-nvidia-brev-launchable.yaml` | environment, onboarding, runtime | typed runtime |
+| `gpu-repo-local-ollama-openclaw` | `openclaw-ollama-gpu.yaml` | environment, onboarding, runtime | typed runtime |
+| `macos-repo-cloud-openclaw` | `openclaw-nvidia-macos.yaml` | environment, onboarding, runtime | typed runtime |
+| `ubuntu-no-docker-preflight-negative` | `openclaw-nvidia-no-docker-negative.yaml` | environment, onboarding, runtime | typed runtime |
+| `ubuntu-repo-cloud-hermes` | `hermes-nvidia.yaml` | environment, onboarding, runtime | typed runtime |
+| `ubuntu-repo-cloud-hermes-discord` | `hermes-nvidia-discord.yaml` | environment, onboarding, runtime | typed runtime |
+| `ubuntu-repo-cloud-hermes-slack` | `hermes-nvidia-slack.yaml` | environment, onboarding, runtime | typed runtime |
+| `ubuntu-repo-cloud-openclaw` | `openclaw-nvidia.yaml` | environment, onboarding, runtime | typed runtime |
+| `ubuntu-repo-cloud-openclaw-brave` | `openclaw-nvidia-brave.yaml` | environment, onboarding, runtime | typed runtime |
+| `ubuntu-repo-cloud-openclaw-discord` | `openclaw-nvidia-discord.yaml` | environment, onboarding, runtime | typed runtime |
+| `ubuntu-repo-cloud-openclaw-double-provider-switch` | `openclaw-nvidia-double-provider-switch.yaml` | environment, onboarding, runtime | typed runtime |
+| `ubuntu-repo-cloud-openclaw-double-same-provider` | `openclaw-nvidia-double-same-provider.yaml` | environment, onboarding, runtime | typed runtime |
+| `ubuntu-repo-cloud-openclaw-repair` | `openclaw-nvidia-repair.yaml` | environment, onboarding, runtime | typed runtime |
+| `ubuntu-repo-cloud-openclaw-resume` | `openclaw-nvidia-resume.yaml` | environment, onboarding, runtime | typed runtime |
+| `ubuntu-repo-cloud-openclaw-slack` | `openclaw-nvidia-slack.yaml` | environment, onboarding, runtime | typed runtime |
+| `ubuntu-repo-cloud-openclaw-telegram` | `openclaw-nvidia-telegram.yaml` | environment, onboarding, runtime | typed runtime |
+| `ubuntu-repo-cloud-openclaw-token-rotation` | `openclaw-nvidia-token-rotation.yaml` | environment, onboarding, runtime | typed runtime |
+| `ubuntu-repo-openai-compatible-openclaw` | `openclaw-openai-compatible.yaml` | environment, onboarding, runtime | typed runtime |
+| `wsl-repo-cloud-openclaw` | `openclaw-nvidia-wsl.yaml` | environment, onboarding, runtime | typed runtime |
 
 ## Metadata Disposition
 
@@ -72,12 +72,12 @@ capabilities, and expected failures.
 
 | Domain | Representative groups | Status |
 |---|---|---|
-| Environment | `environment.baseline` | ✅ covered |
-| Onboarding | `onboarding.base-installed`, `onboarding.preflight-passed`, `onboarding.preflight-expected-failed` | ✅ covered |
-| Smoke/runtime | `suite.smoke`, `suite.gateway-health`, `suite.sandbox-shell` | ✅ covered |
-| Inference | `suite.inference`, `suite.local-ollama-inference`, `suite.openai-compatible-inference`, `suite.kimi-compatibility` | ✅ covered |
-| Security | `suite.credentials`, `suite.security-policy`, `suite.security-shields`, `suite.security-injection` | ✅ covered |
-| Messaging | `suite.messaging-telegram`, `suite.messaging-discord`, `suite.messaging-slack`, `suite.messaging-token-rotation` | ✅ covered |
-| Lifecycle | `suite.sandbox-lifecycle`, `suite.rebuild`, `suite.upgrade`, `suite.snapshot` | ✅ covered |
-| Platform | `suite.platform-macos`, `suite.platform-wsl` | ✅ covered |
-| Negative | `runtime.expected-failure.no-side-effects` | ✅ covered |
+| Environment | `environment.baseline` | covered |
+| Onboarding | `onboarding.base-installed`, `onboarding.preflight-passed`, `onboarding.preflight-expected-failed` | covered |
+| Smoke/runtime | `suite.smoke`, `suite.gateway-health`, `suite.sandbox-shell` | covered |
+| Inference | `suite.inference`, `suite.local-ollama-inference`, `suite.openai-compatible-inference`, `suite.kimi-compatibility` | covered |
+| Security | `suite.credentials`, `suite.security-policy`, `suite.security-shields`, `suite.security-injection` | covered |
+| Messaging | `suite.messaging-telegram`, `suite.messaging-discord`, `suite.messaging-slack`, `suite.messaging-token-rotation` | covered |
+| Lifecycle | `suite.sandbox-lifecycle`, `suite.rebuild`, `suite.upgrade`, `suite.snapshot` | covered |
+| Platform | `suite.platform-macos`, `suite.platform-wsl` | covered |
+| Negative | `runtime.expected-failure.no-side-effects` | covered |

@@ -47,7 +47,8 @@ export class PhaseOrchestrator {
 
   private async runStep(ctx: RunContext, step: AssertionStep): Promise<AssertionResult> {
     const startedAt = Date.now();
-    const maxAttempts = step.reliability?.retry?.attempts ?? 1;
+    const rawAttempts = step.reliability?.retry?.attempts;
+    const maxAttempts = typeof rawAttempts === "number" && Number.isFinite(rawAttempts) ? Math.max(1, Math.floor(rawAttempts)) : 1;
     let attempts = 0;
     let lastOutcome: StepAttemptOutcome = { status: "failed", message: "step did not run" };
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {

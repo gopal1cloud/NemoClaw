@@ -46,7 +46,7 @@ function namedStep(workflow: AnyRecord, jobId: string, stepName: string): Workfl
 
 function uploadArtifactStep(workflow: AnyRecord, jobId: string, stepName: string): WorkflowStep {
   const step = namedStep(workflow, jobId, stepName);
-  expect(step.uses).toBe("actions/upload-artifact@v4");
+  expect(step.uses).toMatch(/^actions\/upload-artifact@[0-9a-f]{40}/);
   return step;
 }
 
