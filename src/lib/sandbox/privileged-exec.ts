@@ -26,28 +26,20 @@ function normalizeDriver(driver: unknown): string | null {
 }
 
 function readSandboxEntry(sandboxName: string): SandboxEntry | null {
-  try {
-    return registry.getSandbox?.(sandboxName) ?? null;
-  } catch {
-    return null;
-  }
+  return registry.getSandbox?.(sandboxName) ?? null;
 }
 
 function registeredSandboxNames(sandboxName: string): string[] {
   const names = new Set<string>([sandboxName]);
 
-  try {
+  if (registry.listSandboxes) {
     const listed = registry.listSandboxes?.();
     if (Array.isArray(listed?.sandboxes)) {
       for (const entry of listed.sandboxes) {
         if (typeof entry.name === "string" && entry.name) names.add(entry.name);
       }
     }
-  } catch {
-    // Fall through to the registry file fallback below.
-  }
-
-  try {
+  } else {
     const loaded = registry.load?.();
     const sandboxes = loaded?.sandboxes;
     if (sandboxes && typeof sandboxes === "object") {
@@ -56,8 +48,6 @@ function registeredSandboxNames(sandboxName: string): string[] {
         if (typeof entry?.name === "string" && entry.name) names.add(entry.name);
       }
     }
-  } catch {
-    // Registry access is best-effort for disambiguation.
   }
 
   return Array.from(names).sort((a, b) => b.length - a.length || a.localeCompare(b));
@@ -107,13 +97,12 @@ function expectedDirectContainerPattern(sandboxName: string): string {
 }
 
 function findDirectSandboxContainer(sandboxName: string): string | null {
-  const output = dockerCapture(["ps", "--format", "{{.Names}}"], {
-    ignoreError: true,
-  });
+  const names = registeredSandboxNames(sandboxName);
+  const output = dockerCapture(["ps", "--format", "{{.Names}}"]);
   return selectDirectSandboxContainer(
     sandboxName,
     output,
-    registeredSandboxNames(sandboxName),
+    names,
   );
 }
 
@@ -123,6 +112,13 @@ function missingDirectContainerError(sandboxName: string, driver: string | null)
     `No running direct OpenShell sandbox container found for '${sandboxName}' ` +
       `(driver: ${driverLabel}). Expected a running container named ` +
       `${expectedDirectContainerPattern(sandboxName)}. Is the sandbox running?`,
+  );
+}
+
+function missingRegistryEntryError(sandboxName: string): Error {
+  return new Error(
+    `No NemoClaw registry entry found for '${sandboxName}'; ` +
+      "refusing privileged exec without a registered sandbox owner.",
   );
 }
 
@@ -141,6 +137,7 @@ function privilegedSandboxExecArgv(
   stdin = false,
 ): string[] {
   const entry = readSandboxEntry(sandboxName);
+  if (!entry) throw missingRegistryEntryError(sandboxName);
   const driver = normalizeDriver(entry?.openshellDriver);
 
   // Docker/direct-container is the only supported privileged mutation path.
