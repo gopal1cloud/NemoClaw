@@ -473,7 +473,7 @@ Manifest model must support `channels: []` and `channels: [telegram, discord, sl
 - Token rotation is not mapped unless changed-provider isolation and same-token reuse are asserted.
 - Channel lifecycle is not mapped unless post-onboard commands and rebuild effects are executed.
 
-## Phase 7: Messaging Deep Agent Flow Parity
+## Phase 7: Messaging Deep Agent Flow Parity [COMPLETED: 0842f41e8]
 
 ### Audit sections covered
 
