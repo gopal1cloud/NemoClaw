@@ -86,7 +86,7 @@ describe("Ollama runtime context helpers", () => {
   it("resolves runtime context length only when no explicit override is set", () => {
     const capture = () =>
       JSON.stringify({
-        models: [{ model: "qwen3.6:35b", context_length: "262144", processor: "100% GPU" }],
+        models: [{ name: "qwen3.6:35b", context_length: "262144", processor: "100% GPU" }],
       });
 
     expect(
