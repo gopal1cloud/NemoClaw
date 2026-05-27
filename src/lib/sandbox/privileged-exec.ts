@@ -1,0 +1,209 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+const { dockerCapture } = require("../adapters/docker/run");
+const registry = require("../state/registry") as {
+  getSandbox?: (name: string) => { name?: string; openshellDriver?: string | null } | null;
+  listSandboxes?: () => {
+    sandboxes?: Array<{ name?: string | null }>;
+    defaultSandbox?: string | null;
+  };
+  load?: () => {
+    sandboxes?: Record<string, { name?: string | null }>;
+    defaultSandbox?: string | null;
+  };
+};
+
+const K3S_CONTAINER = "openshell-cluster-nemoclaw";
+const DIRECT_CONTAINER_DRIVERS = new Set(["docker", "vm"]);
+const LEGACY_KUBERNETES_DRIVERS = new Set(["kubernetes"]);
+
+type SandboxEntry = {
+  name?: string;
+  openshellDriver?: string | null;
+};
+
+function normalizeDriver(driver: unknown): string | null {
+  return typeof driver === "string" && driver.trim()
+    ? driver.trim().toLowerCase()
+    : null;
+}
+
+function isDirectContainerDriver(driver: unknown): boolean {
+  const normalized = normalizeDriver(driver);
+  return normalized !== null && DIRECT_CONTAINER_DRIVERS.has(normalized);
+}
+
+function readSandboxEntry(sandboxName: string): SandboxEntry | null {
+  try {
+    return registry.getSandbox?.(sandboxName) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function registeredSandboxNames(sandboxName: string): string[] {
+  const names = new Set<string>([sandboxName]);
+
+  try {
+    const listed = registry.listSandboxes?.();
+    if (Array.isArray(listed?.sandboxes)) {
+      for (const entry of listed.sandboxes) {
+        if (typeof entry.name === "string" && entry.name) names.add(entry.name);
+      }
+    }
+  } catch {
+    // Fall through to the registry file fallback below.
+  }
+
+  try {
+    const loaded = registry.load?.();
+    const sandboxes = loaded?.sandboxes;
+    if (sandboxes && typeof sandboxes === "object") {
+      for (const [key, entry] of Object.entries(sandboxes)) {
+        if (key) names.add(key);
+        if (typeof entry?.name === "string" && entry.name) names.add(entry.name);
+      }
+    }
+  } catch {
+    // Registry access is best-effort for disambiguation.
+  }
+
+  return Array.from(names).sort((a, b) => b.length - a.length || a.localeCompare(b));
+}
+
+function containerNameMatchesSandbox(containerName: string, sandboxName: string): boolean {
+  const exact = `openshell-${sandboxName}`;
+  return containerName === exact || containerName.startsWith(`${exact}-`);
+}
+
+function owningRegisteredSandboxName(
+  containerName: string,
+  registeredNames: readonly string[],
+): string | null {
+  return (
+    registeredNames.find((name) => containerNameMatchesSandbox(containerName, name)) ??
+    null
+  );
+}
+
+function selectDirectSandboxContainer(
+  sandboxName: string,
+  containerNames: string,
+  registeredNames: readonly string[] = [sandboxName],
+): string | null {
+  const names = Array.from(new Set([...registeredNames, sandboxName])).sort(
+    (a, b) => b.length - a.length || a.localeCompare(b),
+  );
+  const candidates = containerNames
+    .split("\n")
+    .map((line: string) => line.trim())
+    .filter(Boolean)
+    .filter((containerName: string) => {
+      if (!containerNameMatchesSandbox(containerName, sandboxName)) return false;
+      return owningRegisteredSandboxName(containerName, names) === sandboxName;
+    });
+
+  return (
+    candidates.find((containerName: string) => containerName === `openshell-${sandboxName}`) ??
+    candidates[0] ??
+    null
+  );
+}
+
+function expectedDirectContainerPattern(sandboxName: string): string {
+  return `openshell-${sandboxName} or openshell-${sandboxName}-*`;
+}
+
+function findDirectSandboxContainer(sandboxName: string): string | null {
+  const output = dockerCapture(["ps", "--format", "{{.Names}}"], {
+    ignoreError: true,
+  });
+  return selectDirectSandboxContainer(
+    sandboxName,
+    output,
+    registeredSandboxNames(sandboxName),
+  );
+}
+
+function missingDirectContainerError(sandboxName: string, driver: string | null): Error {
+  const driverLabel = driver ?? "unspecified";
+  return new Error(
+    `No running direct OpenShell sandbox container found for '${sandboxName}' ` +
+      `(driver: ${driverLabel}). Expected a running container named ` +
+      `${expectedDirectContainerPattern(sandboxName)}. Is the sandbox running?`,
+  );
+}
+
+function resolveDirectSandboxContainer(
+  sandboxName: string,
+  driver: string | null,
+): string {
+  const selected = findDirectSandboxContainer(sandboxName);
+  if (selected) return selected;
+  throw missingDirectContainerError(sandboxName, driver);
+}
+
+function kubectlExecArgv(
+  sandboxName: string,
+  cmd: string[],
+  stdin = false,
+): string[] {
+  return [
+    "exec",
+    ...(stdin ? ["-i"] : []),
+    K3S_CONTAINER,
+    "kubectl",
+    "exec",
+    "-n",
+    "openshell",
+    sandboxName,
+    "-c",
+    "agent",
+    ...(stdin ? ["-i"] : []),
+    "--",
+    ...cmd,
+  ];
+}
+
+function privilegedSandboxExecArgv(
+  sandboxName: string,
+  cmd: string[],
+  stdin = false,
+): string[] {
+  const entry = readSandboxEntry(sandboxName);
+  const driver = normalizeDriver(entry?.openshellDriver);
+  if (driver && LEGACY_KUBERNETES_DRIVERS.has(driver)) {
+    return kubectlExecArgv(sandboxName, cmd, stdin);
+  }
+
+  // Docker/direct-container is the primary topology. Try it even when older
+  // registry entries do not record a driver, then fail clearly if absent.
+  const container = findDirectSandboxContainer(sandboxName);
+  if (container) {
+    return [
+      "exec",
+      ...(stdin ? ["-i"] : []),
+      "--user",
+      "root",
+      container,
+      ...cmd,
+    ];
+  }
+
+  if (isDirectContainerDriver(driver)) {
+    throw missingDirectContainerError(sandboxName, driver);
+  }
+
+  throw missingDirectContainerError(sandboxName, driver);
+}
+
+export {
+  K3S_CONTAINER,
+  isDirectContainerDriver,
+  containerNameMatchesSandbox,
+  selectDirectSandboxContainer,
+  resolveDirectSandboxContainer,
+  kubectlExecArgv,
+  privilegedSandboxExecArgv,
+};
