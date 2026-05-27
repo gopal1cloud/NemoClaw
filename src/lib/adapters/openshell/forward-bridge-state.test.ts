@@ -57,6 +57,22 @@ describe("OpenShell gRPC forward bridge readiness", () => {
     expect(__forwardBridgeTestHooks.probeForwardReady("127.0.0.1", port)).toBe(false);
   });
 
+  it("treats local TCP reachability as bridge readiness without requiring dashboard HTTP", async () => {
+    const port = await unusedLocalPort();
+    const server = net.createServer((socket) => socket.end("not-http"));
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, "127.0.0.1", () => resolve());
+    });
+    try {
+      expect(__forwardBridgeTestHooks.probeForwardReady("127.0.0.1", port)).toBe(true);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
   it("waits for a stopped bridge process to release its local port", async () => {
     const originalHome = process.env.HOME;
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-forward-stop-"));

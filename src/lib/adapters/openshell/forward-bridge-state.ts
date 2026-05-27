@@ -215,14 +215,13 @@ function probeForwardReady(bind: string, port: number): boolean {
   const script =
     "const net=require('node:net');" +
     `const socket=net.createConnection({host:${JSON.stringify(host)},port:${port}});` +
-    "let data='';let done=false;" +
+    "let done=false;" +
     "const finish=(code)=>{if(done)return;done=true;socket.destroy();process.exit(code);};" +
     "socket.setTimeout(1000);" +
-    "socket.on('connect',()=>socket.write('GET /health HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n'));" +
-    "socket.on('data',(chunk)=>{data+=chunk.toString('utf8');if(/^HTTP\\//.test(data))finish(0);});" +
+    "socket.on('connect',()=>finish(0));" +
     "socket.on('error',()=>finish(1));" +
     "socket.on('timeout',()=>finish(1));" +
-    "socket.on('end',()=>finish(/^HTTP\\//.test(data)?0:1));";
+    "socket.on('end',()=>finish(1));";
   const result = spawnSync(process.execPath, ["-e", script], {
     stdio: "ignore",
     timeout: 1500,
