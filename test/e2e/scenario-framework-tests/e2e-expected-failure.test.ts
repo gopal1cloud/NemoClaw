@@ -93,6 +93,23 @@ describe("expected_failure: loader validation", () => {
     ).toThrow(/expected_failure\.error_class/);
   });
 
+  it("accepts expanded gateway and onboarding error classes", () => {
+    for (const errorClass of [
+      "invalid-nvidia-api-key",
+      "gateway-port-conflict",
+      "unreachable-compatible-endpoint",
+      "gateway-schema-drift",
+      "stale-gateway-image",
+      "gateway-start-crash",
+    ]) {
+      const meta = makeMetadata({
+        stateBlock: { phase: "onboard", error_class: errorClass },
+      });
+      const plan = resolveScenario("s", meta);
+      expect(plan.expected_failure?.error_class).toBe(errorClass);
+    }
+  });
+
   it("rejects invalid message_pattern regex", () => {
     expect(() =>
       makeMetadata({

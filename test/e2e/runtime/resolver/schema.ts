@@ -51,6 +51,12 @@ export const EXPECTED_FAILURE_ERROR_CLASSES = [
   "credentials-missing",
   "gpu-missing",
   "unsupported-platform",
+  "invalid-nvidia-api-key",
+  "gateway-port-conflict",
+  "unreachable-compatible-endpoint",
+  "gateway-schema-drift",
+  "stale-gateway-image",
+  "gateway-start-crash",
 ] as const;
 export type ExpectedFailureErrorClass = (typeof EXPECTED_FAILURE_ERROR_CLASSES)[number];
 
