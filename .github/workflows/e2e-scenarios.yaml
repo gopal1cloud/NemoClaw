@@ -10,12 +10,21 @@ on:
         description: "Comma-separated canonical typed scenario ids (for example: ubuntu-repo-cloud-openclaw,ubuntu-repo-cloud-hermes)"
         required: true
         type: string
+  workflow_call:
+    inputs:
+      scenarios:
+        description: "Comma-separated canonical typed scenario ids"
+        required: true
+        type: string
+    secrets:
+      NVIDIA_API_KEY:
+        required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: e2e-scenarios-${{ github.event.inputs.scenarios }}
+  group: e2e-scenarios-${{ inputs.scenarios || github.event.inputs.scenarios }}
   cancel-in-progress: false
 
 jobs:
@@ -38,7 +47,7 @@ jobs:
       - id: pick
         name: Resolve typed scenario runners
         env:
-          SCENARIOS: ${{ github.event.inputs.scenarios }}
+          SCENARIOS: ${{ inputs.scenarios || github.event.inputs.scenarios }}
         run: |
           set -euo pipefail
           # Keep routing visible here while typed registry metadata is the source
@@ -94,28 +103,28 @@ jobs:
       E2E_CONTEXT_DIR: ${{ github.workspace }}
     steps:
       - name: Force LF line endings for WSL checkout
-        if: contains(github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
+        if: contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
         shell: powershell
         run: git config --global core.autocrlf false
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up Node
-        if: ${{ !contains(github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw') }}
+        if: ${{ !contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw') }}
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
           node-version: 22
           cache: npm
 
       - name: Install root dependencies
-        if: ${{ !contains(github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw') }}
+        if: ${{ !contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw') }}
         run: npm ci --ignore-scripts
 
       - name: Run typed scenarios
-        if: ${{ !contains(github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw') }}
+        if: ${{ !contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw') }}
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          SCENARIOS: ${{ github.event.inputs.scenarios }}
+          SCENARIOS: ${{ inputs.scenarios || github.event.inputs.scenarios }}
         run: |
           set -euo pipefail
           if [[ ! "${SCENARIOS}" =~ ^[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+)*$ ]]; then
@@ -125,7 +134,7 @@ jobs:
           npx tsx test/e2e/scenarios/run.ts --scenarios "${SCENARIOS}" --dry-run
 
       - name: Resolve workspace paths for WSL
-        if: contains(github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
+        if: contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
         shell: powershell
         run: |
           $winPath = "${{ github.workspace }}"
@@ -137,11 +146,11 @@ jobs:
           "WSL_WORKDIR=$wslWorkdir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run typed scenarios in WSL
-        if: contains(github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
+        if: contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
         shell: bash
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          SCENARIOS: ${{ github.event.inputs.scenarios }}
+          SCENARIOS: ${{ inputs.scenarios || github.event.inputs.scenarios }}
         run: |
           set -euo pipefail
           if [[ ! "${SCENARIOS}" =~ ^[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+)*$ ]]; then
@@ -175,7 +184,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: e2e-scenario-${{ github.event.inputs.scenarios }}
+          name: e2e-scenario-${{ inputs.scenarios || github.event.inputs.scenarios }}
           path: |
             .e2e/run-plan.json
             .e2e/plan.txt

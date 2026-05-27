@@ -11,13 +11,14 @@ import { listScenarios } from "../scenarios/registry.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const WORKFLOW_PATH = path.join(REPO_ROOT, ".github/workflows/e2e-scenarios.yaml");
+const ALL_WORKFLOW_PATH = path.join(REPO_ROOT, ".github/workflows/e2e-scenarios-all.yaml");
 const OLD_RUN_SCENARIO = path.join(REPO_ROOT, "test/e2e/runtime/run-scenario.sh");
 
 type AnyRecord = Record<string, unknown>;
 type WorkflowStep = { name?: string; run?: string; uses?: string; with?: AnyRecord; if?: string };
 
-function loadWorkflow(): AnyRecord {
-  return yaml.load(fs.readFileSync(WORKFLOW_PATH, "utf8")) as AnyRecord;
+function loadWorkflow(filePath = WORKFLOW_PATH): AnyRecord {
+  return yaml.load(fs.readFileSync(filePath, "utf8")) as AnyRecord;
 }
 
 function workflowInputs(workflow: AnyRecord): AnyRecord {
@@ -64,6 +65,19 @@ describe("runtime entrypoint and workflow migration", () => {
     expect(inputs).not.toHaveProperty("scenario");
     expect(inputs).not.toHaveProperty("suite_filter");
     expect(JSON.stringify(inputs.scenarios)).toMatch(/comma-separated|comma separated|id1,id2/i);
+  });
+
+  it("test_should_keep_all_scenarios_fanout_compatible_with_single_scenario_workflow", () => {
+    const workflow = loadWorkflow();
+    const allWorkflow = loadWorkflow(ALL_WORKFLOW_PATH);
+    const callInputs = (((workflow.on ?? workflow[true as unknown as string]) as AnyRecord).workflow_call as AnyRecord).inputs as AnyRecord;
+    const fanoutJob = (allWorkflow.jobs as AnyRecord)["e2e-scenarios-all"] as AnyRecord;
+
+    expect(callInputs).toHaveProperty("scenarios");
+    expect(fanoutJob.uses).toBe("./.github/workflows/e2e-scenarios.yaml");
+    expect(fanoutJob.with).toHaveProperty("scenarios");
+    expect(fanoutJob.with).not.toHaveProperty("scenario");
+    expect(fanoutJob.with).not.toHaveProperty("suite_filter");
   });
 
   it("test_should_preserve_wsl_and_macos_routing_metadata", () => {

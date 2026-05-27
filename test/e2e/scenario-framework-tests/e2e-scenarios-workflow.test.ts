@@ -66,6 +66,17 @@ describe("e2e-scenarios workflow", () => {
     expect(inputs).not.toHaveProperty("plan_only");
   });
 
+  it("e2e_scenarios_workflow_should_remain_reusable_by_all_scenarios_fanout", () => {
+    const wf = loadWorkflow();
+    const on = (wf.on ?? wf[true as unknown as string]) as AnyRecord | undefined;
+    const call = on?.workflow_call as AnyRecord | undefined;
+    const inputs = call?.inputs as AnyRecord | undefined;
+
+    expect(inputs).toHaveProperty("scenarios");
+    expect(inputs).not.toHaveProperty("scenario");
+    expect(inputs).not.toHaveProperty("suite_filter");
+  });
+
   it("e2e_scenarios_workflow_should_call_typed_runner_without_legacy_entrypoint", () => {
     const wf = loadWorkflow();
     const runScenario = namedStep(wf, "run-scenario", "Run typed scenarios");
@@ -77,7 +88,7 @@ describe("e2e-scenarios workflow", () => {
   it("e2e_scenarios_workflow_should_upload_artifacts", () => {
     const wf = loadWorkflow();
     const upload = uploadArtifactStep(wf, "run-scenario", "Upload scenario artifacts");
-    expect(upload.with?.name).toBe("e2e-scenario-${{ github.event.inputs.scenarios }}");
+    expect(upload.with?.name).toBe("e2e-scenario-${{ inputs.scenarios || github.event.inputs.scenarios }}");
     expect(upload.with?.path).toContain(".e2e/");
     expect(upload.with?.["include-hidden-files"]).toBe(true);
   });
