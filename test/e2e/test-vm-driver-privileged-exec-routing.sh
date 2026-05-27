@@ -6,9 +6,8 @@
 #
 # This is a hermetic host-side check: it builds the CLI, writes a fake
 # NemoClaw sandbox registry, puts a fake docker binary first in PATH, and
-# imports the built privileged-exec helper directly. It must fail if VM or
-# Docker-driver sandboxes route through the legacy openshell-cluster-nemoclaw
-# container.
+# imports the built privileged-exec helper directly. It verifies VM and
+# Docker-driver sandboxes route only through their direct sandbox containers.
 
 set -euo pipefail
 
@@ -76,9 +75,9 @@ function assertDirect(args, expectedContainer, label) {
     `${label} should route to the direct sandbox container`,
   );
   assert.equal(
-    args.includes("openshell-cluster-nemoclaw"),
+    args.includes("openshell-gateway-nemoclaw"),
     false,
-    `${label} unexpectedly routed through openshell-cluster-nemoclaw`,
+    `${label} unexpectedly routed through a non-sandbox gateway container`,
   );
 }
 
@@ -87,11 +86,10 @@ writeRegistry([
   { name: "alpha-child", openshellDriver: "vm" },
   { name: "dockerbox", openshellDriver: "docker" },
   { name: "unknown-driver", openshellDriver: null },
-  { name: "legacy-kube", openshellDriver: "kubernetes" },
 ]);
 
 writeDockerPs([
-  "openshell-cluster-nemoclaw",
+  "openshell-gateway-nemoclaw",
   "openshell-alpha-child",
   "openshell-alpha-child-2026",
   "openshell-alpha-abc123",
@@ -123,14 +121,7 @@ assertDirect(
   "registry entry without a recorded driver",
 );
 
-const legacyArgs = helper.privilegedSandboxExecArgv("legacy-kube", ["id"]);
-assert.equal(
-  legacyArgs.includes("openshell-cluster-nemoclaw"),
-  true,
-  "only explicit legacy kubernetes entries should use the cluster container",
-);
-
-writeDockerPs(["openshell-cluster-nemoclaw", "openshell-other"]);
+writeDockerPs(["openshell-gateway-nemoclaw", "openshell-other"]);
 assert.throws(
   () => helper.privilegedSandboxExecArgv("alpha", ["id"]),
   /No running direct OpenShell sandbox container found for 'alpha'.*driver: vm/,

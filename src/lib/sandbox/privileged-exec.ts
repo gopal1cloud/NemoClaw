@@ -14,10 +14,6 @@ const registry = require("../state/registry") as {
   };
 };
 
-const K3S_CONTAINER = "openshell-cluster-nemoclaw";
-const DIRECT_CONTAINER_DRIVERS = new Set(["docker", "vm"]);
-const LEGACY_KUBERNETES_DRIVERS = new Set(["kubernetes"]);
-
 type SandboxEntry = {
   name?: string;
   openshellDriver?: string | null;
@@ -27,11 +23,6 @@ function normalizeDriver(driver: unknown): string | null {
   return typeof driver === "string" && driver.trim()
     ? driver.trim().toLowerCase()
     : null;
-}
-
-function isDirectContainerDriver(driver: unknown): boolean {
-  const normalized = normalizeDriver(driver);
-  return normalized !== null && DIRECT_CONTAINER_DRIVERS.has(normalized);
 }
 
 function readSandboxEntry(sandboxName: string): SandboxEntry | null {
@@ -144,28 +135,6 @@ function resolveDirectSandboxContainer(
   throw missingDirectContainerError(sandboxName, driver);
 }
 
-function kubectlExecArgv(
-  sandboxName: string,
-  cmd: string[],
-  stdin = false,
-): string[] {
-  return [
-    "exec",
-    ...(stdin ? ["-i"] : []),
-    K3S_CONTAINER,
-    "kubectl",
-    "exec",
-    "-n",
-    "openshell",
-    sandboxName,
-    "-c",
-    "agent",
-    ...(stdin ? ["-i"] : []),
-    "--",
-    ...cmd,
-  ];
-}
-
 function privilegedSandboxExecArgv(
   sandboxName: string,
   cmd: string[],
@@ -173,12 +142,10 @@ function privilegedSandboxExecArgv(
 ): string[] {
   const entry = readSandboxEntry(sandboxName);
   const driver = normalizeDriver(entry?.openshellDriver);
-  if (driver && LEGACY_KUBERNETES_DRIVERS.has(driver)) {
-    return kubectlExecArgv(sandboxName, cmd, stdin);
-  }
 
-  // Docker/direct-container is the primary topology. Try it even when older
-  // registry entries do not record a driver, then fail clearly if absent.
+  // Docker/direct-container is the only supported privileged mutation path.
+  // Try it even when older registry entries do not record a driver, then fail
+  // clearly if no matching sandbox container is running.
   const container = findDirectSandboxContainer(sandboxName);
   if (container) {
     return [
@@ -191,19 +158,12 @@ function privilegedSandboxExecArgv(
     ];
   }
 
-  if (isDirectContainerDriver(driver)) {
-    throw missingDirectContainerError(sandboxName, driver);
-  }
-
   throw missingDirectContainerError(sandboxName, driver);
 }
 
 export {
-  K3S_CONTAINER,
-  isDirectContainerDriver,
   containerNameMatchesSandbox,
   selectDirectSandboxContainer,
   resolveDirectSandboxContainer,
-  kubectlExecArgv,
   privilegedSandboxExecArgv,
 };

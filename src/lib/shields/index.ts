@@ -54,9 +54,8 @@ const STATE_DIR = resolveNemoclawStateDir();
 // openshell sandbox exec runs commands INSIDE the Landlock domain, so it
 // can't modify read_only paths or change chattr flags. Privileged Docker exec
 // starts a new root process that does NOT inherit the Landlock ruleset.
-// Modern OpenShell gateways expose sandboxes as Docker containers, so we exec
-// into the sandbox container directly as root. A legacy kubectl argv still
-// exists behind the shared helper for explicit stale registry entries only.
+// OpenShell gateways expose sandboxes as Docker containers, so we exec into
+// the sandbox container directly as root.
 // ---------------------------------------------------------------------------
 
 function privilegedSandboxExec(sandboxName: string, cmd: string[]): void {
@@ -1021,7 +1020,7 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
 
   // 4. Start auto-restore timer (detached child process), unless skipped.
   //    Pass the absolute restore time, not a relative timeout. Steps 1-2b
-  //    can take minutes (policy apply + kubectl chmod), so a relative timeout
+  //    can take minutes (policy apply + privileged chmod), so a relative timeout
   //    passed at fork time would fire too early.
   if (!opts.skipTimer) {
     const restoreAt = new Date(Date.now() + timeoutSeconds * 1000);
