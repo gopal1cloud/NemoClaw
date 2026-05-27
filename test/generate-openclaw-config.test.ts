@@ -535,6 +535,12 @@ describe("generate-openclaw-config.py: config generation", () => {
       dmPolicy: "allowlist",
       allowFrom: allowedUsers,
     });
+    expect(config.channels.discord.groupPolicy).toBe("allowlist");
+    expect(config.channels.discord.guilds).toEqual({
+      "1491590992753590594": {
+        requireMention: true,
+      },
+    });
   });
 
   it("#3894: routes Discord gateway traffic through OpenClaw's managed proxy", () => {
