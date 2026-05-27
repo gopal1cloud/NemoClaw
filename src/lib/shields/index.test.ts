@@ -655,6 +655,168 @@ describe("shields — unit logic", () => {
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
   });
+
+  // -------------------------------------------------------------------
+  // NC-2243: verifyShieldsLockState cross-checks the sandbox filesystem
+  // so a host-root tamper that reverts /sandbox/.openclaw perms to a
+  // sandbox-writable state is surfaced as drift instead of reported as a
+  // clean lockdown.
+  // -------------------------------------------------------------------
+  describe("NC-2243: verifyShieldsLockState detects sandbox-filesystem drift", () => {
+    async function loadShieldsModule() {
+      const distModulePath = path.join(
+        process.cwd(),
+        "dist",
+        "lib",
+        "shields",
+        "index.js",
+      );
+      return import(distModulePath);
+    }
+
+    const target = {
+      configPath: "/sandbox/.openclaw/openclaw.json",
+      configDir: "/sandbox/.openclaw",
+      sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+    };
+
+    type StatLookup = Record<string, string>;
+
+    function makeExec(perms: StatLookup): (cmd: string[]) => string {
+      return (cmd: string[]) => {
+        if (cmd[0] === "stat") {
+          const file = cmd[cmd.length - 1];
+          if (file in perms) return perms[file];
+        }
+        return "";
+      };
+    }
+
+    it("returns ok when all locked files and the config dir match the expected perms", async () => {
+      const { verifyShieldsLockState } = await loadShieldsModule();
+      const exec = makeExec({
+        "/sandbox/.openclaw/openclaw.json": "444 root:root",
+        "/sandbox/.openclaw/.config-hash": "444 root:root",
+        "/sandbox/.openclaw": "755 root:root",
+      });
+
+      const result = verifyShieldsLockState("openclaw", target, {
+        exec,
+        assertLegacyLayout: () => {},
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.issues).toEqual([]);
+    });
+
+    it("flags drift when host-root tamper reverts dir + files to sandbox-writable perms", async () => {
+      const { verifyShieldsLockState } = await loadShieldsModule();
+      // Reproduce the issue #4243 host-root tamper sequence:
+      //   chmod 2770 /sandbox/.openclaw
+      //   chown sandbox:sandbox /sandbox/.openclaw
+      //   chmod 660 /sandbox/.openclaw/openclaw.json
+      //   chown sandbox:sandbox /sandbox/.openclaw/openclaw.json
+      //   chmod 660 /sandbox/.openclaw/.config-hash
+      //   chown sandbox:sandbox /sandbox/.openclaw/.config-hash
+      const exec = makeExec({
+        "/sandbox/.openclaw/openclaw.json": "660 sandbox:sandbox",
+        "/sandbox/.openclaw/.config-hash": "660 sandbox:sandbox",
+        "/sandbox/.openclaw": "2770 sandbox:sandbox",
+      });
+
+      const result = verifyShieldsLockState("openclaw", target, {
+        exec,
+        assertLegacyLayout: () => {},
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.issues).toEqual(
+        expect.arrayContaining([
+          "/sandbox/.openclaw/openclaw.json mode=660 (expected 444)",
+          "/sandbox/.openclaw/openclaw.json owner=sandbox:sandbox (expected root:root)",
+          "/sandbox/.openclaw/.config-hash mode=660 (expected 444)",
+          "/sandbox/.openclaw/.config-hash owner=sandbox:sandbox (expected root:root)",
+          "dir mode=2770 (expected 755)",
+          "dir owner=sandbox:sandbox (expected root:root)",
+        ]),
+      );
+    });
+
+    it("reports stat failures as drift when the sandbox cannot be reached", async () => {
+      const { verifyShieldsLockState } = await loadShieldsModule();
+      const exec = (_cmd: string[]): string => {
+        throw new Error("Container not found");
+      };
+
+      const result = verifyShieldsLockState("openclaw", target, {
+        exec,
+        assertLegacyLayout: () => {},
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.issues.some((issue) => issue.includes("stat failed"))).toBe(
+        true,
+      );
+      expect(result.issues.some((issue) => issue.includes("Container not found"))).toBe(
+        true,
+      );
+    });
+
+    it("flags missing immutable bit only when verifyChattr is requested", async () => {
+      const { verifyShieldsLockState } = await loadShieldsModule();
+      const exec = (cmd: string[]): string => {
+        if (cmd[0] === "stat") {
+          if (cmd[cmd.length - 1] === "/sandbox/.openclaw") return "755 root:root";
+          return "444 root:root";
+        }
+        if (cmd[0] === "lsattr") {
+          // No 'i' flag present.
+          return `----e----- ${cmd[cmd.length - 1]}`;
+        }
+        return "";
+      };
+
+      const withoutChattrCheck = verifyShieldsLockState("openclaw", target, {
+        exec,
+        assertLegacyLayout: () => {},
+      });
+      expect(withoutChattrCheck.ok).toBe(true);
+
+      const withChattrCheck = verifyShieldsLockState("openclaw", target, {
+        exec,
+        verifyChattr: true,
+        assertLegacyLayout: () => {},
+      });
+      expect(withChattrCheck.ok).toBe(false);
+      expect(withChattrCheck.issues).toEqual(
+        expect.arrayContaining([
+          "/sandbox/.openclaw/openclaw.json immutable bit not set",
+          "/sandbox/.openclaw/.config-hash immutable bit not set",
+        ]),
+      );
+    });
+
+    it("surfaces a legacy state layout violation when the asserter throws", async () => {
+      const { verifyShieldsLockState } = await loadShieldsModule();
+      const exec = makeExec({
+        "/sandbox/.openclaw/openclaw.json": "444 root:root",
+        "/sandbox/.openclaw/.config-hash": "444 root:root",
+        "/sandbox/.openclaw": "755 root:root",
+      });
+
+      const result = verifyShieldsLockState("openclaw", target, {
+        exec,
+        assertLegacyLayout: () => {
+          throw new Error("legacy data dir exists: /sandbox/.openclaw-data");
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.issues).toContain(
+        "legacy data dir exists: /sandbox/.openclaw-data",
+      );
+    });
+  });
 });
 
 // -------------------------------------------------------------------
