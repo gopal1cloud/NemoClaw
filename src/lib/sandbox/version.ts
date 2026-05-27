@@ -5,20 +5,11 @@
 //
 // Compares the agent version running inside a sandbox against the version
 // this NemoClaw release was built for. Two code paths:
-//   Fast: registry lookup (no SSH, used when agentVersion is already cached)
-//   Slow: SSH exec into sandbox, run version_command, cache result in registry
+//   Fast: registry lookup (no sandbox RPC, used when agentVersion is already cached)
+//   Slow: gRPC exec into sandbox, run version_command, cache result in registry
 
-import { spawnSync } from "child_process";
-import fs from "fs";
-import os from "os";
-import path from "path";
-
-import {
-  captureSandboxSshConfigCommand,
-  parseVersionFromText,
-  versionGte,
-} from "../adapters/openshell/client.js";
-import { resolveOpenshell } from "../adapters/openshell/resolve.js";
+import { parseVersionFromText, versionGte } from "../adapters/openshell/client.js";
+import { execTextSync } from "../adapters/openshell/grpc.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import { loadAgent } from "../agent/defs.js";
 import * as registry from "../state/registry.js";
@@ -27,7 +18,7 @@ export interface VersionCheckResult {
   sandboxVersion: string | null;
   expectedVersion: string | null;
   isStale: boolean;
-  detectionMethod: "registry" | "ssh-exec" | "unavailable";
+  detectionMethod: "registry" | "grpc-exec" | "unavailable";
 }
 
 /**
@@ -41,43 +32,20 @@ function resolveAgentForSandbox(sandboxName: string): ReturnType<typeof loadAgen
 }
 
 /**
- * Probe the live agent version inside a sandbox via SSH.
+ * Probe the live agent version inside a sandbox via OpenShell gRPC.
  * Returns the parsed version string or null on failure.
  */
 export function probeAgentVersion(sandboxName: string): string | null {
   const agent = resolveAgentForSandbox(sandboxName);
 
-  const openshellBinary = resolveOpenshell();
-  if (!openshellBinary) return null;
-
-  const sshConfigResult = captureSandboxSshConfigCommand(openshellBinary, sandboxName, {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  if (sshConfigResult.status !== 0) return null;
-
-  const tmpFile = path.join(os.tmpdir(), `nemoclaw-ver-${process.pid}-${Date.now()}.conf`);
-  fs.writeFileSync(tmpFile, sshConfigResult.output, { mode: 0o600 });
   try {
-    const result = spawnSync(
-      "ssh",
-      [
-        "-F", tmpFile,
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "UserKnownHostsFile=/dev/null",
-        "-o", "ConnectTimeout=5",
-        "-o", "LogLevel=ERROR",
-        `openshell-${sandboxName}`,
-        agent.versionCommand,
-      ],
-      { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
-    );
+    const result = execTextSync(sandboxName, ["sh", "-c", agent.versionCommand], {
+      timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    });
     if (result.status !== 0) return null;
     return parseVersionFromText(result.stdout);
   } catch {
     return null;
-  } finally {
-    try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
   }
 }
 
@@ -85,7 +53,7 @@ export function probeAgentVersion(sandboxName: string): string | null {
  * Check whether a sandbox is running an outdated agent version.
  *
  * Fast path: compare registry.agentVersion against manifest expected_version.
- * Slow path: SSH into sandbox, run version_command, cache result in registry.
+ * Slow path: gRPC exec into sandbox, run version_command, cache result in registry.
  */
 export function checkAgentVersion(
   sandboxName: string,
@@ -115,7 +83,7 @@ export function checkAgentVersion(
     return { sandboxVersion: null, expectedVersion, isStale: false, detectionMethod: "unavailable" };
   }
 
-  // Slow path: SSH exec into sandbox
+  // Slow path: gRPC exec into sandbox
   const probed = probeAgentVersion(sandboxName);
   if (probed && sb) {
     // Cache for future fast-path lookups
@@ -131,7 +99,7 @@ export function checkAgentVersion(
     sandboxVersion: probed,
     expectedVersion,
     isStale,
-    detectionMethod: "ssh-exec",
+    detectionMethod: "grpc-exec",
   };
 }
 

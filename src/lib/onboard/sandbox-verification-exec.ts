@@ -8,9 +8,7 @@
  * result, so we deliberately swallow spawn errors here.
  */
 
-import { spawnSync } from "node:child_process";
-
-import { getOpenshellBinary } from "../adapters/openshell/runtime";
+import { execTextSync } from "../adapters/openshell/grpc";
 
 const SANDBOX_EXEC_TIMEOUT_MS = 15000;
 
@@ -19,16 +17,13 @@ export function executeSandboxCommandForVerification(
   script: string,
 ): { status: number; stdout: string; stderr: string } | null {
   try {
-    const result = spawnSync(
-      getOpenshellBinary(),
-      ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-c", script],
-      { encoding: "utf-8", timeout: SANDBOX_EXEC_TIMEOUT_MS, stdio: ["ignore", "pipe", "pipe"] },
-    );
-    if (result.error) return null;
+    const result = execTextSync(sandboxName, ["sh", "-c", script], {
+      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+    });
     return {
-      status: result.status ?? 1,
-      stdout: (result.stdout || "").trim(),
-      stderr: (result.stderr || "").trim(),
+      status: result.status,
+      stdout: result.stdout.trim(),
+      stderr: result.stderr.trim(),
     };
   } catch {
     return null;

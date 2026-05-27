@@ -14,7 +14,6 @@ class ProcessExitError extends Error {
 
 function makeDeps(overrides: Partial<ShareCommandDeps> = {}): ShareCommandDeps {
   return {
-    getSshConfig: () => ({ status: 0, output: "" }),
     ensureLive: async () => undefined,
     checkSandboxPathExists: () => true,
     colorGreen: "",

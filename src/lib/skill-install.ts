@@ -2,18 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Skill install logic for `nemoclaw <sandbox> skill install <path>`.
-// Validates a local SKILL.md, uploads it to the sandbox via SSH, and
+// Validates a local SKILL.md, uploads it to the sandbox via OpenShell gRPC, and
 // performs agent-specific post-install steps (session refresh for
 // OpenClaw). Non-OpenClaw agents get a "restart gateway" hint until a
 // generic refresh contract is defined in the manifest schema.
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
 // yaml is a production dependency (used by policies.ts, onboard.ts)
 import YAML from "yaml";
 
+import { execInputStreamSync, execTextSync } from "./adapters/openshell/grpc";
 import { isRecord } from "./core/json-types";
 
 // ── Frontmatter parsing ──────────────────────────────────────────
@@ -131,10 +131,11 @@ export function validateRelativePath(rel: string): boolean {
   return segments.every((s) => s !== "" && s !== ".." && s !== ".");
 }
 
-// ── SSH helpers ──────────────────────────────────────────────────
+// ── Sandbox gRPC exec helpers ────────────────────────────────────
 
 export interface SshContext {
-  configFile: string;
+  /** @deprecated retained for test fixtures that still construct the old SSH context shape. */
+  configFile?: string;
   sandboxName: string;
 }
 
@@ -145,8 +146,7 @@ export interface SshResult {
 }
 
 /**
- * Run a command on the sandbox via SSH with optional stdin content.
- * Uses the same SSH flags as executeSandboxCommand in sandbox-process-recovery-action.ts.
+ * Run a command in the sandbox with optional stdin content.
  */
 export function sshExec(
   ctx: SshContext,
@@ -154,33 +154,24 @@ export function sshExec(
   opts: { input?: string | Buffer; timeout?: number } = {},
 ): SshResult | null {
   try {
-    const result = spawnSync(
-      "ssh",
-      [
-        "-F",
-        ctx.configFile,
-        "-o",
-        "StrictHostKeyChecking=no",
-        "-o",
-        "UserKnownHostsFile=/dev/null",
-        "-o",
-        "ConnectTimeout=10",
-        "-o",
-        "LogLevel=ERROR",
-        `openshell-${ctx.sandboxName}`,
-        command,
-      ],
-      {
-        encoding: "utf-8",
-        stdio: [opts.input !== undefined ? "pipe" : "ignore", "pipe", "pipe"],
-        input: opts.input,
-        timeout: opts.timeout ?? 30_000,
-      },
-    );
+    const timeoutMs = opts.timeout ?? 30_000;
+    const result =
+      opts.input === undefined
+        ? execTextSync(ctx.sandboxName, ["sh", "-c", command], { timeoutMs })
+        : (() => {
+            const streamed = execInputStreamSync(ctx.sandboxName, ["sh", "-c", command], opts.input, {
+              timeoutMs,
+            });
+            return {
+              status: streamed.status,
+              stdout: streamed.stdout.toString("utf-8"),
+              stderr: streamed.stderr.toString("utf-8"),
+            };
+          })();
     return {
-      status: result.status ?? 1,
-      stdout: (result.stdout || "").trim(),
-      stderr: (result.stderr || "").trim(),
+      status: result.status,
+      stdout: result.stdout.trim(),
+      stderr: result.stderr.trim(),
     };
   } catch {
     return null;
@@ -188,7 +179,7 @@ export function sshExec(
 }
 
 /**
- * Upload a file to the sandbox by piping its content through SSH stdin.
+ * Upload a file to the sandbox by piping its content through gRPC stdin.
  * Creates the target directory and writes the file in a single remote command.
  */
 export function uploadFile(
@@ -213,7 +204,7 @@ export interface CollectedFiles {
  * Collect files under `dir` recursively, returning paths relative to `dir`.
  * Dotfiles (names starting with `.`) are excluded by default and reported
  * separately so the caller can warn. Paths with unsafe characters are
- * rejected to prevent shell injection when interpolated into SSH commands.
+ * rejected to prevent shell injection when interpolated into remote shell commands.
  */
 export function collectFiles(dir: string): CollectedFiles {
   const files: string[] = [];

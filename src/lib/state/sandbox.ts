@@ -25,9 +25,11 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "child_process";
 
-import { captureSandboxSshConfigCommand } from "../adapters/openshell/client.js";
-import { resolveOpenshell } from "../adapters/openshell/resolve.js";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
+import {
+  execBinaryStreamSync,
+  execInputStreamSync,
+  execTextSync,
+} from "../adapters/openshell/grpc.js";
 import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isRecord, type UnknownRecord } from "../core/json-types.js";
@@ -461,40 +463,6 @@ export function safeTarExtract(tarBuffer: Buffer, targetDir: string): SafeExtrac
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-function getSshConfig(sandboxName: string): string | null {
-  const openshellBinary = resolveOpenshell();
-  if (!openshellBinary) return null;
-
-  const result = captureSandboxSshConfigCommand(openshellBinary, sandboxName, {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  if (result.status !== 0) return null;
-  return result.output;
-}
-
-function writeTempSshConfig(sshConfig: string): string {
-  const tmpFile = path.join(os.tmpdir(), `nemoclaw-state-${process.pid}-${Date.now()}.conf`);
-  writeFileSync(tmpFile, sshConfig, { mode: 0o600 });
-  return tmpFile;
-}
-
-function sshArgs(configFile: string, sandboxName: string): string[] {
-  return [
-    "-F",
-    configFile,
-    "-o",
-    "StrictHostKeyChecking=no",
-    "-o",
-    "UserKnownHostsFile=/dev/null",
-    "-o",
-    "ConnectTimeout=10",
-    "-o",
-    "LogLevel=ERROR",
-    `openshell-${sandboxName}`,
-  ];
-}
-
 function computeBlueprintDigest(): string | null {
   // Look for blueprint.yaml relative to the agent-defs ROOT
   const candidates = [
@@ -839,7 +807,6 @@ function buildStateFileBackupCommand(dir: string, spec: StateFileSpec): string {
 }
 
 function backupStateFile(
-  configFile: string,
   sandboxName: string,
   dir: string,
   spec: StateFileSpec,
@@ -847,18 +814,22 @@ function backupStateFile(
 ): "backed_up" | "missing" | "failed" {
   const command = buildStateFileBackupCommand(dir, spec);
   _log(`Backing up state file ${spec.path} (${spec.strategy})`);
-  const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 120000,
-    maxBuffer: 256 * 1024 * 1024,
-  });
+  let result: ReturnType<typeof execBinaryStreamSync>;
+  try {
+    result = execBinaryStreamSync(sandboxName, ["sh", "-c", command], { timeoutMs: 120000 });
+  } catch (error) {
+    _log(
+      `FAILED: state file backup ${spec.path}: ${
+        error instanceof Error ? error.message : String(error)
+      }`.substring(0, 240),
+    );
+    return "failed";
+  }
 
   if (result.status === 2) return "missing";
-  if (result.status !== 0 || result.error || result.signal || !result.stdout) {
+  if (result.status !== 0 || !result.stdout) {
     const detail =
-      (result.stderr?.toString() || "").trim() ||
-      result.error?.message ||
-      (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
+      result.stderr.toString().trim() || `exit ${String(result.status)}`;
     _log(`FAILED: state file backup ${spec.path}: ${detail.substring(0, 200)}`);
     return "failed";
   }
@@ -906,7 +877,6 @@ function buildStateFileRestoreCommand(dir: string, spec: StateFileSpec): string 
 }
 
 function restoreStateFile(
-  configFile: string,
   sandboxName: string,
   dir: string,
   spec: StateFileSpec,
@@ -917,18 +887,24 @@ function restoreStateFile(
 
   const command = buildStateFileRestoreCommand(dir, spec);
   _log(`Restoring state file ${spec.path} (${spec.strategy})`);
-  const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
-    input: readFileSync(localPath),
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: 120000,
-  });
+  let result: ReturnType<typeof execInputStreamSync>;
+  try {
+    result = execInputStreamSync(sandboxName, ["sh", "-c", command], readFileSync(localPath), {
+      timeoutMs: 120000,
+    });
+  } catch (error) {
+    _log(
+      `FAILED: state file restore ${spec.path}: ${
+        error instanceof Error ? error.message : String(error)
+      }`.substring(0, 240),
+    );
+    return false;
+  }
 
-  if (result.status === 0 && !result.error && !result.signal) return true;
+  if (result.status === 0) return true;
 
   const detail =
-    (result.stderr?.toString() || "").trim() ||
-    result.error?.message ||
-    (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
+    result.stderr.toString().trim() || `exit ${String(result.status)}`;
   _log(`FAILED: state file restore ${spec.path}: ${detail.substring(0, 200)}`);
   return false;
 }
@@ -1028,23 +1004,6 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     return { success: true, manifest, backedUpDirs, failedDirs, backedUpFiles, failedFiles };
   }
 
-  // SSH+tar single-roundtrip download
-  _log("Getting SSH config via openshell sandbox ssh-config");
-  const sshConfig = getSshConfig(sandboxName);
-  if (!sshConfig) {
-    _log("FAILED: Could not get SSH config");
-    return {
-      success: false,
-      manifest,
-      backedUpDirs,
-      failedDirs: [...stateDirs],
-      backedUpFiles,
-      failedFiles: stateFiles.map((f) => f.path),
-    };
-  }
-  _log(`SSH config obtained (${sshConfig.length} bytes)`);
-
-  const configFile = writeTempSshConfig(sshConfig);
   try {
     if (stateDirs.length > 0) {
       // Build tar command that only includes existing directories.
@@ -1058,12 +1017,27 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         .join("; ");
       const workspaceGlobCmd = `for d in ${shellQuote(dir)}/workspace-*/; do [ -d "$d" ] && basename "$d"; done 2>/dev/null`;
       const fullCheckCmd = `{ ${existCheckCmd}; ${workspaceGlobCmd}; } 2>/dev/null | awk '!seen[$0]++'`;
-      _log(`Checking existing dirs via SSH: ${fullCheckCmd.substring(0, 100)}...`);
-      const existResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), fullCheckCmd], {
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 30000,
-      });
+      _log(`Checking existing dirs via gRPC exec: ${fullCheckCmd.substring(0, 100)}...`);
+      let existResult: ReturnType<typeof execTextSync>;
+      try {
+        existResult = execTextSync(sandboxName, ["sh", "-c", fullCheckCmd], {
+          timeoutMs: 30000,
+        });
+      } catch (error) {
+        _log(
+          `FAILED: gRPC dir check failed — ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        return {
+          success: false,
+          manifest,
+          backedUpDirs,
+          failedDirs: [...stateDirs],
+          backedUpFiles,
+          failedFiles: stateFiles.map((f) => f.path),
+        };
+      }
       _log(
         `Dir check: exit=${existResult.status}, stdout=${(existResult.stdout || "").trim().substring(0, 200)}, stderr=${(existResult.stderr || "").trim().substring(0, 200)}`,
       );
@@ -1077,7 +1051,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 
       if (existResult.status !== 0) {
         _log(
-          `FAILED: SSH dir check exited ${existResult.status} — cannot determine which dirs exist`,
+          `FAILED: gRPC dir check exited ${existResult.status} — cannot determine which dirs exist`,
         );
         return {
           success: false,
@@ -1103,7 +1077,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         // Per-dir `find` invocations are joined with `;` (not `&&`) and each
         // is tolerant of its own exit code via `|| true`. The base image bakes
         // a few state subdirs as root-owned (e.g. `extensions/<plugin>`,
-        // `agents/<id>`) and `find` walking those from the sandbox-user SSH
+        // `agents/<id>`) and `find` walking those from the sandbox-user exec
         // session exits 1 on permission denied. The audit's real signal is
         // stdout (the printf-emitted symlink/hardlink/special-file rows);
         // letting one perm-denied subdir abort the whole chain blocks legitimate
@@ -1115,15 +1089,27 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
           )
           .join("; ");
         _log(`Pre-backup audit: checking for symlinks, hard links, and special files`);
-        const auditResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), auditCmd], {
-          encoding: "utf-8",
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: 30000,
-        });
+        let auditResult: ReturnType<typeof execTextSync>;
+        try {
+          auditResult = execTextSync(sandboxName, ["sh", "-c", auditCmd], {
+            timeoutMs: 30000,
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          _log(`FAILED: Pre-backup audit gRPC command failed — ${detail}`);
+          return {
+            success: false,
+            manifest,
+            backedUpDirs,
+            failedDirs: [...existingDirs],
+            backedUpFiles,
+            failedFiles: stateFiles.map((f) => f.path),
+            error: `Pre-backup audit failed: ${detail}`,
+          };
+        }
         if (auditResult.status !== 0) {
-          const stderr = (auditResult.stderr || "").trim();
-          const detail =
-            stderr || auditResult.error?.message || `exit ${String(auditResult.status)}`;
+          const stderr = auditResult.stderr.trim();
+          const detail = stderr || `exit ${String(auditResult.status)}`;
           _log(`FAILED: Pre-backup audit command failed — ${detail}`);
           return {
             success: false,
@@ -1180,19 +1166,27 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         }
         _log("Pre-backup audit passed — no unsafe symlinks, hard links, or special files found");
 
-        // Download via SSH+tar
+        // Download via gRPC+tar
         // NC-2227-04: Removed -h flag (was following symlinks). State dirs are
         // now agent-writable and co-located with config — a compromised agent
         // could create symlinks to exfiltrate config contents via backup.
         const tarCmd = `tar -cf - -C ${shellQuote(dir)} -- ${existingDirs.map(shellQuote).join(" ")}`;
-        _log(`Downloading via SSH+tar: ${tarCmd}`);
-        const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), tarCmd], {
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: 120000,
-          maxBuffer: 256 * 1024 * 1024,
-        });
+        _log(`Downloading via gRPC+tar: ${tarCmd}`);
+        let result: ReturnType<typeof execBinaryStreamSync>;
+        try {
+          result = execBinaryStreamSync(sandboxName, ["sh", "-c", tarCmd], {
+            timeoutMs: 120000,
+          });
+        } catch (error) {
+          _log(
+            `FAILED: gRPC tar download failed — ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          result = { status: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+        }
         _log(
-          `SSH+tar download: exit=${result.status}, stdout=${result.stdout ? result.stdout.length + " bytes" : "null"}, stderr=${(result.stderr?.toString() || "").substring(0, 200)}`,
+          `gRPC+tar download: exit=${result.status}, stdout=${result.stdout ? result.stdout.length + " bytes" : "null"}, stderr=${result.stderr.toString().substring(0, 200)}`,
         );
 
         // GNU tar exit codes: 0 = success, 1 = files changed during archive,
@@ -1224,7 +1218,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
               }
             } else {
               const tarFailedDirs = failedDirsFromTarStderr(
-                result.stderr?.toString() || "",
+                result.stderr.toString() || "",
                 existingDirs,
               );
               if (tarFailedDirs.size === 0) {
@@ -1257,19 +1251,17 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     }
 
     for (const spec of stateFiles) {
-      const result = backupStateFile(configFile, sandboxName, dir, spec, backupPath);
+      const result = backupStateFile(sandboxName, dir, spec, backupPath);
       if (result === "backed_up") {
         backedUpFiles.push(spec.path);
       } else if (result === "failed") {
         failedFiles.push(spec.path);
       }
     }
-  } finally {
-    try {
-      require("node:fs").unlinkSync(configFile);
-    } catch {
-      /* ignore */
-    }
+  } catch (error) {
+    _log(`FAILED: gRPC backup operation failed: ${error instanceof Error ? error.message : String(error)}`);
+    failedDirs.push(...stateDirs.filter((d) => !backedUpDirs.includes(d)));
+    failedFiles.push(...stateFiles.map((f) => f.path).filter((p) => !backedUpFiles.includes(p)));
   }
 
   // SECURITY: Strip credentials from the local backup
@@ -1358,20 +1350,6 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
     return { success: true, restoredDirs, failedDirs, restoredFiles, failedFiles };
   }
 
-  _log("Getting SSH config for restore");
-  const sshConfig = getSshConfig(sandboxName);
-  if (!sshConfig) {
-    _log("FAILED: Could not get SSH config for restore");
-    return {
-      success: false,
-      restoredDirs,
-      failedDirs: [...localDirs],
-      restoredFiles,
-      failedFiles: localFiles.map((f) => f.path),
-    };
-  }
-
-  const configFile = writeTempSshConfig(sshConfig);
   try {
     if (localDirs.length > 0) {
       // Upload via tar pipe
@@ -1408,16 +1386,25 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
       // are cleared and restored from the backup.
       const rmCmd = buildRestoreCleanupCommand(dir, localDirs, preserveManagedExtensions);
       _log(`Cleaning target dirs before restore: ${rmCmd}`);
-      const rmResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), rmCmd], {
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 30000,
-      });
-      if (rmResult.status !== 0 || rmResult.error || rmResult.signal) {
-        const stderr = (rmResult.stderr?.toString() || "").trim();
-        const detail =
-          stderr ||
-          rmResult.error?.message ||
-          (rmResult.signal ? `signal ${rmResult.signal}` : `exit ${String(rmResult.status)}`);
+      let rmResult: ReturnType<typeof execBinaryStreamSync>;
+      try {
+        rmResult = execBinaryStreamSync(sandboxName, ["sh", "-c", rmCmd], {
+          timeoutMs: 30000,
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        _log(`FAILED: pre-restore cleanup failed: ${detail.substring(0, 200)}`);
+        return {
+          success: false,
+          restoredDirs,
+          failedDirs: [...localDirs],
+          restoredFiles,
+          failedFiles: localFiles.map((f) => f.path),
+        };
+      }
+      if (rmResult.status !== 0) {
+        const stderr = rmResult.stderr.toString().trim();
+        const detail = stderr || `exit ${String(rmResult.status)}`;
         _log(`FAILED: pre-restore cleanup failed: ${detail.substring(0, 200)}`);
         return {
           success: false,
@@ -1429,29 +1416,33 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
       }
 
       const extractCmd = `tar --no-same-owner -xf - -C ${shellQuote(dir)}`;
-      const sshResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), extractCmd], {
-        input: tarResult.stdout,
-        stdio: ["pipe", "pipe", "pipe"],
-        timeout: 120000,
-      });
+      let extractResult: ReturnType<typeof execInputStreamSync>;
+      try {
+        extractResult = execInputStreamSync(sandboxName, ["sh", "-c", extractCmd], tarResult.stdout, {
+          timeoutMs: 120000,
+        });
+      } catch (error) {
+        _log(
+          `FAILED: gRPC tar restore failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`.substring(0, 240),
+        );
+        extractResult = { status: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+      }
 
-      if (sshResult.status === 0) {
+      if (extractResult.status === 0) {
         const restoredPaths = localDirs.map((d) => `${dir}/${d}`);
 
-        // Best-effort only: OpenShell exec/SSH normally runs as the sandbox user,
+        // Best-effort only: OpenShell gRPC exec normally runs as the sandbox user,
         // which cannot chown even files it owns. The tar restore above runs as the
         // same user, so the real restore gate is whether the restored state dirs
         // are usable by that user.
         const chownCmd = `chown -R sandbox:sandbox -- ${restoredPaths.map(shellQuote).join(" ")} 2>/dev/null || true`;
         _log(`Best-effort ownership repair: ${chownCmd}`);
-        const chownResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), chownCmd], {
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: 30000,
-        });
-        if (chownResult.error || chownResult.signal) {
-          const detail =
-            chownResult.error?.message ||
-            (chownResult.signal ? `signal ${chownResult.signal}` : "unknown error");
+        try {
+          execBinaryStreamSync(sandboxName, ["sh", "-c", chownCmd], { timeoutMs: 30000 });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
           _log(
             `WARNING: post-restore ownership repair did not complete: ${detail.substring(0, 200)}`,
           );
@@ -1464,24 +1455,23 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
           )
           .join(" && ");
         _log(`Verifying restored state usability: ${usabilityCmd}`);
-        const usabilityResult = spawnSync(
-          "ssh",
-          [...sshArgs(configFile, sandboxName), usabilityCmd],
-          {
-            stdio: ["ignore", "pipe", "pipe"],
-            timeout: 30000,
-          },
-        );
-        if (usabilityResult.status === 0 && !usabilityResult.error && !usabilityResult.signal) {
+        let usabilityResult: ReturnType<typeof execBinaryStreamSync>;
+        try {
+          usabilityResult = execBinaryStreamSync(sandboxName, ["sh", "-c", usabilityCmd], {
+            timeoutMs: 30000,
+          });
+        } catch (error) {
+          usabilityResult = {
+            status: 1,
+            stdout: Buffer.alloc(0),
+            stderr: Buffer.from(error instanceof Error ? error.message : String(error)),
+          };
+        }
+        if (usabilityResult.status === 0) {
           restoredDirs.push(...localDirs);
         } else {
-          const stderr = (usabilityResult.stderr?.toString() || "").trim();
-          const detail =
-            stderr ||
-            usabilityResult.error?.message ||
-            (usabilityResult.signal
-              ? `signal ${usabilityResult.signal}`
-              : `exit ${String(usabilityResult.status)}`);
+          const stderr = usabilityResult.stderr.toString().trim();
+          const detail = stderr || `exit ${String(usabilityResult.status)}`;
           _log(`FAILED: restored state usability check failed: ${detail.substring(0, 200)}`);
           failedDirs.push(...localDirs);
         }
@@ -1491,18 +1481,16 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
     }
 
     for (const spec of localFiles) {
-      if (restoreStateFile(configFile, sandboxName, dir, spec, backupPath)) {
+      if (restoreStateFile(sandboxName, dir, spec, backupPath)) {
         restoredFiles.push(spec.path);
       } else {
         failedFiles.push(spec.path);
       }
     }
-  } finally {
-    try {
-      require("node:fs").unlinkSync(configFile);
-    } catch {
-      /* ignore */
-    }
+  } catch (error) {
+    _log(`FAILED: gRPC restore operation failed: ${error instanceof Error ? error.message : String(error)}`);
+    failedDirs.push(...localDirs.filter((d) => !restoredDirs.includes(d)));
+    failedFiles.push(...localFiles.map((f) => f.path).filter((p) => !restoredFiles.includes(p)));
   }
 
   return {

@@ -3,10 +3,7 @@
 
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { captureSandboxSshConfig } from "../../adapters/openshell/runtime";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
@@ -168,62 +165,38 @@ export async function installSandboxSkill(
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const paths = skillInstall.resolveSkillPaths(agent, frontmatter.name);
 
-  // 4. Get SSH config
-  const sshConfigResult = captureSandboxSshConfig(sandboxName, {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  if (sshConfigResult.status !== 0) {
-    console.error("  Failed to obtain SSH configuration for the sandbox.");
+  const ctx = { sandboxName };
+
+  // 4. Check if skill already exists (update vs fresh install)
+  const isUpdate = skillInstall.checkExisting(ctx, paths);
+
+  // 5. Upload skill directory
+  const { uploaded, failed } = skillInstall.uploadDirectory(ctx, skillDir, paths.uploadDir);
+  if (failed.length > 0) {
+    console.error(`  Failed to upload ${failed.length} file(s): ${failed.join(", ")}`);
     process.exit(1);
   }
+  console.log(`  ${G}✓${R} Uploaded ${uploaded} file(s) to sandbox`);
 
-  const tmpSshConfig = path.join(
-    os.tmpdir(),
-    `nemoclaw-ssh-skill-${process.pid}-${Date.now()}.conf`,
-  );
-  fs.writeFileSync(tmpSshConfig, sshConfigResult.output, { mode: 0o600 });
-
-  try {
-    const ctx = { configFile: tmpSshConfig, sandboxName };
-
-    // 5. Check if skill already exists (update vs fresh install)
-    const isUpdate = skillInstall.checkExisting(ctx, paths);
-
-    // 6. Upload skill directory
-    const { uploaded, failed } = skillInstall.uploadDirectory(ctx, skillDir, paths.uploadDir);
-    if (failed.length > 0) {
-      console.error(`  Failed to upload ${failed.length} file(s): ${failed.join(", ")}`);
-      process.exit(1);
-    }
-    console.log(`  ${G}✓${R} Uploaded ${uploaded} file(s) to sandbox`);
-
-    // 7. Post-install (OpenClaw mirror + refresh, or restart hint).
-    //    OpenClaw caches skill content per session, so always refresh the
-    //    session index after an install/update to avoid stale SKILL.md data.
-    const post = skillInstall.postInstall(ctx, paths, skillDir);
-    for (const msg of post.messages) {
-      if (msg.startsWith("Warning:")) {
-        console.error(`  ${YW}${msg}${R}`);
-      } else {
-        console.log(`  ${D}${msg}${R}`);
-      }
-    }
-
-    // 8. Verify
-    const verified = skillInstall.verifyInstall(ctx, paths);
-    if (verified) {
-      const verb = isUpdate ? "updated" : "installed";
-      console.log(`  ${G}✓${R} Skill '${frontmatter.name}' ${verb}`);
+  // 6. Post-install (OpenClaw mirror + refresh, or restart hint).
+  //    OpenClaw caches skill content per session, so always refresh the
+  //    session index after an install/update to avoid stale SKILL.md data.
+  const post = skillInstall.postInstall(ctx, paths, skillDir);
+  for (const msg of post.messages) {
+    if (msg.startsWith("Warning:")) {
+      console.error(`  ${YW}${msg}${R}`);
     } else {
-      console.error(`  Skill uploaded but verification failed at ${paths.uploadDir}/SKILL.md`);
-      process.exit(1);
+      console.log(`  ${D}${msg}${R}`);
     }
-  } finally {
-    try {
-      fs.unlinkSync(tmpSshConfig);
-    } catch {
-      /* ignore */
-    }
+  }
+
+  // 7. Verify
+  const verified = skillInstall.verifyInstall(ctx, paths);
+  if (verified) {
+    const verb = isUpdate ? "updated" : "installed";
+    console.log(`  ${G}✓${R} Skill '${frontmatter.name}' ${verb}`);
+  } else {
+    console.error(`  Skill uploaded but verification failed at ${paths.uploadDir}/SKILL.md`);
+    process.exit(1);
   }
 }

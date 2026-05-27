@@ -21,6 +21,11 @@ const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snap-naming-"))
 process.env.HOME = TMP_HOME;
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
+const GRPC_TEST_ENV_KEYS = [
+  "NEMOCLAW_GRPC_TEST_TRANSPORT",
+  "NEMOCLAW_GRPC_TEST_LEGACY_FAKE_SSH",
+  "NEMOCLAW_GRPC_TEST_FAKE_SSH_BIN",
+] as const;
 
 type BackupScalar = string | number | boolean | null | undefined;
 type BackupValue = BackupScalar | BackupManifestOverrides | BackupValue[];
@@ -81,12 +86,26 @@ afterAll(() => {
   } else {
     process.env.HOME = ORIGINAL_HOME;
   }
+  clearFakeGrpcTransport();
   fs.rmSync(TMP_HOME, { recursive: true, force: true });
 });
 
 beforeEach(() => {
+  clearFakeGrpcTransport();
   fs.rmSync(BACKUPS_ROOT, { recursive: true, force: true });
 });
+
+function enableFakeGrpcTransportViaLegacySsh(binDir: string): void {
+  process.env.NEMOCLAW_GRPC_TEST_TRANSPORT = "1";
+  process.env.NEMOCLAW_GRPC_TEST_LEGACY_FAKE_SSH = "1";
+  process.env.NEMOCLAW_GRPC_TEST_FAKE_SSH_BIN = path.join(binDir, "ssh");
+}
+
+function clearFakeGrpcTransport(): void {
+  for (const key of GRPC_TEST_ENV_KEYS) {
+    delete process.env[key];
+  }
+}
 
 function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o755 });
@@ -113,6 +132,7 @@ function writeOpenClawRegistry(sandboxName: string): void {
 }
 
 function writeFakeOpenshell(binDir: string): string {
+  enableFakeGrpcTransportViaLegacySsh(binDir);
   const openshell = path.join(binDir, "openshell");
   writeExecutable(
     openshell,
@@ -1270,6 +1290,7 @@ process.exit(0);
 
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
       process.env.PATH = `${binDir}:${oldPath || ""}`;
+      enableFakeGrpcTransportViaLegacySsh(binDir);
 
       const backup = sandboxState.backupSandboxState("hermes", { name: "hermes-state" });
       expect(backup.success).toBe(true);

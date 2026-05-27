@@ -297,6 +297,9 @@ function runRebuild(fixture: ReturnType<typeof createFixture>) {
       env: {
         HOME: fixture.tmpDir,
         PATH: fixture.tmpDir + ":" + NODE_BIN + ":/usr/bin:/bin",
+        NEMOCLAW_GRPC_TEST_TRANSPORT: "1",
+        NEMOCLAW_GRPC_TEST_LEGACY_FAKE_SSH: "1",
+        NEMOCLAW_GRPC_TEST_FAKE_SSH_BIN: path.join(fixture.tmpDir, "ssh"),
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_NO_CONNECT_HINT: "1",

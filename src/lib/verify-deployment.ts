@@ -290,7 +290,7 @@ export async function verifyDeployment(
     detail: dashboard.detail,
     hint: dashboard.reachable
       ? ""
-      : `Port forward on ${chain.port} is not working. Run: openshell forward start ${chain.forwardTarget} ${sandboxName}`,
+      : `Dashboard gRPC forward on ${chain.port} is not working. Retry: nemoclaw ${sandboxName} connect --probe-only`,
   });
 
   // 4. Inference route

@@ -17,6 +17,7 @@ import {
 import { basename, join } from "node:path";
 import { dockerSpawnSync } from "../adapters/docker";
 import { resolveOpenshell } from "../adapters/openshell/resolve";
+import { execTextSync } from "../adapters/openshell/grpc";
 import { renderBox } from "../cli/banner";
 import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
 import { isRecord } from "../core/json-types";
@@ -434,10 +435,10 @@ export function showStatus(opts: ServiceOptions = {}): void {
  * Stop the OpenClaw gateway (and its messaging channels) inside the sandbox.
  *
  * Uses the OpenShell gateway container's kubectl as the privileged path so it
- * can signal the gateway process even when the sandbox SSH/exec user is
+ * can signal the gateway process even when the in-sandbox command user is
  * `sandbox` and the gateway process runs as the separate `gateway` user.  The
- * fallback `openshell sandbox exec` path uses the same verified script for
- * older/non-root deployments where the exec user can signal the gateway.
+ * fallback gRPC exec path uses the same verified script for older/non-root
+ * deployments where the exec user can signal the gateway.
  *
  * The in-sandbox script intentionally does not rely on a bare `pkill -f`
  * result: `pkill -f openclaw[- ]gateway` can match the transient shell/pkill
@@ -452,18 +453,25 @@ export function stopSandboxChannels(sandboxName: string): void {
   const privilegedResult = stopSandboxChannelsViaKubectl(sandboxName);
   if (reportStopResult(privilegedResult)) return;
 
-  const openshell = resolveOpenshell();
-  if (!openshell) {
-    warn("openshell not found — cannot stop in-sandbox messaging channels.");
-    return;
+  try {
+    const fallbackResult = execTextSync(sandboxName, ["sh", "-lc", GATEWAY_STOP_SCRIPT], {
+      timeoutMs: 20000,
+    });
+    reportStopResult({
+      status: fallbackResult.status,
+      signal: null,
+      stdout: fallbackResult.stdout,
+      stderr: fallbackResult.stderr,
+      pid: 0,
+      output: [null, fallbackResult.stdout, fallbackResult.stderr],
+    } as StopAttemptResult);
+  } catch (error) {
+    warn(
+      `OpenShell gRPC exec could not stop in-sandbox messaging channels: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
-
-  const fallbackResult = spawnSync(
-    openshell,
-    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-lc", GATEWAY_STOP_SCRIPT],
-    { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 20000 },
-  );
-  reportStopResult(fallbackResult);
 }
 
 const GATEWAY_CLUSTER_CONTAINER = "openshell-cluster-nemoclaw";

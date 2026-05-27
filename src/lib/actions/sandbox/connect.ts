@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import os from "node:os";
+import { execTextSync } from "../../adapters/openshell/grpc";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
   captureOpenshell,
@@ -94,7 +95,7 @@ export function printSandboxConnectHelp(sandboxName = "<name>"): void {
   console.log("");
   console.log("  Options:");
   console.log(
-    "    --probe-only                    Run recovery checks and exit without opening SSH",
+    "    --probe-only                    Run recovery checks and exit without opening a shell",
   );
   console.log("    -h, --help                      Show this help");
   console.log("");
@@ -225,31 +226,25 @@ function probeSandboxInferenceRoute(
   const boundedAttempts = Math.max(1, attempts);
 
   for (let attempt = 1; attempt <= boundedAttempts; attempt += 1) {
-    // Keep the shell string inside the sandbox: curl write-out, body capture,
-    // and status classification must run as one bounded probe. sandboxName
-    // remains an argv value, so no user input is interpolated into the script.
-    const probe = captureOpenshell(
-      [
-        "sandbox",
-        "exec",
-        "--name",
-        sandboxName,
-        "--",
-        "sh",
-        "-c",
-        [
-          "OUT=/tmp/nemoclaw-inference-route-probe.out",
-          "HTTP_CODE=$(curl -sk -o \"$OUT\" -w '%{http_code}' --connect-timeout 3 --max-time 8 https://inference.local/v1/models 2>/dev/null) || HTTP_CODE=000",
-          "case \"$HTTP_CODE\" in 000|5*) printf 'BROKEN %s ' \"$HTTP_CODE\"; head -c 160 \"$OUT\" 2>/dev/null || true ;; *) printf 'OK %s' \"$HTTP_CODE\" ;; esac",
-        ].join("; "),
-      ],
-      { ignoreError: true, timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS },
-    );
-    const detail = probe.output.trim();
+    const script = [
+      "OUT=/tmp/nemoclaw-inference-route-probe.out",
+      "HTTP_CODE=$(curl -sk -o \"$OUT\" -w '%{http_code}' --connect-timeout 3 --max-time 8 https://inference.local/v1/models 2>/dev/null) || HTTP_CODE=000",
+      "case \"$HTTP_CODE\" in 000|5*) printf 'BROKEN %s ' \"$HTTP_CODE\"; head -c 160 \"$OUT\" 2>/dev/null || true ;; *) printf 'OK %s' \"$HTTP_CODE\" ;; esac",
+    ].join("; ");
+    let probe: ReturnType<typeof execTextSync>;
+    try {
+      probe = execTextSync(sandboxName, ["sh", "-c", script], {
+        timeoutMs: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      probe = { status: 1, stdout: "", stderr: detail };
+    }
+    const detail = (probe.stdout || probe.stderr || "").trim();
     lastProbe = {
       healthy: probe.status === 0 && /^OK\s+[0-9]{3}\b/.test(detail),
       broken: /^BROKEN\s+[0-9]{3}\b/.test(detail),
-      detail: detail || `openshell sandbox exec exited with status ${String(probe.status)}`,
+      detail: detail || `OpenShell gRPC exec exited with status ${String(probe.status)}`,
     };
     if (lastProbe.healthy || attempt === boundedAttempts) return lastProbe;
     sleepSync(delayMs);
@@ -891,7 +886,7 @@ export async function connectSandbox(
   // ── Inference route swap (#1248, #3390) ───────────────────────────
   // When the user has multiple sandboxes with different providers, the
   // cluster-wide inference.local route may still point at the other provider.
-  // After the sandbox is Ready, verify and recover the route before SSH.
+  // After the sandbox is Ready, verify and recover the route before opening a shell.
   sb = ensureSandboxInferenceRouteOrExit(sandboxName);
   maybeEnsureHermesToolGatewayBroker(sb);
 

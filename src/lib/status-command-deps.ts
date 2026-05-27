@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-
 import { getNamedGatewayLifecycleState } from "./gateway-runtime-action";
 import { getLiveGatewayInference } from "./inference/live";
 import type { GatewayHealth, MessagingBridgeHealth, ShowStatusCommandDeps } from "./inventory";
@@ -10,6 +8,7 @@ import { backfillMessagingChannels, findAllOverlaps } from "./messaging-conflict
 import type { CaptureOpenshellResult } from "./adapters/openshell/client";
 import { captureOpenshellCommand, stripAnsi } from "./adapters/openshell/client";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
+import { execTextSync } from "./adapters/openshell/grpc";
 import * as registry from "./state/registry";
 import { resolveOpenshell } from "./adapters/openshell/resolve";
 import { createSystemDeps, parseSshProcesses } from "./state/sandbox-session";
@@ -32,7 +31,7 @@ function captureOpenshell(
 }
 
 function checkMessagingBridgeHealth(
-  rootDir: string,
+  _rootDir: string,
   sandboxName: string,
   channels: string[],
 ): MessagingBridgeHealth[] {
@@ -40,16 +39,10 @@ function checkMessagingBridgeHealth(
   // gateway log. Discord/Slack have similar single-consumer constraints but
   // log differently; we can extend the regex when those patterns are known.
   if (!Array.isArray(channels) || !channels.includes("telegram")) return [];
-  const openshell = resolveOpenshell();
-  if (!openshell) return [];
   const script =
     'tail -n 200 /tmp/gateway.log 2>/dev/null | grep -cE "getUpdates conflict|409[[:space:]:]+Conflict" || true';
   try {
-    const result = spawnSync(
-      openshell,
-      ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-c", script],
-      { cwd: rootDir, encoding: "utf-8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] },
-    );
+    const result = execTextSync(sandboxName, ["sh", "-c", script], { timeoutMs: 3000 });
     const count = Number.parseInt((result.stdout || "").trim(), 10);
     if (!Number.isFinite(count) || count === 0) return [];
     return [{ channel: "telegram", conflicts: count }];
@@ -108,24 +101,11 @@ function backfillAndFindOverlaps(rootDir: string) {
   }
 }
 
-function readGatewayLog(rootDir: string, sandboxName: string): string | null {
-  const openshell = resolveOpenshell();
-  if (!openshell) return null;
+function readGatewayLog(_rootDir: string, sandboxName: string): string | null {
   try {
-    const result = spawnSync(
-      openshell,
-      [
-        "sandbox",
-        "exec",
-        "-n",
-        sandboxName,
-        "--",
-        "sh",
-        "-c",
-        "tail -n 10 /tmp/gateway.log 2>/dev/null",
-      ],
-      { cwd: rootDir, encoding: "utf-8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] },
-    );
+    const result = execTextSync(sandboxName, ["sh", "-c", "tail -n 10 /tmp/gateway.log 2>/dev/null"], {
+      timeoutMs: 3000,
+    });
     const output = (result.stdout || "").trim();
     return output || null;
   } catch {

@@ -6,11 +6,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock heavy dependencies that pull in the full module graph
-vi.mock("../adapters/openshell/resolve.js", () => ({
-  resolveOpenshell: vi.fn(() => "/usr/local/bin/openshell"),
-}));
-
 vi.mock("../adapters/openshell/client.js", () => ({
   parseVersionFromText: (value = "") => {
     const match = String(value).match(/([0-9]+\.[0-9]+\.[0-9]+)/);
@@ -28,7 +23,10 @@ vi.mock("../adapters/openshell/client.js", () => ({
     }
     return true;
   },
-  captureSandboxSshConfigCommand: vi.fn(),
+}));
+
+vi.mock("../adapters/openshell/grpc.js", () => ({
+  execTextSync: vi.fn(),
 }));
 
 vi.mock("../agent/defs.js", () => ({
@@ -42,13 +40,7 @@ vi.mock("../agent/defs.js", () => ({
   })),
 }));
 
-vi.mock("child_process", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("child_process")>();
-  return { ...actual, spawnSync: vi.fn() };
-});
-
-import { spawnSync } from "child_process";
-import { captureSandboxSshConfigCommand } from "../adapters/openshell/client.js";
+import { execTextSync } from "../adapters/openshell/grpc.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import * as registry from "../state/registry.js";
 import { checkAgentVersion, formatStalenessWarning } from "./version.js";
@@ -110,31 +102,23 @@ describe("checkAgentVersion", () => {
     expect(result.isStale).toBe(false);
   });
 
-  it("slow path: probes via SSH when no cached version", () => {
+  it("slow path: probes via gRPC when no cached version", () => {
     registry.registerSandbox({ name: "test-sb", agent: null });
 
-    vi.mocked(captureSandboxSshConfigCommand).mockReturnValue({
-      status: 0,
-      output: "Host openshell-test-sb\n  HostName 127.0.0.1\n",
-    });
-
-    vi.mocked(spawnSync).mockReturnValue({
+    vi.mocked(execTextSync).mockReturnValue({
       status: 0,
       stdout: "OpenClaw 2026.5.22 (abc123)\n",
       stderr: "",
-      pid: 1234,
-      output: [],
-      signal: null,
     });
 
     const result = checkAgentVersion("test-sb");
-    expect(result.detectionMethod).toBe("ssh-exec");
+    expect(result.detectionMethod).toBe("grpc-exec");
     expect(result.sandboxVersion).toBe("2026.5.22");
     expect(result.isStale).toBe(false);
-    expect(captureSandboxSshConfigCommand).toHaveBeenCalledWith(
-      "/usr/local/bin/openshell",
+    expect(execTextSync).toHaveBeenCalledWith(
       "test-sb",
-      { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
+      ["sh", "-c", "openclaw --version"],
+      { timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS },
     );
 
     // Should have cached the version in registry
@@ -142,12 +126,11 @@ describe("checkAgentVersion", () => {
     expect(updated?.agentVersion).toBe("2026.5.22");
   });
 
-  it("returns unavailable when SSH config fails", () => {
+  it("returns unavailable when gRPC exec fails", () => {
     registry.registerSandbox({ name: "test-sb", agent: null });
 
-    vi.mocked(captureSandboxSshConfigCommand).mockReturnValue({
-      status: 1,
-      output: "",
+    vi.mocked(execTextSync).mockImplementation(() => {
+      throw new Error("gRPC unavailable");
     });
 
     const result = checkAgentVersion("test-sb");
@@ -157,16 +140,14 @@ describe("checkAgentVersion", () => {
 
   it("can skip live probing when no cached version is available", () => {
     registry.registerSandbox({ name: "test-sb", agent: null });
-    vi.mocked(captureSandboxSshConfigCommand).mockClear();
-    vi.mocked(spawnSync).mockClear();
+    vi.mocked(execTextSync).mockClear();
 
     const result = checkAgentVersion("test-sb", { skipProbe: true });
 
     expect(result.detectionMethod).toBe("unavailable");
     expect(result.sandboxVersion).toBeNull();
     expect(result.isStale).toBe(false);
-    expect(captureSandboxSshConfigCommand).not.toHaveBeenCalled();
-    expect(spawnSync).not.toHaveBeenCalled();
+    expect(execTextSync).not.toHaveBeenCalled();
   });
 
   it("force probe bypasses cached version", () => {
@@ -176,22 +157,14 @@ describe("checkAgentVersion", () => {
       agentVersion: "2026.3.11",
     });
 
-    vi.mocked(captureSandboxSshConfigCommand).mockReturnValue({
-      status: 0,
-      output: "Host openshell-test-sb\n  HostName 127.0.0.1\n",
-    });
-
-    vi.mocked(spawnSync).mockReturnValue({
+    vi.mocked(execTextSync).mockReturnValue({
       status: 0,
       stdout: "OpenClaw 2026.5.22 (abc123)\n",
       stderr: "",
-      pid: 1234,
-      output: [],
-      signal: null,
     });
 
     const result = checkAgentVersion("test-sb", { forceProbe: true });
-    expect(result.detectionMethod).toBe("ssh-exec");
+    expect(result.detectionMethod).toBe("grpc-exec");
     expect(result.sandboxVersion).toBe("2026.5.22");
   });
 });

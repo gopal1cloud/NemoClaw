@@ -25,10 +25,6 @@ import type { ShareCommandDeps } from "./share-command-deps";
 
 function makeDeps(overrides: Partial<ShareCommandDeps> = {}): ShareCommandDeps {
   return {
-    getSshConfig: vi.fn(() => ({
-      status: 0,
-      output: "Host openshell-alpha\n  HostName 127.0.0.1\n",
-    })),
     ensureLive: vi.fn(async () => undefined),
     checkSandboxPathExists: vi.fn(() => true),
     colorGreen: "",
@@ -136,91 +132,39 @@ describe("ShareCommand mount/status actions", () => {
     vi.restoreAllMocks();
   });
 
-  it("mounts through sshfs with a private temporary ssh config and cleans it up", async () => {
+  it("rejects live mounts under the gRPC-only transport", async () => {
     const deps = makeDeps();
     const localMount = fs.mkdtempSync(path.join(process.cwd(), ".tmp-share-mount-"));
-    let sshfsConfigPath = "";
     try {
-      spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
-        if (cmd === "sh" && args[1] === "command -v sshfs") {
-          return { status: 0, stdout: "/usr/bin/sshfs\n", stderr: "" };
-        }
-        if (cmd === "mountpoint") return { status: 1, stdout: "", stderr: "" };
-        if (cmd === "mount") return { status: 0, stdout: "", stderr: "" };
-        if (cmd === "sshfs") {
-          const configFlagIndex = args.indexOf("-F");
-          sshfsConfigPath = args[configFlagIndex + 1];
-          expect(fs.statSync(sshfsConfigPath).mode & 0o777).toBe(0o600);
-          expect(args).toContain("sftp_server=/usr/lib/openssh/sftp-server");
-          expect(args).toContain("openshell-alpha:/workspace");
-          expect(args.at(-1)).toBe(localMount);
-          return { status: 0, stdout: "", stderr: "" };
-        }
-        return { status: 1, stdout: "", stderr: `unexpected ${cmd} ${args.join(" ")}` };
-      });
-
-      await runShareMount({ sandboxName: "alpha", remotePath: "/workspace", localMount }, deps);
-
+      await expect(
+        runShareMount({ sandboxName: "alpha", remotePath: "/workspace", localMount }, deps),
+      ).rejects.toThrow(/Live sandbox filesystem mounts are no longer supported/);
       expect(deps.ensureLive).toHaveBeenCalledWith("alpha");
-      expect(deps.getSshConfig).toHaveBeenCalledWith("alpha");
-      expect(spawnSyncMock).toHaveBeenCalledWith(
-        "sshfs",
-        expect.arrayContaining(["openshell-alpha:/workspace", localMount]),
-        expect.objectContaining({ timeout: 30_000 }),
-      );
-      expect(sshfsConfigPath).not.toBe("");
-      expect(fs.existsSync(sshfsConfigPath)).toBe(false);
-      expect(fs.existsSync(path.dirname(sshfsConfigPath))).toBe(false);
-      expect(
-        logSpy.mock.calls.some((call: unknown[]) => String(call[0]).includes("Mounted /workspace")),
-      ).toBe(true);
+      expect(spawnSyncMock).not.toHaveBeenCalledWith("sshfs", expect.any(Array), expect.anything());
     } finally {
       fs.rmSync(localMount, { recursive: true, force: true });
     }
   });
 
-  it("exits with an install hint when sshfs is missing", async () => {
+  it("does not require host mount tools before reporting unsupported mount", async () => {
     const deps = makeDeps();
-    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
-      if (cmd === "sh" && args[1] === "command -v sshfs") {
-        return { status: 1, stdout: "", stderr: "" };
-      }
-      return { status: 1, stdout: "", stderr: "" };
-    });
-
     await expect(runShareMount({ sandboxName: "alpha" }, deps)).rejects.toThrow(
       ShareCommandError,
     );
-
-    expect(deps.ensureLive).not.toHaveBeenCalled();
     await expect(runShareMount({ sandboxName: "alpha" }, deps)).rejects.toThrow(
-      /sshfs is not installed/,
+      /OpenShell gRPC/,
     );
+    expect(deps.ensureLive).toHaveBeenCalledWith("alpha");
   });
 
-  it("surfaces SFTP-specific remediation when sshfs fails after sandbox validation", async () => {
+  it("still checks sandbox liveness before reporting unsupported mount", async () => {
     const deps = makeDeps();
     const localMount = fs.mkdtempSync(path.join(process.cwd(), ".tmp-share-sftp-"));
     try {
-      spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
-        if (cmd === "sh" && args[1] === "command -v sshfs") return { status: 0, stdout: "sshfs\n" };
-        if (cmd === "mountpoint") return { status: 1, stdout: "", stderr: "" };
-        if (cmd === "mount") return { status: 0, stdout: "", stderr: "" };
-        if (cmd === "sshfs")
-          return { status: 1, stdout: "", stderr: "subsystem request failed: sftp" };
-        return { status: 1, stdout: "", stderr: "" };
-      });
-
       await expect(
         runShareMount({ sandboxName: "alpha", remotePath: "/sandbox", localMount }, deps),
-      ).rejects.toThrow(/SSHFS mount failed/);
-
-      await expect(
-        runShareMount({ sandboxName: "alpha", remotePath: "/sandbox", localMount }, deps),
-      ).rejects.toThrow(/openssh-sftp-server/);
-      await expect(
-        runShareMount({ sandboxName: "alpha", remotePath: "/sandbox", localMount }, deps),
-      ).rejects.toThrow(/nemoclaw alpha rebuild --yes/);
+      ).rejects.toThrow(/share status/);
+      expect(deps.ensureLive).toHaveBeenCalledWith("alpha");
     } finally {
       fs.rmSync(localMount, { recursive: true, force: true });
     }

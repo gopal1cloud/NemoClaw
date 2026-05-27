@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * `nemoclaw <name> share mount|unmount|status` — SSHFS-based sandbox file sharing.
+ * `nemoclaw <name> share mount|unmount|status`.
  *
- * Mounts the sandbox filesystem on the host via SSHFS, tunneled through
- * OpenShell's existing SSH proxy. Requires `sshfs` on the host and
- * `openssh-sftp-server` in the sandbox image.
+ * Live filesystem mounts depended on the legacy SSH filesystem transport.
+ * Under the gRPC-only sandbox lifecycle, mount is intentionally unsupported;
+ * status and unmount remain for cleaning up older local mounts.
  */
 
 import { spawnSync } from "child_process";
@@ -66,13 +66,10 @@ export function defaultShareMountDir(sandboxName: string): string {
 
 /**
  * Pre-flight: confirm the remote source path actually exists inside the
- * sandbox. sshfs exits non-zero with empty stderr when the remote path is
- * missing (e.g. a typo), and the bare "SSHFS mount failed." line we used to
- * emit left the user with nothing actionable. Returns normally when the path
- * can be verified; emits a structured error and exits the process non-zero
- * when it cannot. The success path has no return value.
- * Exported so the behavior is testable without driving the full sshfs
- * lifecycle. See #3414.
+ * sandbox. Retained for older tests and any future non-mount copy flow.
+ * Returns normally when the path can be verified; emits a structured error
+ * and exits the process non-zero when it cannot. The success path has no
+ * return value.
  */
 export function assertSandboxPathExistsOrExit(
   deps: ShareCommandDeps,
@@ -160,119 +157,12 @@ export async function runShareMount(
   deps: ShareCommandDeps = buildShareCommandDeps(),
 ): Promise<void> {
   const { sandboxName } = options;
-  const remotePath = options.remotePath || "/sandbox";
-  const localMount = options.localMount || defaultShareMountDir(sandboxName);
-  const G = deps.colorGreen;
-  const R = deps.colorReset;
-
-  // Preflight: check sshfs binary
-  const sshfsCheck = spawnSync("sh", ["-c", "command -v sshfs"], {
-    encoding: "utf-8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (sshfsCheck.status !== 0) {
-    shareFail([
-      "  sshfs is not installed.",
-      process.platform === "darwin"
-        ? "  Install with: brew install macfuse && brew install sshfs"
-        : "  Install with: sudo apt-get install sshfs  (or: sudo dnf install fuse-sshfs)",
-    ]);
-  }
-
-  // Check not already mounted
-  if (isMountPoint(localMount)) {
-    shareFail([
-      `  ${localMount} is already mounted.`,
-      `  Run '${deps.cliName} ${sandboxName} share unmount' first.`,
-    ]);
-  }
-
-  // Verify sandbox is running
   await deps.ensureLive(sandboxName);
-
-  // Pre-flight: confirm the remote source path actually exists. See #3414.
-  assertSandboxPathExistsOrExit(deps, sandboxName, remotePath);
-
-  // Get SSH config
-  const sshConfigResult = deps.getSshConfig(sandboxName);
-  if (sshConfigResult.status !== 0) {
-    shareFail("  Failed to obtain SSH configuration for the sandbox.");
-  }
-
-  // Use a private temp directory to prevent symlink attacks on predictable paths.
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sshfs-"));
-  const tmpFile = path.join(tmpDir, `${sandboxName}.conf`);
-  fs.writeFileSync(tmpFile, sshConfigResult.output, { mode: 0o600, flag: "wx" });
-
-  const writable = checkLocalMountWritable(localMount);
-  if (!writable.writable) {
-    console.error(`  Local mount path '${localMount}' is not usable: ${writable.reason}.`);
-    console.error("  share mount projects sandbox files onto a host directory via SSHFS,");
-    console.error("  so the local target must be on a writable filesystem.");
-    console.error(
-      `  Pick a writable directory: ${deps.cliName} ${sandboxName} share mount ${remotePath} <writable-path>`,
-    );
-    try {
-      fs.unlinkSync(tmpFile);
-      fs.rmdirSync(tmpDir);
-    } catch {
-      /* ignore */
-    }
-    process.exit(1);
-  }
-
-  let mountFailed = false;
-  try {
-    const result = spawnSync(
-      "sshfs",
-      [
-        "-F",
-        tmpFile,
-        "-o",
-        "sftp_server=/usr/lib/openssh/sftp-server",
-        "-o",
-        "StrictHostKeyChecking=no",
-        "-o",
-        "UserKnownHostsFile=/dev/null",
-        "-o",
-        "reconnect",
-        "-o",
-        "ServerAliveInterval=15",
-        "-o",
-        "ServerAliveCountMax=3",
-        `openshell-${sandboxName}:${remotePath}`,
-        localMount,
-      ],
-      { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 30000 },
-    );
-    if (result.status !== 0) {
-      const stderr = (result.stderr || "").trim();
-      mountFailed = true;
-      const lines = ["  SSHFS mount failed."];
-      if (stderr) lines.push(`  ${stderr}`);
-      if (/sftp/i.test(stderr)) {
-        lines.push("  The sandbox may lack openssh-sftp-server.");
-        lines.push(
-          `  If this sandbox uses the default base image, rebuild with: ${deps.cliName} ${sandboxName} rebuild --yes`,
-        );
-        lines.push(
-          "  If it was created from a custom `--from` image, add openssh-sftp-server at /usr/lib/openssh/sftp-server and rebuild.",
-        );
-      }
-      shareFail(lines);
-    } else {
-      console.log(`  ${G}✓${R} Mounted ${remotePath} → ${localMount}`);
-      console.log(`  Edit files at ${localMount} — changes appear in the sandbox instantly.`);
-    }
-  } finally {
-    try {
-      fs.unlinkSync(tmpFile);
-      fs.rmdirSync(tmpDir);
-    } catch {
-      /* ignore */
-    }
-  }
-  if (mountFailed) shareFail("  SSHFS mount failed.");
+  shareFail([
+    "  Live sandbox filesystem mounts are no longer supported.",
+    "  NemoClaw now uses OpenShell gRPC for sandbox lifecycle operations, and OpenShell does not provide a live filesystem mount API on that transport.",
+    `  Existing legacy mounts can still be inspected or removed with '${deps.cliName} ${sandboxName} share status' and '${deps.cliName} ${sandboxName} share unmount'.`,
+  ]);
 }
 
 export function runShareUnmount(
@@ -338,7 +228,7 @@ export function printShareUsageAndExit(exitCode = 1): never {
   const { cliName } = buildShareCommandDeps();
   shareFail([
     `  Usage: ${cliName} <name> share <mount|unmount|status>`,
-    "    mount   [sandbox-path] [local-mount-point]  Mount sandbox filesystem via SSHFS",
+    "    mount   [sandbox-path] [local-mount-point]  Unsupported under gRPC-only transport",
     "    unmount [local-mount-point]                 Unmount a previously mounted filesystem",
     "    status  [local-mount-point]                 Check current mount status",
   ], exitCode);

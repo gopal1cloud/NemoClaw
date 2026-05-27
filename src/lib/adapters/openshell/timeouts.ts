@@ -9,13 +9,13 @@
  * call sites and makes it easy to tune timeouts from a single location.
  *
  * Categories:
- *   PROBE    — read-only queries that should return instantly (list, status, info, ssh-config)
+ *   PROBE    — read-only queries that should return instantly (list, status, info)
  *   OPERATION — mutating commands (provider CRUD, forward start/stop, gateway select)
  *   HEAVY    — destructive or long-running (sandbox delete, gateway destroy, build)
- *   DOWNLOAD — file transfers over the sandbox SSH tunnel (config download)
+ *   DOWNLOAD — bounded artifact transfers (config/log/state fetches)
  */
 
-/** Quick probe — sandbox list, status, gateway info, forward list, ssh-config */
+/** Quick probe — sandbox list, status, gateway info */
 export const OPENSHELL_PROBE_TIMEOUT_MS = 15_000;
 
 /** In-sandbox inference.local route probe used during connect recovery */
@@ -27,5 +27,5 @@ export const OPENSHELL_OPERATION_TIMEOUT_MS = 30_000;
 /** Heavy operations — sandbox delete, gateway destroy, full build */
 export const OPENSHELL_HEAVY_TIMEOUT_MS = 60_000;
 
-/** Sandbox download (config file fetch over SSH) */
+/** Bounded artifact transfer */
 export const OPENSHELL_DOWNLOAD_TIMEOUT_MS = 30_000;

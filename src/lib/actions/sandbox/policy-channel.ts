@@ -767,8 +767,8 @@ const CHANNEL_CLEAR_SENTINEL = "NEMOCLAW_CHANNEL_CLEAR_OK";
 // the state_dirs backup does not restore an auth blob the operator just
 // asked NemoClaw to forget. Returns true when no cleanup was needed OR
 // when the in-sandbox rm produced our success sentinel; false otherwise.
-// Tries `openshell sandbox exec` first and falls back to SSH for transient
-// wrapper hiccups (mirrors the pattern in process-recovery.ts:286-296).
+// Tries the fast gRPC exec helper first and falls back to the same gRPC shell
+// helper for transient wrapper hiccups (mirrors process-recovery).
 // Fixes #3998.
 function clearSandboxChannelDurableState(sandboxName: string, channelName: string): boolean {
   const agent = resolveAgentForSandbox(sandboxName);

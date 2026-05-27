@@ -3,23 +3,18 @@
 
 
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { createSandboxGrpcClient, execTextSync } from "../../adapters/openshell/grpc";
 import {
-  captureOpenshell,
-  captureOpenshellForStatus,
-  captureSandboxSshConfig,
-  getOpenshellBinary,
-  isCommandTimeout,
-  runOpenshell,
-} from "../../adapters/openshell/runtime";
+  forwardStatesAsListOutput,
+  startForwardBridgeDetached,
+  stopForwardBridge,
+} from "../../adapters/openshell/forward-bridge-state";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { DASHBOARD_PORT } from "../../core/ports";
 import { sleepSeconds } from "../../core/wait";
-import { ROOT, shellQuote } from "../../runner";
+import { shellQuote } from "../../runner";
 import * as registry from "../../state/registry";
 import { parseForwardList } from "../../state/sandbox-session";
 
@@ -76,55 +71,20 @@ function getSandboxHealthProbeUrl(sandboxName: string): string {
   return `http://127.0.0.1:${resolveSandboxDashboardPort(sandboxName)}/health`;
 }
 
-/**
- * Run a command inside the sandbox via SSH and return { status, stdout, stderr }.
- * Returns null if SSH config cannot be obtained.
- */
+/** Run a shell command inside the sandbox over OpenShell gRPC. */
 export function executeSandboxCommand(
   sandboxName: string,
   command: string,
 ): SandboxCommandResult | null {
-  const sshConfigResult = captureSandboxSshConfig(sandboxName, {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  if (sshConfigResult.status !== 0) return null;
-  if (!sshConfigResult.output.trim()) return null;
-
-  const tmpFile = path.join(os.tmpdir(), `nemoclaw-ssh-${process.pid}-${Date.now()}.conf`);
-  fs.writeFileSync(tmpFile, sshConfigResult.output, { mode: 0o600 });
   try {
-    const result = spawnSync(
-      "ssh",
-      [
-        "-F",
-        tmpFile,
-        "-o",
-        "StrictHostKeyChecking=no",
-        "-o",
-        "UserKnownHostsFile=/dev/null",
-        "-o",
-        "ConnectTimeout=5",
-        "-o",
-        "LogLevel=ERROR",
-        `openshell-${sandboxName}`,
-        command,
-      ],
-      { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
-    );
+    const result = execTextSync(sandboxName, ["sh", "-c", command], { timeoutMs: 15_000 });
     return {
-      status: result.status ?? 1,
-      stdout: (result.stdout || "").trim(),
-      stderr: (result.stderr || "").trim(),
+      status: result.status,
+      stdout: result.stdout.trim(),
+      stderr: result.stderr.trim(),
     };
   } catch {
     return null;
-  } finally {
-    try {
-      fs.unlinkSync(tmpFile);
-    } catch {
-      /* ignore */
-    }
   }
 }
 
@@ -138,27 +98,18 @@ export function executeSandboxExecCommand(
   const effectiveTimeout =
     Number.isFinite(timeoutOverride) && timeoutOverride > 0 ? timeoutOverride : timeout;
   try {
-    const result = spawnSync(
-      getOpenshellBinary(),
-      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", markedCommand],
-      {
-        cwd: ROOT,
-        encoding: "utf-8",
-        env: process.env,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: effectiveTimeout,
-      },
-    );
-    if (result.error) return null;
-    const stdout = (result.stdout || "").trim();
+    const result = execTextSync(sandboxName, ["sh", "-c", markedCommand], {
+      timeoutMs: effectiveTimeout,
+    });
+    const stdout = result.stdout.trim();
     const stdoutLines = stdout.split(/\r?\n/);
     const markerIndex = stdoutLines.indexOf(SANDBOX_EXEC_STARTED_MARKER);
     if (markerIndex === -1) return null;
     const commandStdoutLines = stdoutLines.slice(markerIndex + 1);
     return {
-      status: result.status ?? 1,
+      status: result.status,
       stdout: commandStdoutLines.join("\n").trim(),
-      stderr: (result.stderr || "").trim(),
+      stderr: result.stderr.trim(),
     };
   } catch {
     return null;
@@ -170,21 +121,26 @@ async function executeSandboxExecCommandForStatus(
   command: string,
 ): Promise<SandboxCommandResult | null> {
   const markedCommand = `printf '%s\n' '${SANDBOX_EXEC_STARTED_MARKER}'; ${command}`;
-  const result = await captureOpenshellForStatus(
-    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", markedCommand],
-    { ignoreError: true },
-  );
-  if (isCommandTimeout(result) || result.error) return null;
-  const stdout = (result.output || "").trim();
-  const stdoutLines = stdout.split(/\r?\n/);
-  const markerIndex = stdoutLines.indexOf(SANDBOX_EXEC_STARTED_MARKER);
-  if (markerIndex === -1) return null;
-  const commandStdoutLines = stdoutLines.slice(markerIndex + 1);
-  return {
-    status: result.status ?? 1,
-    stdout: commandStdoutLines.join("\n").trim(),
-    stderr: "",
-  };
+  const client = createSandboxGrpcClient();
+  try {
+    const result = await client.execText(sandboxName, ["sh", "-c", markedCommand], {
+      timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    });
+    const stdout = result.stdout.trim();
+    const stdoutLines = stdout.split(/\r?\n/);
+    const markerIndex = stdoutLines.indexOf(SANDBOX_EXEC_STARTED_MARKER);
+    if (markerIndex === -1) return null;
+    const commandStdoutLines = stdoutLines.slice(markerIndex + 1);
+    return {
+      status: result.status,
+      stdout: commandStdoutLines.join("\n").trim(),
+      stderr: result.stderr.trim(),
+    };
+  } catch {
+    return null;
+  } finally {
+    client.close();
+  }
 }
 
 function parseSandboxGatewayProbe(result: SandboxCommandResult | null): boolean | null {
@@ -223,8 +179,8 @@ export async function isSandboxGatewayRunningForStatus(
 
 /**
  * Probe the full inference chain by curling `https://inference.local/v1/models`
- * from inside the sandbox via `openshell sandbox exec`. This is the path agent
- * traffic actually takes (openclaw gateway → auth proxy → backend). Any HTTP
+ * from inside the sandbox via OpenShell gRPC exec. This is the path agent
+ * traffic actually takes (openclaw gateway -> auth proxy -> backend). Any HTTP
  * response (including 401) means routing works; 000 / no response means DNS,
  * proxy, or gateway is broken. The optional 3rd line in #3265.
  *
@@ -280,21 +236,18 @@ function recoverSandboxProcesses(sandboxName: string): boolean {
       result &&
       (result.stdout.includes("GATEWAY_PID=") || result.stdout.includes("ALREADY_RUNNING"))
     );
-  const recoveredSsh = (result: SandboxCommandResult | null) =>
+  const recoveredCommand = (result: SandboxCommandResult | null) =>
     !!(result && result.status === 0 && hasRecoveryMarker(result));
 
   if (agentScript) {
-    // Non-OpenClaw manifests do not yet declare a runtime user for root
-    // sandbox exec. Recover them over SSH so the launch inherits the sandbox
-    // login user instead of creating root-owned agent state under /sandbox.
-    return recoveredSsh(executeSandboxCommand(sandboxName, agentScript));
+    return recoveredCommand(executeSandboxCommand(sandboxName, agentScript));
   }
 
   const script = agentRuntime.buildOpenClawRecoveryScript(dashboardPort);
   const execResult = executeSandboxExecCommand(sandboxName, script, 30000);
   if (hasRecoveryMarker(execResult)) return true;
   if (execResult !== null) return false;
-  return recoveredSsh(executeSandboxCommand(sandboxName, script));
+  return false;
 }
 
 function readNonNegativeNumberEnv(name: string, fallback: number): number {
@@ -338,42 +291,37 @@ function ensureSandboxPortForward(sandboxName: string): boolean {
   if (forwardHealth === true) return true;
   if (forwardHealth === "occupied") return false;
 
-  const port = String(resolveSandboxDashboardPort(sandboxName));
-  runOpenshell(["forward", "stop", port], { ignoreError: true, stdio: "ignore" });
-  const startResult = runOpenshell(["forward", "start", "--background", port, sandboxName], {
-    ignoreError: true,
+  const port = resolveSandboxDashboardPort(sandboxName);
+  stopForwardBridge(sandboxName, port);
+  const startResult = startForwardBridgeDetached(sandboxName, {
+    bind: "127.0.0.1",
+    port,
+    targetHost: "127.0.0.1",
+    targetPort: port,
+    timeoutMs: 30_000,
   });
-  if (startResult.status !== 0) return false;
+  if (!startResult.ok) return false;
   return isSandboxForwardHealthy(sandboxName) === true;
 }
 
 /**
- * Probe `openshell forward list` for the sandbox's dashboard forward.
+ * Probe NemoClaw's gRPC forward state for the sandbox's dashboard forward.
  * Returns true when an entry exists for the expected sandbox+port pair
  * with STATUS=running, false when the entry is missing or non-running,
  * "occupied" when another sandbox already owns the expected port, and
- * null when openshell is unreachable.
+ * null when local state cannot prove ownership.
  *
  * The in-sandbox gateway and the host-side forward are independent
- * dimensions: the forward can die (host SSH session dropped, list shows
+ * dimensions: the bridge can die (host process exited, state shows
  * STATUS=dead) while the gateway keeps listening on 127.0.0.1:<port>.
  *
  * Also falls back to a local TCP/HTTP probe of 127.0.0.1:<port> when
- * `forward list` would classify the entry as not-running. openshell's
- * STATUS column lags real state — it can show "dead" for an entry that
- * is still serving traffic, or hide an entry whose SSH session was just
- * recycled (#3334). Trusting the column verbatim made every `connect`
- * print a "missing or dead" preamble followed by a "Failed to
- * re-establish" line even though the forward worked.
+ * local state would classify the entry as not-running, because a listener
+ * can still be serving traffic while process-state cleanup catches up.
  */
 function isSandboxForwardHealthy(sandboxName: string): SandboxForwardHealth {
   const port = resolveSandboxDashboardPort(sandboxName);
-  const result = captureOpenshell(["forward", "list"], {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  if (!result || isCommandTimeout(result) || result.status !== 0) return null;
-  const entries = parseForwardList(result.output) as SandboxForwardListEntry[];
+  const entries = parseForwardList(forwardStatesAsListOutput()) as SandboxForwardListEntry[];
   return classifyForwardHealthWithReachability(entries, sandboxName, String(port), () =>
     isLocalForwardReachable(port),
   );
@@ -469,7 +417,7 @@ export function checkAndRecoverSandboxProcesses(
         } else {
           console.error("  Failed to re-establish the dashboard port forward.");
           console.error(
-            `  Run \`openshell forward start --background <port> ${sandboxName}\` manually.`,
+            `  Retry: nemoclaw ${sandboxName} connect --probe-only`,
           );
         }
       }
@@ -520,7 +468,7 @@ export function checkAndRecoverSandboxProcesses(
       } else {
         console.error("  Failed to re-establish the dashboard port forward.");
         console.error(
-          `  Run \`openshell forward start --background <port> ${sandboxName}\` manually.`,
+          `  Retry: nemoclaw ${sandboxName} connect --probe-only`,
         );
       }
     }

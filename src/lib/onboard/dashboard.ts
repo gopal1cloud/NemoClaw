@@ -1,10 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
 import type { AgentDefinition } from "../agent/defs";
 import { DASHBOARD_PORT } from "../core/ports";
 import { buildChain, buildControlUiUrls } from "../dashboard/contract";
@@ -17,13 +13,13 @@ import {
   isLiveForwardStatus,
 } from "./dashboard-port";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
+import { execBinaryStreamSync } from "../adapters/openshell/grpc";
 import {
-  buildDetachedForwardStartSpawn,
-  buildForwardStartProgressLogger,
-  looksLikeForwardPortConflict,
-  runDetachedForwardStartWithPortReleaseRetries,
-} from "./forward-start";
-import { bestEffortForwardStop, bestEffortForwardStopForSandbox } from "./forward-cleanup";
+  forwardStatesAsListOutput,
+  startForwardBridgeDetached,
+  stopAllForwardBridges,
+  stopForwardBridge,
+} from "../adapters/openshell/forward-bridge-state";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 export const CONTROL_UI_PORT = DASHBOARD_PORT;
@@ -129,19 +125,20 @@ function getRunningForwardPorts(forwardListOutput: string | null | undefined): s
   return [...ports];
 }
 
-function findOpenclawJsonPath(dir: string): string | null {
-  if (!fs.existsSync(dir)) return null;
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const entryPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      const found: string | null = findOpenclawJsonPath(entryPath);
-      if (found) return found;
-    } else if (entry.name === "openclaw.json") {
-      return entryPath;
-    }
+function parseForwardTarget(target: string): { bind: string; port: number } {
+  if (/^\d+$/.test(target.trim())) {
+    return { bind: "127.0.0.1", port: Number(target.trim()) };
   }
-  return null;
+  const normalized = target.includes("://") ? target : `tcp://${target}`;
+  const url = new URL(normalized);
+  const port = Number(url.port || url.pathname.replace(/^\//, ""));
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid dashboard forward target '${target}'.`);
+  }
+  return {
+    bind: url.hostname || "127.0.0.1",
+    port,
+  };
 }
 
 function dashboardUrlForDisplay(url: string, deps: OnboardDashboardDeps): string {
@@ -178,10 +175,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   }
 
   function stopAllDashboardForwards(): void {
-    const forwardList = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
-    for (const port of getRunningForwardPorts(forwardList)) {
-      bestEffortForwardStop(deps.runOpenshell, port);
-    }
+    stopAllForwardBridges();
   }
 
   function buildOrphanedSandboxRollbackMessage(
@@ -222,21 +216,15 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   ): number {
     const { rollbackSandboxOnFailure = false } = options;
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
-    const stopForwardForSandbox = (port: string | number) =>
-      bestEffortForwardStopForSandbox(
-        deps.runOpenshell,
-        (args, opts) => (deps.runCaptureOpenshell(args, opts) ?? "") as string,
-        port,
-        sandboxName,
-      );
-    let existingForwards = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
+    const stopForwardForSandbox = (port: string | number) => stopForwardBridge(sandboxName, port);
+    let existingForwards = forwardStatesAsListOutput();
     const preferredEntry = findForwardEntry(existingForwards, String(preferredPort));
     if (
       preferredEntry &&
       (preferredEntry.sandboxName === sandboxName || !isLiveForwardStatus(preferredEntry.status))
     ) {
       stopForwardForSandbox(preferredPort);
-      existingForwards = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
+      existingForwards = forwardStatesAsListOutput();
     }
     let actualPort: number;
     try {
@@ -270,28 +258,23 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     parsedUrl.port = String(actualPort);
     const actualTarget = getDashboardForwardTarget(parsedUrl.toString());
     stopForwardForSandbox(actualPort);
-    const { ok: fwdOk, diagnostic: fwdDiagnostic } = runDetachedForwardStartWithPortReleaseRetries(
-      buildDetachedForwardStartSpawn(
-        deps.openshellArgv(["forward", "start", "--background", actualTarget, sandboxName]),
-      ),
-      () =>
-        (deps.runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }) ?? "") as string,
-      { port: actualPort, sandboxName },
-      () => {
-        deps.sleep(1);
-        stopForwardForSandbox(actualPort);
-      },
-      { onProgress: buildForwardStartProgressLogger(actualPort) },
-    );
+    const target = parseForwardTarget(actualTarget);
+    const { ok: fwdOk, diagnostic: fwdDiagnostic } = startForwardBridgeDetached(sandboxName, {
+      bind: target.bind,
+      port: actualPort,
+      targetHost: "127.0.0.1",
+      targetPort: target.port,
+      timeoutMs: 30_000,
+    });
     if (!fwdOk) {
-      const looksLikePortConflict = looksLikeForwardPortConflict(fwdDiagnostic);
+      const looksLikePortConflict = /EADDRINUSE|address already in use|in use/i.test(fwdDiagnostic);
       if (rollbackSandboxOnFailure) {
         const err = new Error(
           looksLikePortConflict
             ? `Failed to start dashboard forward on port ${actualPort} — the host port ` +
                 `is held by another process. Free it and run \`${deps.cliName()} onboard\` again, ` +
                 `or pass \`--control-ui-port <N>\` to pick a different dashboard port.`
-            : `Failed to start dashboard forward on port ${actualPort}: ${fwdDiagnostic.slice(0, 240)}`,
+            : `Failed to start dashboard gRPC forward on port ${actualPort}: ${fwdDiagnostic.slice(0, 240)}`,
         );
         rollbackSandboxAndExit(sandboxName, err);
       }
@@ -304,7 +287,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         );
         console.warn(`  Free the port, then reconnect: ${deps.cliName()} ${sandboxName} connect`);
       } else {
-        console.warn(`! Port ${actualPort} forward did not start: ${fwdDiagnostic.slice(0, 240)}`);
+        console.warn(`! Port ${actualPort} gRPC forward did not start: ${fwdDiagnostic.slice(0, 240)}`);
         console.warn(`  Reconnect after resolving the issue: ${deps.cliName()} ${sandboxName} connect`);
       }
     }
@@ -323,27 +306,18 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   }
 
   function fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-token-"));
     try {
-      const destDir = `${tmpDir}${path.sep}`;
-      const result = deps.runOpenshell(
-        ["sandbox", "download", sandboxName, "/sandbox/.openclaw/openclaw.json", destDir],
-        { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] },
+      const result = execBinaryStreamSync(
+        sandboxName,
+        ["cat", "/sandbox/.openclaw/openclaw.json"],
+        { timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS },
       );
       if (result.status !== 0) return null;
-      const jsonPath = findOpenclawJsonPath(tmpDir);
-      if (!jsonPath) return null;
-      const cfg = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
+      const cfg = JSON.parse(result.stdout.toString("utf-8"));
       const token = cfg && cfg.gateway && cfg.gateway.auth && cfg.gateway.auth.token;
       return typeof token === "string" && token.length > 0 ? token : null;
     } catch {
       return null;
-    } finally {
-      try {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      } catch {
-        // ignore cleanup errors
-      }
     }
   }
 
