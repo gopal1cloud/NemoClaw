@@ -118,6 +118,7 @@ function lintTopLevelLegacyEntrypoints(root: string): LintFinding[] {
     "test-gpu-e2e.sh",
     "test-hermes-e2e.sh",
     "test-hermes-inference-switch.sh",
+    "test-hermes-root-entrypoint-smoke.sh",
     "test-issue-2478-crash-loop-recovery.sh",
     "test-kimi-inference-compat.sh",
     "test-launchable-smoke.sh",
