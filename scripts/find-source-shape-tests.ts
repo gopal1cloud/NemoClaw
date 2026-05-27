@@ -1088,7 +1088,10 @@ function checkBudget(report: Report): void {
     throw new Error(`${budgetPath} must define numeric maxSourceShapeCases`);
   }
 
-  const allowed = process.env.NEMOCLAW_SOURCE_SHAPE_ALLOW === "1" ? Number.POSITIVE_INFINITY : budget.maxSourceShapeCases;
+  const allowed =
+    process.env.NEMOCLAW_SOURCE_SHAPE_ALLOW === "1"
+      ? Number.POSITIVE_INFINITY
+      : budget.maxSourceShapeCases;
   const actual = report.summary.source_shape_cases;
   if (actual > allowed) {
     console.error(

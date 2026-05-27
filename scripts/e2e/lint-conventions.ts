@@ -139,7 +139,10 @@ function lintTopLevelLegacyEntrypoints(root: string): LintFinding[] {
 
   return fs
     .readdirSync(e2eDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && /^test-.*\.sh$/.test(entry.name) && !allowedLegacy.has(entry.name))
+    .filter(
+      (entry) =>
+        entry.isFile() && /^test-.*\.sh$/.test(entry.name) && !allowedLegacy.has(entry.name),
+    )
     .map((entry) => ({
       file: `test/e2e/${entry.name}`,
       rule: "no-top-level-legacy-e2e-entrypoint",
