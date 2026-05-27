@@ -90,4 +90,54 @@ describe("checkLocalMountWritable (#3192)", () => {
       reason: "directory is not writable",
     });
   });
+
+  describe("recursive-mkdir EROFS masking (#4311)", () => {
+    it("uses non-recursive mkdirSync when the parent directory exists so EROFS propagates", () => {
+      vi.spyOn(fs, "existsSync").mockReturnValue(true);
+      const mkdirSpy = vi.spyOn(fs, "mkdirSync").mockReturnValue(undefined);
+      vi.spyOn(fs, "accessSync").mockImplementation(() => undefined);
+
+      checkLocalMountWritable("/parent/exists/mnt");
+
+      expect(mkdirSpy).toHaveBeenCalledWith("/parent/exists/mnt");
+      expect(mkdirSpy).not.toHaveBeenCalledWith("/parent/exists/mnt", { recursive: true });
+    });
+
+    it("falls back to recursive mkdirSync when the parent directory is missing", () => {
+      vi.spyOn(fs, "existsSync").mockReturnValue(false);
+      const mkdirSpy = vi.spyOn(fs, "mkdirSync").mockReturnValue(undefined);
+      vi.spyOn(fs, "accessSync").mockImplementation(() => undefined);
+
+      checkLocalMountWritable("/missing/parent/mnt");
+
+      expect(mkdirSpy).toHaveBeenCalledWith("/missing/parent/mnt", { recursive: true });
+    });
+
+    it("reports 'parent filesystem is read-only' when non-recursive mkdir on an existing parent raises EROFS", () => {
+      const err = new Error("EROFS: read-only file system, mkdir '/ro/mnt'") as NodeJS.ErrnoException;
+      err.code = "EROFS";
+      vi.spyOn(fs, "existsSync").mockReturnValue(true);
+      vi.spyOn(fs, "mkdirSync").mockImplementation(() => {
+        throw err;
+      });
+
+      expect(checkLocalMountWritable("/ro/mnt")).toEqual({
+        writable: false,
+        reason: "parent filesystem is read-only",
+      });
+    });
+
+    it("treats EEXIST from non-recursive mkdir as success and proceeds to the writability check", () => {
+      const err = new Error("EEXIST: file already exists, mkdir '/parent/mnt'") as NodeJS.ErrnoException;
+      err.code = "EEXIST";
+      vi.spyOn(fs, "existsSync").mockReturnValue(true);
+      vi.spyOn(fs, "mkdirSync").mockImplementation(() => {
+        throw err;
+      });
+      const accessSpy = vi.spyOn(fs, "accessSync").mockImplementation(() => undefined);
+
+      expect(checkLocalMountWritable("/parent/mnt")).toEqual({ writable: true });
+      expect(accessSpy).toHaveBeenCalledWith("/parent/mnt", fs.constants.W_OK);
+    });
+  });
 });
