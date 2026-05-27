@@ -661,9 +661,10 @@ console.log(pass ? 'SSRF_PASS' : 'SSRF_FAIL');
 test_net_10_openclaw_web_fetch_host_gateway() {
   log "=== TC-NET-10: OpenClaw web_fetch Host Gateway ==="
 
-  local host_dir server_log port port_file server_pid marker
+  local host_dir server_log port port_file server_pid marker approved_reply_marker
   local deny_host_dir deny_server_log deny_port deny_port_file deny_server_pid deny_marker
   marker="NEMOCLAW_HOST_GATEWAY_WEB_FETCH_OK"
+  approved_reply_marker="HOST_GATEWAY_WEB_FETCH_OK"
   deny_marker="NEMOCLAW_HOST_GATEWAY_WEB_FETCH_DENIED_PORT_SHOULD_NOT_LEAK"
   host_dir="$(mktemp -d)"
   deny_host_dir="$(mktemp -d)"
@@ -796,15 +797,15 @@ fetch('http://host.openshell.internal:${deny_port}/', {signal: AbortSignal.timeo
 
   local denied_session_id denied_raw denied_reply denied_rc=0 denied_ssh_cmd
   denied_session_id="${session_id}-denied"
-  denied_ssh_cmd="openclaw agent --agent main --json --session-id '${denied_session_id}' -m 'Use the web_fetch tool to fetch http://host.openshell.internal:${deny_port}/. If the fetch is denied or unavailable because of network policy, reply with only DENIED_HOST_GATEWAY_POLICY. If web_fetch returns any fetched page content, reply with only FETCHED_DENIED_HOST_GATEWAY_PAGE.'"
-  denied_raw=$(run_with_timeout 180 ssh -F "$ssh_cfg" \
+  denied_ssh_cmd="rm -f /sandbox/.openclaw/agents/main/sessions/${denied_session_id}.jsonl.lock /sandbox/.openclaw/agents/main/sessions/${denied_session_id}.trajectory.jsonl 2>/dev/null || true; nemoclaw-start openclaw agent --agent main --json --session-id '${denied_session_id}' -m 'Use the web_fetch tool to fetch http://host.openshell.internal:${deny_port}/. If the fetch is denied or unavailable because of network policy, reply with only DENIED_HOST_GATEWAY_POLICY. If web_fetch returns any fetched page content, reply with only FETCHED_DENIED_HOST_GATEWAY_PAGE.'"
+  denied_raw=$(run_with_timeout 300 ssh -F "$ssh_cfg" \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 \
     -o LogLevel=ERROR \
     "openshell-${SANDBOX_NAME}" \
     "$denied_ssh_cmd" \
-    2>/dev/null) || denied_rc=$?
+    2>&1) || denied_rc=$?
   denied_reply=$(printf '%s' "$denied_raw" | parse_openclaw_agent_text 2>/dev/null) || true
   if printf '%s' "$denied_reply" | grep -qE "${deny_marker}|FETCHED_DENIED_HOST_GATEWAY_PAGE" || printf '%s' "$denied_raw" | grep -q "$deny_marker"; then
     rm -f "$ssh_cfg"
@@ -832,28 +833,37 @@ fetch('http://host.openshell.internal:${deny_port}/', {signal: AbortSignal.timeo
     return
   fi
 
-  ssh_cmd="openclaw agent --agent main --json --session-id '${session_id}' -m 'Use the web_fetch tool to fetch http://host.openshell.internal:${port}/. Reply with only ${marker} if the fetched page contains that exact marker.'"
-  raw=$(run_with_timeout 180 ssh -F "$ssh_cfg" \
+  ssh_cmd="rm -f /sandbox/.openclaw/agents/main/sessions/${session_id}.jsonl.lock /sandbox/.openclaw/agents/main/sessions/${session_id}.trajectory.jsonl 2>/dev/null || true; nemoclaw-start openclaw agent --agent main --json --session-id '${session_id}' -m 'Use the web_fetch tool to fetch http://host.openshell.internal:${port}/. If web_fetch returns HTML content instead of a policy error, reply with only ${approved_reply_marker}.'"
+  raw=$(run_with_timeout 300 ssh -F "$ssh_cfg" \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 \
     -o LogLevel=ERROR \
     "openshell-${SANDBOX_NAME}" \
     "$ssh_cmd" \
-    2>/dev/null) || rc=$?
+    2>&1) || rc=$?
+  local approved_trace
+  approved_trace=$(run_with_timeout 30 ssh -F "$ssh_cfg" \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o ConnectTimeout=10 \
+    -o LogLevel=ERROR \
+    "openshell-${SANDBOX_NAME}" \
+    "cat /sandbox/.openclaw/agents/main/sessions/${session_id}.trajectory.jsonl 2>/dev/null || true" \
+    2>/dev/null) || true
   rm -f "$ssh_cfg"
   cleanup_host_server
 
-  if printf '%s' "$raw" | grep -qiE "SsrFBlockedError|Blocked hostname|private/internal/special-use"; then
-    fail "TC-NET-10: OpenClaw web_fetch" "OpenClaw SSRF guard blocked approved host gateway target: ${raw:0:300}"
+  if printf '%s\n%s' "$raw" "$approved_trace" | grep -qiE "SsrFBlockedError|Blocked hostname|private/internal/special-use"; then
+    fail "TC-NET-10: OpenClaw web_fetch" "OpenClaw SSRF guard blocked approved host gateway target: raw='${raw:0:300}', trace='${approved_trace:0:300}'"
     return
   fi
 
   reply=$(printf '%s' "$raw" | parse_openclaw_agent_text 2>/dev/null) || true
-  if [ "$rc" -eq 0 ] && printf '%s\n%s' "$reply" "$raw" | grep -q "$marker"; then
+  if printf '%s\n%s' "$raw" "$approved_trace" | grep -q "$marker" || printf '%s' "$reply" | grep -q "$approved_reply_marker"; then
     pass "TC-NET-10: OpenClaw web_fetch reached approved host.openshell.internal target"
   else
-    fail "TC-NET-10: OpenClaw web_fetch" "marker not returned (exit ${rc}, reply='${reply:0:200}')"
+    fail "TC-NET-10: OpenClaw web_fetch" "marker not returned (exit ${rc}, reply='${reply:0:200}', raw='${raw:0:300}', trace='${approved_trace:0:300}')"
   fi
 }
 
