@@ -11,7 +11,78 @@ export function getPhaseParityEntries(phase: number): ParityInventoryEntry[] {
   if (phase === 5) return phase5Entries();
   if (phase === 6) return phase6Entries();
   if (phase === 7) return phase7Entries();
+  if (phase === 8) return phase8Entries();
+  if (phase === 9) return phase9Entries();
+  if (phase === 10) return phase10Entries();
+  if (phase === 11) return phase11Entries();
+  if (phase === 12) return phase12Entries();
   return [];
+}
+
+function phase8Entries(): ParityInventoryEntry[] {
+  return simplePhaseEntries([
+    ["test/e2e/test-credential-migration.sh", "security.credentials.migration-removes-plaintext"],
+    ["test/e2e/test-credential-sanitization.sh", "security.credentials.sanitization-leak-scan"],
+    ["test/e2e/test-network-policy.sh", "security.policy.deny-preset-hot-reload-ssrf"],
+    ["test/e2e/test-shields-config.sh", "security.shields.up-down-audit-autorestore"],
+  ], "security");
+}
+
+function phase9Entries(): ParityInventoryEntry[] {
+  return simplePhaseEntries([
+    ["test/e2e/test-sandbox-operations.sh", "sandbox.operations.multi-sandbox-isolation-recovery"],
+    ["test/e2e/test-sandbox-rebuild.sh", "sandbox.rebuild.marker-preservation-sanitized-backup"],
+    ["test/e2e/test-sandbox-survival.sh", "sandbox.survival.gateway-ssh-inference"],
+    ["test/e2e/test-snapshot-commands.sh", "sandbox.snapshot.timestamp-restore-sanitized"],
+    ["test/e2e/test-state-backup-restore.sh", "sandbox.backup.destroy-recreate-restore"],
+    ["test/e2e/test-skill-agent-e2e.sh", "sandbox.skill.agent-verification-token"],
+  ], "sandbox");
+}
+
+function phase10Entries(): ParityInventoryEntry[] {
+  return simplePhaseEntries([
+    ["test/e2e/test-rebuild-openclaw.sh", "runtime.rebuild.old-sandbox-version-upgraded"],
+    ["test/e2e/test-rebuild-hermes.sh", "runtime.rebuild.hermes-messaging-config-preserved"],
+    ["test/e2e/test-upgrade-stale-sandbox.sh", "runtime.upgrade.stale-before-current-after"],
+    ["test/e2e/test-openshell-gateway-upgrade.sh", "runtime.upgrade.gateway-survivor-preserved"],
+    ["test/e2e/test-openshell-version-pin.sh", "runtime.installer.openshell-version-pin"],
+    ["test/e2e/test-overlayfs-autofix.sh", "runtime.overlayfs.patched-image-optout"],
+    ["test/e2e/test-openclaw-plugin-runtime-exdev.sh", "runtime.exdev.plugin-runtime-replacement"],
+  ], "runtime");
+}
+
+function phase11Entries(): ParityInventoryEntry[] {
+  return simplePhaseEntries([
+    ["test/e2e/test-dashboard-remote-bind.sh", "gateway.dashboard.binds-all-interfaces"],
+    ["test/e2e/test-device-auth-health.sh", "gateway.device-auth.health-root401-online"],
+    ["test/e2e/test-gateway-health-honest.sh", "gateway.health-honest.no-crash-healthy"],
+    ["test/e2e/test-gateway-drift-preflight.sh", "gateway.drift-preflight.fail-closed"],
+    ["test/e2e/test-issue-2478-crash-loop-recovery.sh", "gateway.crash-loop.guard-chain-soak"],
+    ["test/e2e/test-tunnel-lifecycle.sh", "gateway.tunnel.start-status-serve-stop"],
+    ["test/e2e/test-openclaw-tui-chat-correlation.sh", "gateway.tui-chat-correlation.websocket"],
+  ], "gateway");
+}
+
+function phase12Entries(): ParityInventoryEntry[] {
+  return simplePhaseEntries([
+    ["docs/cleanup-contract-model", "cleanup.docs.contract-model"],
+    ["docs/no-complete-metadata-only", "cleanup.no-complete-metadata-only"],
+    ["docs/fixture-obligations", "cleanup.fixture-obligations-documented"],
+  ], "cleanup");
+}
+
+function simplePhaseEntries(rows: Array<[string, string]>, domain: string): ParityInventoryEntry[] {
+  return rows.map(([script, assertionId]) => entry(script, assertionId, {
+    manifest: script.startsWith("docs/") || assertionId.includes("installer.openshell-version-pin") || assertionId.includes("gateway.health-honest") || assertionId.includes("gateway.drift-preflight")
+      ? undefined
+      : { scenarioId: assertionId.replace(/\./g, "-"), installSource: "repo-current" },
+    noManifestReason: script.startsWith("docs/") || assertionId.includes("installer.openshell-version-pin") || assertionId.includes("gateway.health-honest") || assertionId.includes("gateway.drift-preflight")
+      ? "setup-only or documentation cleanup contract"
+      : undefined,
+    fixtures: [`${domain}-fixture`, `${domain}-evidence-reader`],
+    actions: [`${domain}.execute`],
+    assertions: [assertion(assertionId, `validation_suites/${domain}/${assertionId.replace(/\./g, "/")}.sh`, domain === "gateway" ? "host" : "sandbox")],
+  }));
 }
 
 function phase7Entries(): ParityInventoryEntry[] {
