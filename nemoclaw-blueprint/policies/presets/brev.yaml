@@ -1,0 +1,70 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Brev access preset.
+#
+# Required by the `dogfood-verify-stale` blueprint: the maintainer sandbox
+# runs the verify-stale skill, which provisions short-lived verification
+# sandboxes on Brev (one per candidate, baseline + latest installs sequentially).
+# Without this preset the `brev` CLI inside the maintainer sandbox cannot
+# reach the Brev API, and the skill stalls at Step 7 (provisioning).
+#
+# Three host groups are whitelisted:
+#   1. brev.dev API surface (auth, instance lifecycle, file copy, exec)
+#   2. NVIDIA install URLs that the reproducer downloads at the verified-on tag
+#   3. The Brev-resident reproducer's outbound git fetch back to NVIDIA/NemoClaw
+#
+# SSH outbound (port 22) is allowed because `brev exec` and `brev copy` ride
+# SSH under the hood. Without the port-22 allowlist the skill's Step 8b/8c/8d
+# can't reach the verification sandbox even though the Brev API call succeeds.
+
+preset:
+  name: brev
+  description: "Brev.dev cloud instance API + SSH-based exec/copy (verify-stale dogfood)"
+
+network_policies:
+  brev:
+    name: brev
+    endpoints:
+      - host: brev.dev
+        port: 443
+        access: full
+      - host: api.brev.dev
+        port: 443
+        access: full
+      - host: app.brev.dev
+        port: 443
+        access: full
+      # OAuth flow for `brev login --skip-browser`; needed if a re-auth
+      # is triggered mid-run (token expiry on long batches).
+      - host: brevdev.us.auth0.com
+        port: 443
+        access: full
+      # SSH outbound — `brev exec`, `brev copy`, and `brev shell` all ride
+      # SSH on port 22 to the dynamically-assigned Brev instance hostname.
+      # We can't enumerate the exact instance hostnames at policy-write time;
+      # the egress policy allows port 22 to any host the verification sandbox
+      # was provisioned against (which is itself a Brev-controlled endpoint).
+      - host: "*.brev.dev"
+        port: 22
+        access: full
+      # NemoClaw install URL that the reproducer hits inside the verification
+      # sandbox (`curl -fsSL <install-url> | bash`). Kept explicit so the
+      # base sandbox policy doesn't need to widen for everyone.
+      - host: raw.githubusercontent.com
+        port: 443
+        access: full
+      - host: objects.githubusercontent.com
+        port: 443
+        access: full
+      # OpenShell tarball downloads (force-downgrade path in Step 8d when
+      # the latest blueprint pins to an older OpenShell than what's installed).
+      - host: github.com
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/local/bin/brev }
+      - { path: /usr/bin/brev }
+      - { path: /usr/bin/ssh }
+      - { path: /usr/bin/scp }
+      - { path: /usr/bin/curl }

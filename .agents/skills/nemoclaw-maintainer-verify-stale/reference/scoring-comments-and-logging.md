@@ -305,6 +305,22 @@ gh issue edit "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --add-label "fixed-on-lates
 # gh issue edit "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --add-label "verify-inconclusive"
 ```
 
+**Dry-run short-circuit (`VERIFY_STALE_DRY_RUN=1`).** When set, both the comment-post and the label-apply (and the Project 199 move below) are skipped. The drafted comment is written to `${VERIFY_STALE_LOG_DIR:-/tmp}/<issue-number>/comment-draft.md` and the would-be label is appended to that issue's `metadata.json`. This is the path the dogfood blueprint takes on its first pass — verdicts get computed and logged across all candidates, then a human reviews the drafts before flipping the flag and re-running for the real post.
+
+```bash
+if [ "${VERIFY_STALE_DRY_RUN:-0}" = "1" ]; then
+  mkdir -p "${VERIFY_STALE_LOG_DIR:-/tmp}/$ISSUE_NUMBER"
+  cp comment.md "${VERIFY_STALE_LOG_DIR:-/tmp}/$ISSUE_NUMBER/comment-draft.md"
+  jq --arg label "$LABEL" '.would_apply_label = $label' \
+    "${VERIFY_STALE_LOG_DIR:-/tmp}/$ISSUE_NUMBER/metadata.json" > "${VERIFY_STALE_LOG_DIR:-/tmp}/$ISSUE_NUMBER/metadata.json.tmp" \
+    && mv "${VERIFY_STALE_LOG_DIR:-/tmp}/$ISSUE_NUMBER/metadata.json.tmp" "${VERIFY_STALE_LOG_DIR:-/tmp}/$ISSUE_NUMBER/metadata.json"
+  echo "[verify-stale] DRY_RUN — would have posted comment + applied $LABEL on #$ISSUE_NUMBER"
+  exit 0
+fi
+```
+
+The dry-run short-circuit fires *after* the pre-post state-check, so we get the same race-safety in dry runs that the live path gets. The Project 199 move below also checks `VERIFY_STALE_DRY_RUN` and no-ops with the same log line.
+
 **Move the issue to "Needs Review" on the NemoClaw Development Tracker AND self-assign (only on `fixed-on-latest`).** The tracker is GitHub Project [NVIDIA/199](https://github.com/orgs/NVIDIA/projects/199) ("NemoClaw Development Tracker"). When the skill's verdict is `fixed-on-latest`, the issue moves to **Needs Review** AND the issue is assigned to the maintainer who ran the skill (`$GH_IDENTITY` from Step 6.5) — assignment puts the issue in their personal review queue so they don't lose track of what they've staked their name on. After the reporter confirms and the maintainer closes, existing Project automation (or a manual move) advances it to Done. **No move and no assign on `wontfix` / `verify-inconclusive` / no-label-still-reproduces** — those have separate close paths.
 
 This step requires the `project` scope on the maintainer's gh CLI (`gh auth refresh -h github.com -s project` in a real terminal once; OAuth device-code flow). If the scope is missing, the lookup query returns an auth error — fall through with a one-line warning rather than failing the whole run.

@@ -206,7 +206,7 @@ If no version survives, drop the issue from the candidate set — we cannot esta
 
 **Variable format for downstream steps.** Set `REPORTED_VERSION` to the **full tag string** (e.g., `REPORTED_VERSION="v0.0.32"`), not just the patch number. Step 8a's installer expects the full tag via the `NEMOCLAW_INSTALL_TAG` env var.
 
-**Batch cap enforcement.** In batch mode, after Step 3 label filters and the Step 4 version+candidate-rule filters narrow the pool, sort surviving candidates by `(-versions_behind, -age_days)` so the most stale come first, then **slice to the top 15**:
+**Batch cap enforcement.** In batch mode, after Step 3 label filters and the Step 4 version+candidate-rule filters narrow the pool, sort surviving candidates by `(-versions_behind, -age_days)` so the most stale come first, then **slice to the top `${VERIFY_STALE_BATCH_CAP:-15}`**. The default 15 matches the original ~2–3 hr wallclock budget per run; smaller caps (e.g., 10) suit dogfood runs that want a tighter feedback loop, larger caps assume more wallclock headroom. The cap is honored *only* in batch mode — single-issue mode always processes exactly the named issue:
 
 ```bash
 # Each candidate has at minimum: number, reported, behind, age_days
