@@ -203,14 +203,6 @@ function getProbeProcessTimeoutMs(args) {
   return (getCurlMaxTimeSeconds(args) + 5) * 1000;
 }
 
-function runValidationCurlProbe(args) {
-  return runCurlProbe(args, { timeoutMs: getProbeProcessTimeoutMs(args) });
-}
-
-function runValidationStreamingEventProbe(args) {
-  return runStreamingEventProbe(args, { timeoutMs: getProbeProcessTimeoutMs(args) });
-}
-
 // 429 = Too Many Requests; 502/503/504 = upstream gateway/availability flakes
 // (NVIDIA Endpoints and other hosted providers periodically emit these for
 // minutes at a time). All four are transient — retry with backoff before
@@ -286,7 +278,7 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
     useQueryParam && normalizedKey
       ? `${baseUrl}/responses?key=${encodeURIComponent(normalizedKey)}`
       : `${baseUrl}/responses`;
-  const args = [
+  const result = runCurlProbe([
     "-sS",
     ...getValidationProbeCurlArgs(),
     "-H",
@@ -314,8 +306,7 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
       ],
     }),
     url,
-  ];
-  const result = runValidationCurlProbe(args);
+  ]);
 
   if (!result.ok) {
     return result;
@@ -344,7 +335,7 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
     ? `${baseUrl}/chat/completions?key=${encodeURIComponent(normalizedKey)}`
     : `${baseUrl}/chat/completions`;
   const timingArgs = options.timingArgs ?? getValidationProbeCurlArgs();
-  const args = [
+  const result = runCurlProbe([
     "-sS",
     ...timingArgs,
     "-H",
@@ -410,8 +401,7 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
       temperature: 0,
     }),
     url,
-  ];
-  const result = runValidationCurlProbe(args);
+  ]);
 
   if (!result.ok) {
     return result;
@@ -516,7 +506,7 @@ function runChatCompletionsProbe({ authHeader, model, url, isWsl: isWslOverride 
       timeoutMs: getProbeProcessTimeoutMs(args),
     });
   }
-  return runValidationCurlProbe(args);
+  return runCurlProbe(args);
 }
 
 function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
@@ -567,11 +557,11 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
           execute: () =>
             probeResponsesToolCalling(endpointUrl, model, apiKey, { authMode: options.authMode }),
         }
-        : {
+      : {
           name: "Responses API",
           api: "openai-responses",
-          execute: () => {
-            const args = [
+          execute: () =>
+            runCurlProbe([
               "-sS",
               ...getValidationProbeCurlArgs(),
               "-H",
@@ -583,9 +573,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
                 input: "Reply with exactly: OK",
               }),
               appendKey("/responses"),
-            ];
-            return runValidationCurlProbe(args);
-          },
+            ]),
         };
 
   const chatCompletionsProbe = {
@@ -620,7 +608,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
       // streaming mode. Only run for /responses probes on custom endpoints
       // where probeStreaming was requested.
       if (probe.api === "openai-responses" && options.probeStreaming === true) {
-        const streamArgs = [
+        const streamResult = runStreamingEventProbe([
           "-sS",
           ...getValidationProbeCurlArgs(),
           "-H",
@@ -633,8 +621,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
             stream: true,
           }),
           appendKey("/responses"),
-        ];
-        const streamResult = runValidationStreamingEventProbe(streamArgs);
+        ]);
         if (!streamResult.ok && streamResult.missingEvents.length > 0) {
           // Backend responds but lacks required streaming events — fall back
           // to /chat/completions silently.
@@ -730,7 +717,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
             authMode: options.authMode,
             timingArgs: doubledArgs,
           })
-        : runValidationCurlProbe(buildRetryArgs());
+        : runCurlProbe(buildRetryArgs());
     let retryResult = runRetryProbe();
     if (retryResult.ok) {
       return { ok: true, api: "openai-completions", label: "Chat Completions API" };
