@@ -24,6 +24,7 @@ interface ShieldsStatePatch {
   shieldsDownTimeout?: number | null;
   shieldsDownReason?: string | null;
   shieldsDownPolicy?: string | null;
+  shieldsChattrApplied?: boolean;
 }
 
 interface TimerArgs {
@@ -187,6 +188,7 @@ function runRestoreTimer(args: TimerArgs): void {
     // that interactive `shields up` uses. Fall back to the bare configPath/
     // configDir from argv if resolution fails (e.g., registry unavailable).
     let lockVerified = true;
+    let autoLockChattrApplied = false;
     if (args.configPath) {
       let lockTarget: {
         agentName?: string;
@@ -220,7 +222,8 @@ function runRestoreTimer(args: TimerArgs): void {
       }
       if (lockTarget) {
         try {
-          lockAgentConfig(args.sandboxName, lockTarget);
+          const { chattrApplied } = lockAgentConfig(args.sandboxName, lockTarget);
+          autoLockChattrApplied = chattrApplied;
         } catch (error: unknown) {
           lockVerified = false;
           appendAudit({
@@ -243,6 +246,7 @@ function runRestoreTimer(args: TimerArgs): void {
         shieldsDownTimeout: null,
         shieldsDownReason: null,
         shieldsDownPolicy: null,
+        shieldsChattrApplied: autoLockChattrApplied,
       });
 
       appendAudit({
