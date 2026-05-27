@@ -37,14 +37,14 @@ describe("E2E scenario advisor", () => {
 
   it("requires targeted scenario E2E when a validation suite changes", () => {
     const result = analyze([
-      "test/e2e/validation_suites/messaging/telegram/00-telegram-injection-safety.sh",
+      "test/e2e-scenario/validation_suites/messaging/telegram/00-telegram-injection-safety.sh",
     ]);
 
     expect(result.required).toContainEqual(
       expect.objectContaining({
-        id: "ubuntu-repo-cloud-openclaw-telegram:messaging-telegram",
+        id: "ubuntu-repo-docker__cloud-nvidia-openclaw-telegram:messaging-telegram",
         workflow: "e2e-scenarios.yaml",
-        scenario: "ubuntu-repo-cloud-openclaw-telegram",
+        scenario: "ubuntu-repo-docker__cloud-nvidia-openclaw-telegram",
         suiteFilter: "messaging-telegram",
       }),
     );
@@ -52,8 +52,8 @@ describe("E2E scenario advisor", () => {
 
   it("requires all scenario E2E and targeted follow-up when suite metadata changes", () => {
     const result = analyze([
-      "test/e2e/validation_suites/suites.yaml",
-      "test/e2e/validation_suites/messaging/telegram/00-telegram-injection-safety.sh",
+      "test/e2e-scenario/validation_suites/suites.yaml",
+      "test/e2e-scenario/validation_suites/messaging/telegram/00-telegram-injection-safety.sh",
     ]);
 
     expect(result.required).toContainEqual(
@@ -61,8 +61,8 @@ describe("E2E scenario advisor", () => {
     );
     expect(result.required).toContainEqual(
       expect.objectContaining({
-        id: "ubuntu-repo-cloud-openclaw-telegram:messaging-telegram",
-        scenario: "ubuntu-repo-cloud-openclaw-telegram",
+        id: "ubuntu-repo-docker__cloud-nvidia-openclaw-telegram:messaging-telegram",
+        scenario: "ubuntu-repo-docker__cloud-nvidia-openclaw-telegram",
         suiteFilter: "messaging-telegram",
       }),
     );

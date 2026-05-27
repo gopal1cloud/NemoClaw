@@ -3,11 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * E2E convention lint for the hybrid scenario architecture.
+ * E2E convention lint.
  *
- * Supported paths are typed scenarios, manifests, assertion modules, and suite
- * implementation scripts. New top-level `test/e2e/test-*.sh` entrypoints are
- * blocked so all scenario coverage flows through `test/e2e/scenarios/run.ts`.
+ * Enforces conventions for `test/e2e-scenario/validation_suites/**` step scripts and
+ * keeps the new typed scenario suite isolated under `test/e2e-scenario/**`.
+ * Existing top-level `test/e2e/test-*.sh` entrypoints remain valid until a
+ * separate migration explicitly retires them.
  */
 
 import fs from "node:fs";
@@ -91,7 +92,7 @@ function walk(dir: string): string[] {
 }
 
 function lintSuiteSteps(root: string): LintFinding[] {
-  const suitesDir = path.join(root, "test/e2e/validation_suites");
+  const suitesDir = path.join(root, "test/e2e-scenario/validation_suites");
   const findings: LintFinding[] = [];
   for (const file of walk(suitesDir).filter((entry) => entry.endsWith(".sh"))) {
     const rel = path.relative(root, file);
@@ -104,56 +105,8 @@ function lintSuiteSteps(root: string): LintFinding[] {
   return findings;
 }
 
-function lintTopLevelLegacyEntrypoints(root: string): LintFinding[] {
-  const e2eDir = path.join(root, "test/e2e");
-  if (!fs.existsSync(e2eDir)) return [];
-
-  const allowedLegacy = new Set([
-    "test-brave-search-e2e.sh",
-    "test-channels-stop-start.sh",
-    "test-cloud-onboard-e2e.sh",
-    "test-credential-sanitization.sh",
-    "test-docs-validation.sh",
-    "test-full-e2e.sh",
-    "test-gpu-e2e.sh",
-    "test-hermes-e2e.sh",
-    "test-hermes-inference-switch.sh",
-    "test-hermes-root-entrypoint-smoke.sh",
-    "test-issue-2478-crash-loop-recovery.sh",
-    "test-kimi-inference-compat.sh",
-    "test-launchable-smoke.sh",
-    "test-messaging-compatible-endpoint.sh",
-    "test-messaging-providers.sh",
-    "test-network-policy.sh",
-    "test-onboard-repair.sh",
-    "test-onboard-resume.sh",
-    "test-openclaw-inference-switch.sh",
-    "test-openshell-gateway-upgrade.sh",
-    "test-openshell-version-pin.sh",
-    "test-rebuild-hermes.sh",
-    "test-rebuild-openclaw.sh",
-    "test-sandbox-operations.sh",
-    "test-skill-agent-e2e.sh",
-    "test-token-rotation.sh",
-    "test-tunnel-lifecycle.sh",
-  ]);
-
-  return fs
-    .readdirSync(e2eDir, { withFileTypes: true })
-    .filter(
-      (entry) =>
-        entry.isFile() && /^test-.*\.sh$/.test(entry.name) && !allowedLegacy.has(entry.name),
-    )
-    .map((entry) => ({
-      file: `test/e2e/${entry.name}`,
-      rule: "no-top-level-legacy-e2e-entrypoint",
-      message:
-        "top-level E2E shell entrypoints are retired; add typed scenario coverage under test/e2e/scenarios",
-    }));
-}
-
 function lint(root: string): LintFinding[] {
-  return [...lintSuiteSteps(root), ...lintTopLevelLegacyEntrypoints(root)];
+  return lintSuiteSteps(root);
 }
 
 function parseArgs(argv: string[]): { root: string } {

@@ -295,7 +295,7 @@ repos:
 
       - id: source-shape-test-budget
         name: Source-shape test budget
-        entry: env NEMOCLAW_SOURCE_SHAPE_ALLOW=1 npm run source-shape:check
+        entry: npm run source-shape:check
         language: system
         pass_filenames: false
         files: ^(test/|scripts/find-source-shape-tests\.ts$|ci/source-shape-test-budget\.json$)
