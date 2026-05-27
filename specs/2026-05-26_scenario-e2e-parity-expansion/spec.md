@@ -422,7 +422,7 @@ Add or verify manifests for:
 - Host-only auth proxy behavior is not forced into a sandbox scenario.
 - GPU proof markers and token-divergence recovery have dedicated assertions.
 
-## Phase 6: Messaging Channel Lifecycle Parity
+## Phase 6: Messaging Channel Lifecycle Parity [COMPLETED: 7d6c14b56]
 
 ### Audit sections covered
 
