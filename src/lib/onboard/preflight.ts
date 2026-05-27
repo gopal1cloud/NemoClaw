@@ -817,21 +817,19 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
     ];
     if (isWslDockerDesktopRuntime(assessment)) {
       actions.push({
-        id: "repair_wsl_docker_desktop_gpu_cdi",
-        title: "Repair Docker Desktop WSL GPU support",
-        kind: "manual",
+        id: "wsl_docker_desktop_gpu_compatibility",
+        title: "Use Docker Desktop WSL GPU compatibility path",
+        kind: "info",
         reason:
           "Docker Desktop is configured for CDI device injection (CDISpecDirs is set) but no " +
-          "nvidia.com/gpu CDI spec is visible from WSL. Installing or running Linux host " +
-          "NVIDIA Container Toolkit commands inside the WSL distro may not repair Docker " +
-          "Desktop's managed Docker daemon. OpenShell's `gateway start --gpu` will fail with " +
-          "`unresolvable CDI devices nvidia.com/gpu=all` until Docker Desktop GPU support is repaired.",
+          "nvidia.com/gpu CDI spec is visible from WSL. On Docker Desktop-backed WSL, NemoClaw " +
+          "uses Docker's `--gpus` compatibility path instead of trying to repair Linux host CDI " +
+          "from inside the WSL distro.",
         commands: [
-          "Open Docker Desktop Settings > Resources > WSL integration and confirm this distro is enabled.",
-          "Restart Docker Desktop, then verify GPU support from WSL with `docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:nbody nbody -gpu -benchmark`.",
-          "Rerun `nemoclaw onboard`, or rerun with `--no-gpu` to skip GPU passthrough.",
+          "If sandbox GPU setup later fails, verify Docker Desktop GPU support from WSL with `docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:nbody nbody -gpu -benchmark`.",
+          "Rerun with `--no-gpu` to skip GPU passthrough.",
         ],
-        blocking: true,
+        blocking: false,
       });
     } else if (assessment.nvidiaContainerToolkitInstalled) {
       actions.push({

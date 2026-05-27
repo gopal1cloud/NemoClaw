@@ -1114,7 +1114,7 @@ describe("planHostRemediation", () => {
     expect(ctkGenerateIndex).toBeGreaterThan(ctkInstallIndex);
   });
 
-  it("uses Docker Desktop remediation instead of Linux toolkit commands on WSL Docker Desktop", () => {
+  it("uses non-blocking Docker Desktop GPU compatibility guidance on WSL Docker Desktop", () => {
     const actions = planHostRemediation({
       platform: "linux",
       isWsl: true,
@@ -1143,12 +1143,12 @@ describe("planHostRemediation", () => {
     });
 
     expect(actions.find((entry) => entry.id === "install_nvidia_container_toolkit")).toBeUndefined();
-    const action = actions.find((entry) => entry.id === "repair_wsl_docker_desktop_gpu_cdi");
+    const action = actions.find((entry) => entry.id === "wsl_docker_desktop_gpu_compatibility");
     expect(action).toBeTruthy();
-    expect(action?.kind).toBe("manual");
-    expect(action?.blocking).toBe(true);
+    expect(action?.kind).toBe("info");
+    expect(action?.blocking).toBe(false);
     expect(action?.title).toContain("Docker Desktop");
-    expect(action?.commands.join("\n")).toContain("Docker Desktop Settings");
+    expect(action?.reason).toContain("--gpus");
     expect(action?.commands.join("\n")).not.toContain("nvidia-ctk");
     expect(action?.commands.join("\n")).not.toContain("nvidia-container-toolkit");
   });
@@ -1181,7 +1181,7 @@ describe("planHostRemediation", () => {
       notes: ["Running under WSL"],
     });
 
-    expect(actions.find((entry) => entry.id === "repair_wsl_docker_desktop_gpu_cdi")).toBeUndefined();
+    expect(actions.find((entry) => entry.id === "wsl_docker_desktop_gpu_compatibility")).toBeUndefined();
     expect(actions.find((entry) => entry.id === "install_nvidia_container_toolkit")).toBeTruthy();
   });
 

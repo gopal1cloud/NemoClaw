@@ -1173,7 +1173,8 @@ If no `nvidia.com/gpu` CDI spec has been generated on the host yet, gateway star
 The standard NemoClaw installer detects this gap before onboarding, first tries to enable the NVIDIA CDI refresh systemd units, and falls back to generating the spec directly with `nvidia-ctk`.
 If you run `nemoclaw onboard` directly, preflight prints the manual remediation instead.
 The native Linux fix is the same on Docker hosts whose `docker info` advertises a non-empty `CDISpecDirs`.
-On WSL with Docker Desktop, repair Docker Desktop GPU support from the Windows/Docker Desktop side instead of installing Linux host toolkit packages inside the WSL distro.
+On WSL with Docker Desktop, Docker may advertise CDI directories even though `--device nvidia.com/gpu=all` is not usable from the WSL distro.
+For that runtime, NemoClaw skips Linux CDI repair and uses Docker's `--gpus` compatibility path for sandbox GPU access.
 
 Enable the refresh units, verify they list `nvidia.com/gpu` entries, then rerun onboarding:
 
@@ -1191,13 +1192,13 @@ $ sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
 $ nvidia-ctk cdi list
 ```
 
-If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu` instead.
-
-On WSL with Docker Desktop, confirm Docker Desktop WSL integration is enabled for your distro, restart Docker Desktop, and verify GPU access from WSL:
+On WSL with Docker Desktop, confirm Docker Desktop WSL integration is enabled for your distro and verify Docker GPU access from WSL:
 
 ```console
 $ docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:nbody nbody -gpu -benchmark
 ```
+
+If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu` instead.
 
 ### Docker GPU patch failed during sandbox create
 

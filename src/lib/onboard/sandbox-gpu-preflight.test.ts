@@ -93,11 +93,10 @@ describe("sandbox GPU preflight", () => {
     expect(dockerInfo).not.toHaveBeenCalled();
   });
 
-  it("prints Docker Desktop WSL remediation when CDI support is missing there", () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
-      throw new Error(`exit:${code}`);
-    }) as never);
+  it("skips CDI spec validation on Docker Desktop WSL so Docker --gpus can be used", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const getDockerCdiSpecDirs = vi.fn(() => ["/etc/cdi"]);
+    const findReadableNvidiaCdiSpecFiles = vi.fn(() => []);
 
     try {
       expect(() =>
@@ -105,18 +104,17 @@ describe("sandbox GPU preflight", () => {
           platform: "linux",
           env: { WSL_DISTRO_NAME: "Ubuntu" },
           dockerInfoFormat: vi.fn(() => '"Docker Desktop"'),
-          getDockerCdiSpecDirs: vi.fn(() => ["/etc/cdi"]),
-          findReadableNvidiaCdiSpecFiles: vi.fn(() => []),
+          getDockerCdiSpecDirs,
+          findReadableNvidiaCdiSpecFiles,
         }),
-      ).toThrow("exit:1");
-      const message = errorSpy.mock.calls.map((call) => call[0]).join("\n");
-      expect(message).toContain("Docker Desktop WSL GPU support was not detected");
-      expect(message).toContain("Docker Desktop Settings");
-      expect(message).not.toContain("sudo nvidia-ctk");
-      expect(message).not.toContain("sudo systemctl restart docker");
+      ).not.toThrow();
+      expect(getDockerCdiSpecDirs).not.toHaveBeenCalled();
+      expect(findReadableNvidiaCdiSpecFiles).not.toHaveBeenCalled();
+      expect(logSpy.mock.calls.map((call) => call[0]).join("\n")).toContain(
+        "Docker --gpus compatibility path",
+      );
     } finally {
-      errorSpy.mockRestore();
-      exitSpy.mockRestore();
+      logSpy.mockRestore();
     }
   });
 

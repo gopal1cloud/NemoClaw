@@ -106,9 +106,8 @@ export function sandboxGpuRemediationLines(
     (options.wslDockerDesktop ? "docker-desktop" : "not-docker-desktop");
   if (status === "docker-desktop") {
     return [
-      "Docker Desktop WSL GPU support was not detected.",
-      "Open Docker Desktop Settings > Resources > WSL integration and confirm this distro is enabled.",
-      "Restart Docker Desktop, then verify from WSL:",
+      "Docker Desktop WSL detected; NemoClaw uses Docker --gpus compatibility instead of CDI spec validation.",
+      "If sandbox GPU setup later fails, verify from WSL:",
       "  docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:nbody nbody -gpu -benchmark",
       "Or force CPU sandbox behavior with NEMOCLAW_SANDBOX_GPU=0.",
     ];
@@ -264,6 +263,14 @@ export function validateSandboxGpuPreflight(
     return;
   }
 
+  const wslDockerDesktopStatus = detectWslDockerDesktopStatus(deps);
+  if (wslDockerDesktopStatus === "docker-desktop") {
+    console.log(
+      "  Docker Desktop WSL detected; using Docker --gpus compatibility path instead of CDI spec validation.",
+    );
+    return;
+  }
+
   const cdiSpecDirs = (deps.getDockerCdiSpecDirs ?? getDockerCdiSpecDirs)();
   const cdiSpecFiles = (deps.findReadableNvidiaCdiSpecFiles ?? findReadableNvidiaCdiSpecFiles)(
     cdiSpecDirs,
@@ -272,7 +279,7 @@ export function validateSandboxGpuPreflight(
     console.error("");
     console.error("  ✗ Docker CDI GPU support was not detected.");
     for (const line of sandboxGpuRemediationLines({
-      wslDockerDesktopStatus: detectWslDockerDesktopStatus(deps),
+      wslDockerDesktopStatus,
     })) {
       console.error(`    ${line}`);
     }

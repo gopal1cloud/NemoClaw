@@ -1254,12 +1254,19 @@ exports.isWslDockerDesktopRuntime = (host) =>
   Boolean(host && host.isWsl && host.runtime === "docker-desktop");
 exports.planHostRemediation = (host) =>
   host.cdiNvidiaGpuSpecMissing
-    ? [{
-        title: "Generate NVIDIA CDI device specs",
-        reason: "missing nvidia.com/gpu",
-        commands: ["sudo nvidia-ctk cdi generate --output=" + exports.getNvidiaCdiSpecPath(host)],
-        blocking: true,
-      }]
+    ? host.isWsl && host.runtime === "docker-desktop"
+      ? [{
+          title: "Use Docker Desktop WSL GPU compatibility path",
+          reason: "missing nvidia.com/gpu CDI; using Docker --gpus",
+          commands: ["verify Docker --gpus support from WSL"],
+          blocking: false,
+        }]
+      : [{
+          title: "Generate NVIDIA CDI device specs",
+          reason: "missing nvidia.com/gpu",
+          commands: ["sudo nvidia-ctk cdi generate --output=" + exports.getNvidiaCdiSpecPath(host)],
+          blocking: true,
+        }]
     : [];
 `,
     );
@@ -1415,9 +1422,10 @@ exit 0
 `,
       });
 
-    expect(result.status, output).toBe(1);
+    expect(result.status, output).toBe(0);
     expect(cdiStateExists).toBe(false);
-    expect(output).toMatch(/Host preflight found issues/);
+    expect(output).toMatch(/Host preflight found warnings/);
+    expect(output).toMatch(/Use Docker Desktop WSL GPU compatibility path/);
     expect(output).not.toMatch(/Trying NVIDIA CDI refresh service/);
     expect(output).not.toMatch(/Generated NVIDIA CDI device spec/);
     expect(systemctlLog).toBe("");
