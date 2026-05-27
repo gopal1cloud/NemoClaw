@@ -301,6 +301,12 @@ export function getNvidiaCdiSpecPath(
   return path.join(normalizeCdiSpecDir(assessment.dockerCdiSpecDirs[0]), "nvidia.yaml");
 }
 
+export function isWslDockerDesktopRuntime(
+  assessment: Pick<HostAssessment, "isWsl" | "runtime">,
+): boolean {
+  return assessment.isWsl && assessment.runtime === "docker-desktop";
+}
+
 // True when at least one CDI spec under the configured directories declares
 // `kind: nvidia.com/gpu` (the device class OpenShell injects with `--gpu`).
 // Specs are typically YAML, but the JSON shape is also accepted because
@@ -809,7 +815,25 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
       "nvidia-ctk cdi list   # verify nvidia.com/gpu entries appear",
       "nemoclaw onboard      # or rerun with --no-gpu to skip GPU passthrough",
     ];
-    if (assessment.nvidiaContainerToolkitInstalled) {
+    if (isWslDockerDesktopRuntime(assessment)) {
+      actions.push({
+        id: "repair_wsl_docker_desktop_gpu_cdi",
+        title: "Repair Docker Desktop WSL GPU support",
+        kind: "manual",
+        reason:
+          "Docker Desktop is configured for CDI device injection (CDISpecDirs is set) but no " +
+          "nvidia.com/gpu CDI spec is visible from WSL. Installing or running Linux host " +
+          "NVIDIA Container Toolkit commands inside the WSL distro may not repair Docker " +
+          "Desktop's managed Docker daemon. OpenShell's `gateway start --gpu` will fail with " +
+          "`unresolvable CDI devices nvidia.com/gpu=all` until Docker Desktop GPU support is repaired.",
+        commands: [
+          "Open Docker Desktop Settings > Resources > WSL integration and confirm this distro is enabled.",
+          "Restart Docker Desktop, then verify GPU support from WSL with `docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:nbody nbody -gpu -benchmark`.",
+          "Rerun `nemoclaw onboard`, or rerun with `--no-gpu` to skip GPU passthrough.",
+        ],
+        blocking: true,
+      });
+    } else if (assessment.nvidiaContainerToolkitInstalled) {
       actions.push({
         id: "generate_nvidia_cdi_spec",
         title: "Generate NVIDIA CDI device specs",

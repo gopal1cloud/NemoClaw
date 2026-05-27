@@ -1172,7 +1172,8 @@ Recent NVIDIA Container Toolkit installs configure the Docker daemon for Contain
 If no `nvidia.com/gpu` CDI spec has been generated on the host yet, gateway start fails with `Docker responded with status code 500: CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`.
 The standard NemoClaw installer detects this gap before onboarding, first tries to enable the NVIDIA CDI refresh systemd units, and falls back to generating the spec directly with `nvidia-ctk`.
 If you run `nemoclaw onboard` directly, preflight prints the manual remediation instead.
-The underlying fix is the same on any Docker host whose `docker info` advertises a non-empty `CDISpecDirs`.
+The native Linux fix is the same on Docker hosts whose `docker info` advertises a non-empty `CDISpecDirs`.
+On WSL with Docker Desktop, repair Docker Desktop GPU support from the Windows/Docker Desktop side instead of installing Linux host toolkit packages inside the WSL distro.
 
 Enable the refresh units, verify they list `nvidia.com/gpu` entries, then rerun onboarding:
 
@@ -1191,6 +1192,12 @@ $ nvidia-ctk cdi list
 ```
 
 If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu` instead.
+
+On WSL with Docker Desktop, confirm Docker Desktop WSL integration is enabled for your distro, restart Docker Desktop, and verify GPU access from WSL:
+
+```console
+$ docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:nbody nbody -gpu -benchmark
+```
 
 ### Docker GPU patch failed during sandbox create
 
