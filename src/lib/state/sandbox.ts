@@ -671,6 +671,26 @@ function statusFromMarker(
   };
 }
 
+function tarStatusForBackup(
+  result: { status: number; stdout: Buffer; stderr: Buffer },
+  marked: { status: number; stderr: string; found: boolean },
+): number {
+  // OpenShell 0.0.44 can occasionally finish a binary ExecSandbox stream
+  // without the terminal exit event or the final stderr status marker, while
+  // still delivering a complete tar archive on stdout. In that specific shape,
+  // a valid, safely extracted archive is stronger evidence than the adapter's
+  // conservative "missing exit means 1" default.
+  if (
+    !marked.found &&
+    result.status === 1 &&
+    result.stdout.length > 0 &&
+    marked.stderr.trim().length === 0
+  ) {
+    return 0;
+  }
+  return marked.status;
+}
+
 function parseExistingStateDirs(
   output: string,
   declaredStateDirs: readonly string[],
@@ -1279,6 +1299,12 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
           `gRPC+tar download: exit=${result.status}, stdout=${result.stdout ? result.stdout.length + " bytes" : "null"}, stderr=${result.stderr.toString().substring(0, 200)}`,
         );
         const markedTar = statusFromMarker(result, TAR_BACKUP_STATUS_MARKER);
+        const tarStatus = tarStatusForBackup(result, markedTar);
+        if (tarStatus !== markedTar.status) {
+          _log(
+            `gRPC+tar download missing exit marker but produced ${result.stdout.length} bytes; validating archive as success candidate`,
+          );
+        }
 
         // GNU tar exit codes: 0 = success, 1 = files changed during archive,
         // 2 = errors (e.g. permission denied) but archive still written to stdout.
@@ -1287,11 +1313,11 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         const tarExitedWithData =
           result.stdout &&
           result.stdout.length > 0 &&
-          (markedTar.status === 0 || markedTar.status === 1 || markedTar.status === 2);
+          (tarStatus === 0 || tarStatus === 1 || tarStatus === 2);
 
-        if (markedTar.status !== 0 && result.stdout && result.stdout.length > 0) {
+        if (tarStatus !== 0 && result.stdout && result.stdout.length > 0) {
           _log(
-            `tar exited ${markedTar.status} but produced ${result.stdout.length} bytes — attempting partial extraction`,
+            `tar exited ${tarStatus} but produced ${result.stdout.length} bytes; attempting partial extraction`,
           );
         }
 
@@ -1300,7 +1326,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
           const extractResult = safeTarExtract(result.stdout, backupPath);
           if (extractResult.success) {
             const extractedDirs = new Set(existingBackupDirs(backupPath, existingDirs));
-            if (markedTar.status === 0) {
+            if (tarStatus === 0) {
               for (const d of existingDirs) {
                 if (extractedDirs.has(d)) {
                   backedUpDirs.push(d);
@@ -1316,7 +1342,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
               );
               if (tarFailedDirs.size === 0) {
                 _log(
-                  `tar exited ${markedTar.status} without attributable failed dirs — marking all dirs failed`,
+                  `tar exited ${tarStatus} without attributable failed dirs; marking all dirs failed`,
                 );
                 failedDirs.push(...existingDirs);
               } else {
@@ -1530,7 +1556,16 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
       }
 
       const markedExtract = statusFromMarker(extractResult, RESTORE_EXTRACT_STATUS_MARKER);
-      if (markedExtract.status === 0) {
+      const extractStatus =
+        !markedExtract.found &&
+        extractResult.status === 1 &&
+        markedExtract.stderr.trim().length === 0
+          ? 0
+          : markedExtract.status;
+      if (extractStatus !== markedExtract.status) {
+        _log("gRPC tar restore missing exit marker; validating restored dirs with usability probe");
+      }
+      if (extractStatus === 0) {
         const restoredPaths = localDirs.map((d) => `${dir}/${d}`);
 
         // Best-effort only: OpenShell gRPC exec normally runs as the sandbox user,

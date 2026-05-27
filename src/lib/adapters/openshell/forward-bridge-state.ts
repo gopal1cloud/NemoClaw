@@ -108,6 +108,15 @@ export function isPidAlive(pid: number): boolean {
   }
 }
 
+function waitForPidExit(pid: number, timeoutMs = 2_000): boolean {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) return true;
+    sleepMs(50);
+  }
+  return !isPidAlive(pid);
+}
+
 export function stopForwardBridge(sandboxName: string, port: number | string): boolean {
   const state = readStateFile(statePath(sandboxName, port));
   if (state && isPidAlive(state.pid) && !isTestForwardPid(state.pid)) {
@@ -115,6 +124,14 @@ export function stopForwardBridge(sandboxName: string, port: number | string): b
       process.kill(state.pid, "SIGTERM");
     } catch {
       /* ignore */
+    }
+    if (!waitForPidExit(state.pid)) {
+      try {
+        process.kill(state.pid, "SIGKILL");
+      } catch {
+        /* ignore */
+      }
+      waitForPidExit(state.pid, 1_000);
     }
   }
   removeForwardState(sandboxName, port);
@@ -266,4 +283,5 @@ export function startForwardBridgeDetached(
 
 export const __forwardBridgeTestHooks = {
   probeForwardReady,
+  waitForPidExit,
 };

@@ -78,6 +78,7 @@ type GrpcClient = grpc.Client & Record<string, (...args: any[]) => any>;
 
 const DEFAULT_GRPC_TIMEOUT_MS = 30_000;
 const STREAM_CHUNK_SIZE = 64 * 1024;
+const INLINE_STDIN_LIMIT = 16 * 1024 * 1024;
 
 let packageDefinition: grpc.GrpcObject | null = null;
 
@@ -187,6 +188,10 @@ function exitCodeFromEvent(event: any): number | null {
 function stdinBuffer(input: Buffer | string | undefined): Buffer | undefined {
   if (input === undefined) return undefined;
   return Buffer.isBuffer(input) ? input : Buffer.from(input);
+}
+
+function shouldInlineExecInput(input: Buffer, opts: SandboxExecOptions = {}): boolean {
+  return opts.tty !== true && input.length <= INLINE_STDIN_LIMIT;
 }
 
 function sandboxIdFromResponse(response: any, sandboxName: string): string {
@@ -344,6 +349,11 @@ export class SandboxGrpcClient {
     input: Buffer | string,
     opts: SandboxExecOptions = {},
   ): Promise<SandboxStreamResult> {
+    const inputBuffer = stdinBuffer(input) ?? Buffer.alloc(0);
+    if (shouldInlineExecInput(inputBuffer, opts)) {
+      return this.execBinaryStream(sandboxName, argv, { ...opts, stdin: inputBuffer });
+    }
+
     const sandboxId = await this.getSandboxId(sandboxName, opts.timeoutMs);
     const execInteractive = method<() => grpc.ClientDuplexStream<any, any>>(
       this.client,
@@ -356,7 +366,7 @@ export class SandboxGrpcClient {
       opts.timeoutMs,
     );
     stream.write({ start: execRequest(sandboxId, argv, opts) });
-    writeInputChunks(stream, stdinBuffer(input) ?? Buffer.alloc(0));
+    writeInputChunks(stream, inputBuffer);
     stream.end();
     return result;
   }
@@ -602,6 +612,7 @@ function runSyncRunner(
     encoding: "utf-8",
     stdio: ["pipe", "pipe", "pipe"],
     timeout: timeoutMs && timeoutMs > 0 ? timeoutMs + 5_000 : undefined,
+    maxBuffer: 512 * 1024 * 1024,
     env: process.env,
   });
   if (result.error) {
@@ -671,6 +682,7 @@ export function execInputStreamSync(
 export const __grpcTestHooks = {
   collectExecStream,
   exitCodeFromEvent,
+  shouldInlineExecInput,
 };
 
 // Keep CommonJS transpilation happy if this file is ever executed through ESM-aware tooling.

@@ -627,6 +627,68 @@ process.exit(0);
     }
   });
 
+  it("accepts a valid tar archive when OpenShell omits the binary exit marker", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-grpc-tar-no-marker-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
+      const existingDirs = ["agents", "workspace", "skills"];
+      fs.mkdirSync(binDir, { recursive: true });
+      for (const dirName of existingDirs) {
+        fs.mkdirSync(path.join(openclawDir, dirName), { recursive: true });
+      }
+      fs.writeFileSync(path.join(openclawDir, "workspace", "marker.txt"), "marker\n");
+
+      const openshell = writeFakeOpenshell(binDir);
+      writeExecutable(
+        path.join(binDir, "ssh"),
+        `#!/usr/bin/env node
+const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const cmd = process.argv[process.argv.length - 1] || "";
+const existingDirs = ${JSON.stringify(existingDirs)};
+if (cmd.includes("[ -d ")) {
+  process.stdout.write(existingDirs.join("\\n") + "\\n");
+  process.stderr.write("\\n__NEMOCLAW_DIR_DISCOVERY_STATUS__:0\\n");
+  process.exit(1);
+}
+if (cmd.includes("find ")) {
+  process.stderr.write("\\n__NEMOCLAW_PRE_BACKUP_AUDIT_STATUS__:0\\n");
+  process.exit(1);
+}
+if (cmd.includes("tar -cf -")) {
+  const r = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(openclawDir)}, ...existingDirs], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (r.stdout) fs.writeSync(1, r.stdout);
+  // Simulate OpenShell ending the stream without the final exit event/stderr marker.
+  process.exit(1);
+}
+process.exit(0);
+`,
+      );
+
+      writeOpenClawRegistry("alpha");
+      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success).toBe(true);
+      expect(backup.failedDirs).toEqual([]);
+      expect(backup.backedUpDirs).toEqual(existingDirs);
+    } finally {
+      if (oldOpenshell === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+      }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it("excludes tar-failed directories from the restorable manifest", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-partial-tar-"));
     const oldPath = process.env.PATH;
