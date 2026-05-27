@@ -50,6 +50,62 @@ describe("E2E scenario advisor", () => {
     );
   });
 
+  it("recognizes migrated test/e2e-scenario validation suite paths", () => {
+    const result = analyze([
+      "test/e2e-scenario/validation_suites/messaging/telegram/00-telegram-injection-safety.sh",
+    ]);
+
+    expect(result.relevantChangedFiles).toEqual([
+      "test/e2e-scenario/validation_suites/messaging/telegram/00-telegram-injection-safety.sh",
+    ]);
+    expect(result.required).toContainEqual(
+      expect.objectContaining({
+        id: "ubuntu-repo-docker__cloud-nvidia-openclaw-telegram:messaging-telegram",
+        workflow: "e2e-scenarios.yaml",
+        scenario: "ubuntu-repo-docker__cloud-nvidia-openclaw-telegram",
+        suiteFilter: "messaging-telegram",
+      }),
+    );
+  });
+
+  it("requires all known scenarios when typed scenario internals change", () => {
+    const result = analyze(["test/e2e-scenario/scenarios/run.ts"]);
+
+    expect(result.required).toContainEqual(
+      expect.objectContaining({ id: "e2e-scenarios-all" }),
+    );
+    expect(result.required).toContainEqual(
+      expect.objectContaining({
+        scenario: "ubuntu-repo-docker__cloud-nvidia-openclaw",
+      }),
+    );
+    expect(result.required).toContainEqual(
+      expect.objectContaining({
+        scenario: "ubuntu-repo-docker__cloud-nvidia-openclaw-telegram",
+      }),
+    );
+    expect(result.required.length).toBeGreaterThan(7);
+    expect(result.noScenarioE2eReason).toBeNull();
+  });
+
+  it("requires all known scenarios when migrated manifests change", () => {
+    const result = analyze([
+      "test/e2e-scenario/manifests/openclaw-nvidia.yaml",
+    ]);
+
+    expect(result.relevantChangedFiles).toEqual([
+      "test/e2e-scenario/manifests/openclaw-nvidia.yaml",
+    ]);
+    expect(result.required).toContainEqual(
+      expect.objectContaining({ id: "e2e-scenarios-all" }),
+    );
+    expect(result.required).toContainEqual(
+      expect.objectContaining({
+        scenario: "ubuntu-repo-docker__cloud-nvidia-openclaw",
+      }),
+    );
+  });
+
   it("requires all scenario E2E and targeted follow-up when suite metadata changes", () => {
     const result = analyze([
       "test/e2e/validation_suites/suites.yaml",
