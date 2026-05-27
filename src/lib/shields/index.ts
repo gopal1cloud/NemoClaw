@@ -46,6 +46,9 @@ const {
   buildRuntimePermissivePolicy,
 }: typeof import("./permissive-runtime") = require("./permissive-runtime");
 const { cleanupTempDir } = require("../onboard/temp-files");
+const {
+  verifyShieldsLockState,
+}: typeof import("./verify-lock") = require("./verify-lock");
 
 const STATE_DIR = resolveNemoclawStateDir();
 
@@ -714,86 +717,13 @@ function lockAgentConfig(
   // Immutable bit is only verified if chattr succeeded above.
   const { issues } = verifyShieldsLockState(sandboxName, target, {
     verifyChattr: chattrSucceeded,
+    exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
+    assertLegacyLayout: assertNoLegacyStateLayout,
   });
 
   if (issues.length > 0) {
     throw new Error(`Config not locked: ${issues.join(", ")}`);
   }
-}
-
-// Re-verify that the sandbox filesystem still matches what shields-up
-// established: 444 root:root on each locked file, 755 root:root on the config
-// directory, no legacy state layout, and (when the caller knows chattr was
-// applied) the immutable bit. Returns the list of mismatches so callers can
-// report drift after a host-root tamper. Stat/lsattr failures are folded into
-// `issues` so the caller can decide whether to treat them as drift.
-//
-// `options.exec` and `options.assertLegacyLayout` are injection points for
-// tests; production callers use the defaults that go through the sandbox's
-// privileged exec channel.
-function verifyShieldsLockState(
-  sandboxName: string,
-  target: AgentConfigTarget,
-  options: {
-    verifyChattr?: boolean;
-    exec?: (cmd: string[]) => string;
-    assertLegacyLayout?: (sandboxName: string, configDir: string) => void;
-  } = {},
-): { ok: boolean; issues: string[] } {
-  const exec =
-    options.exec ?? ((cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd));
-  const assertLegacyLayout =
-    options.assertLegacyLayout ?? assertNoLegacyStateLayout;
-  const issues: string[] = [];
-  const filesToVerify = [target.configPath, ...(target.sensitiveFiles || [])];
-
-  for (const f of filesToVerify) {
-    try {
-      const perms = exec(["stat", "-c", "%a %U:%G", f]);
-      const [mode, owner] = perms.split(" ");
-      if (!/^4[0-4][0-4]$/.test(mode))
-        issues.push(`${f} mode=${mode} (expected 444)`);
-      if (owner !== "root:root")
-        issues.push(`${f} owner=${owner} (expected root:root)`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      issues.push(`${f} stat failed: ${msg}`);
-    }
-  }
-
-  try {
-    const dirPerms = exec(["stat", "-c", "%a %U:%G", target.configDir]);
-    const [dirMode, dirOwner] = dirPerms.split(" ");
-    if (dirMode !== "755") issues.push(`dir mode=${dirMode} (expected 755)`);
-    if (dirOwner !== "root:root")
-      issues.push(`dir owner=${dirOwner} (expected root:root)`);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    issues.push(`dir stat failed: ${msg}`);
-  }
-
-  if (options.verifyChattr) {
-    for (const f of filesToVerify) {
-      try {
-        const attrs = exec(["lsattr", "-d", f]);
-        // lsattr format: "----i---------e----- /path/to/file"
-        // First whitespace-delimited token is the flags field.
-        const [flags] = attrs.trim().split(/\s+/, 1);
-        if (!flags.includes("i")) issues.push(`${f} immutable bit not set`);
-      } catch {
-        // lsattr may not be available on all images — skip
-      }
-    }
-  }
-
-  try {
-    assertLegacyLayout(sandboxName, target.configDir);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    issues.push(msg);
-  }
-
-  return { ok: issues.length === 0, issues };
 }
 
 function rollbackShieldsDown(
@@ -1293,8 +1223,20 @@ function shieldsUp(sandboxName: string, opts: { throwOnError?: boolean } = {}): 
 // shields status
 // ---------------------------------------------------------------------------
 
-function shieldsStatus(sandboxName: string, allowInlineRecovery = true): void {
+type ShieldsStatusDeps = {
+  verifyLockState?: typeof verifyShieldsLockState;
+  resolveConfig?: typeof resolveAgentConfig;
+};
+
+function shieldsStatus(
+  sandboxName: string,
+  allowInlineRecovery = true,
+  deps: ShieldsStatusDeps = {},
+): void {
   validateName(sandboxName, "sandbox name");
+
+  const verify = deps.verifyLockState ?? verifyShieldsLockState;
+  const resolveConfig = deps.resolveConfig ?? resolveAgentConfig;
 
   const posture = getShieldsPosture(sandboxName, allowInlineRecovery);
   const { state } = posture;
@@ -1319,13 +1261,16 @@ function shieldsStatus(sandboxName: string, allowInlineRecovery = true): void {
       return;
 
     case "locked": {
-      // NC-2243: cross-check the sandbox filesystem so a host-root tamper that
-      // reverts /sandbox/.openclaw perms back to a sandbox-writable state is
-      // surfaced as drift instead of reported as a clean lockdown.
+      // Cross-check the sandbox filesystem so a host-root tamper that reverts
+      // protected perms back to a sandbox-writable state is surfaced as drift
+      // instead of reported as a clean lockdown.
       let driftIssues: string[] = [];
       try {
-        const target = resolveAgentConfig(sandboxName);
-        driftIssues = verifyShieldsLockState(sandboxName, target).issues;
+        const target = resolveConfig(sandboxName);
+        driftIssues = verify(sandboxName, target, {
+          exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
+          assertLegacyLayout: assertNoLegacyStateLayout,
+        }).issues;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         driftIssues = [`unable to resolve agent config target: ${msg}`];
@@ -1414,7 +1359,6 @@ export {
   parseDuration,
   lockAgentConfig,
   unlockAgentConfig,
-  verifyShieldsLockState,
   MAX_TIMEOUT_SECONDS,
   DEFAULT_TIMEOUT_SECONDS,
 };

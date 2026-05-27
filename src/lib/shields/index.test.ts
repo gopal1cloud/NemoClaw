@@ -657,12 +657,9 @@ describe("shields — unit logic", () => {
   });
 
   // -------------------------------------------------------------------
-  // NC-2243: verifyShieldsLockState cross-checks the sandbox filesystem
-  // so a host-root tamper that reverts /sandbox/.openclaw perms to a
-  // sandbox-writable state is surfaced as drift instead of reported as a
-  // clean lockdown.
+  // shieldsStatus: locked-state drift surface
   // -------------------------------------------------------------------
-  describe("NC-2243: verifyShieldsLockState detects sandbox-filesystem drift", () => {
+  describe("shieldsStatus surfaces drift returned by the verifier", () => {
     async function loadShieldsModule() {
       const distModulePath = path.join(
         process.cwd(),
@@ -674,147 +671,113 @@ describe("shields — unit logic", () => {
       return import(distModulePath);
     }
 
-    const target = {
-      configPath: "/sandbox/.openclaw/openclaw.json",
-      configDir: "/sandbox/.openclaw",
-      sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
-    };
-
-    type StatLookup = Record<string, string>;
-
-    function makeExec(perms: StatLookup): (cmd: string[]) => string {
-      return (cmd: string[]) => {
-        if (cmd[0] === "stat") {
-          const file = cmd[cmd.length - 1];
-          if (file in perms) return perms[file];
-        }
-        return "";
-      };
+    function stateDir(): string {
+      return path.join(tmpDir, ".nemoclaw", "state");
     }
 
-    it("returns ok when all locked files and the config dir match the expected perms", async () => {
-      const { verifyShieldsLockState } = await loadShieldsModule();
-      const exec = makeExec({
-        "/sandbox/.openclaw/openclaw.json": "444 root:root",
-        "/sandbox/.openclaw/.config-hash": "444 root:root",
-        "/sandbox/.openclaw": "755 root:root",
-      });
+    function writeLockedState(sandboxName: string): void {
+      fs.mkdirSync(stateDir(), { recursive: true });
+      fs.writeFileSync(
+        path.join(stateDir(), `shields-${sandboxName}.json`),
+        JSON.stringify(
+          {
+            shieldsDown: false,
+            updatedAt: new Date().toISOString(),
+          },
+          null,
+          2,
+        ),
+        { mode: 0o600 },
+      );
+    }
 
-      const result = verifyShieldsLockState("openclaw", target, {
-        exec,
-        assertLegacyLayout: () => {},
-      });
+    it("prints DRIFTED with the issue list and exits 2 when the verifier reports drift", async () => {
+      const sandboxName = "openclaw";
+      writeLockedState(sandboxName);
+      const driftIssues = [
+        "/sandbox/.openclaw/openclaw.json mode=660 (expected 444)",
+        "/sandbox/.openclaw/openclaw.json owner=sandbox:sandbox (expected root:root)",
+        "dir mode=2770 (expected 755)",
+        "dir owner=sandbox:sandbox (expected root:root)",
+      ];
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const exitSpy = vi
+        .spyOn(process, "exit")
+        .mockImplementation((code?: string | number | null) => {
+          throw new Error(`exit ${String(code)}`);
+        });
 
-      expect(result.ok).toBe(true);
-      expect(result.issues).toEqual([]);
+      const { shieldsStatus } = await loadShieldsModule();
+      expect(() =>
+        shieldsStatus(sandboxName, true, {
+          verifyLockState: () => ({ ok: false, issues: driftIssues }),
+          resolveConfig: () => ({
+            agentName: "openclaw",
+            configPath: "/sandbox/.openclaw/openclaw.json",
+            configDir: "/sandbox/.openclaw",
+          }),
+        }),
+      ).toThrow("exit 2");
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        "  Shields: UP (DRIFTED — declared locked but sandbox filesystem differs)",
+      );
+      expect(errorSpy).toHaveBeenCalledWith("  Drift:");
+      for (const issue of driftIssues) {
+        expect(errorSpy).toHaveBeenCalledWith(`    - ${issue}`);
+      }
+      expect(errorSpy).toHaveBeenCalledWith(
+        `  Recovery: nemoclaw ${sandboxName} shields up   # re-lock and re-verify`,
+      );
+      expect(exitSpy).toHaveBeenCalledWith(2);
     });
 
-    it("flags drift when host-root tamper reverts dir + files to sandbox-writable perms", async () => {
-      const { verifyShieldsLockState } = await loadShieldsModule();
-      // Reproduce the issue #4243 host-root tamper sequence:
-      //   chmod 2770 /sandbox/.openclaw
-      //   chown sandbox:sandbox /sandbox/.openclaw
-      //   chmod 660 /sandbox/.openclaw/openclaw.json
-      //   chown sandbox:sandbox /sandbox/.openclaw/openclaw.json
-      //   chmod 660 /sandbox/.openclaw/.config-hash
-      //   chown sandbox:sandbox /sandbox/.openclaw/.config-hash
-      const exec = makeExec({
-        "/sandbox/.openclaw/openclaw.json": "660 sandbox:sandbox",
-        "/sandbox/.openclaw/.config-hash": "660 sandbox:sandbox",
-        "/sandbox/.openclaw": "2770 sandbox:sandbox",
+    it("prints a clean locked status when the verifier reports no drift", async () => {
+      const sandboxName = "openclaw";
+      writeLockedState(sandboxName);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const { shieldsStatus } = await loadShieldsModule();
+      shieldsStatus(sandboxName, true, {
+        verifyLockState: () => ({ ok: true, issues: [] }),
+        resolveConfig: () => ({
+          agentName: "openclaw",
+          configPath: "/sandbox/.openclaw/openclaw.json",
+          configDir: "/sandbox/.openclaw",
+        }),
       });
 
-      const result = verifyShieldsLockState("openclaw", target, {
-        exec,
-        assertLegacyLayout: () => {},
-      });
-
-      expect(result.ok).toBe(false);
-      expect(result.issues).toEqual(
-        expect.arrayContaining([
-          "/sandbox/.openclaw/openclaw.json mode=660 (expected 444)",
-          "/sandbox/.openclaw/openclaw.json owner=sandbox:sandbox (expected root:root)",
-          "/sandbox/.openclaw/.config-hash mode=660 (expected 444)",
-          "/sandbox/.openclaw/.config-hash owner=sandbox:sandbox (expected root:root)",
-          "dir mode=2770 (expected 755)",
-          "dir owner=sandbox:sandbox (expected root:root)",
-        ]),
-      );
+      expect(logSpy).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
+      expect(logSpy).toHaveBeenCalledWith("  Policy:  restrictive");
+      expect(errorSpy).not.toHaveBeenCalled();
     });
 
-    it("reports stat failures as drift when the sandbox cannot be reached", async () => {
-      const { verifyShieldsLockState } = await loadShieldsModule();
-      const exec = (_cmd: string[]): string => {
-        throw new Error("Container not found");
-      };
+    it("treats a resolveConfig throw as drift so the locked status cannot mask a setup gap", async () => {
+      const sandboxName = "openclaw";
+      writeLockedState(sandboxName);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const exitSpy = vi
+        .spyOn(process, "exit")
+        .mockImplementation((code?: string | number | null) => {
+          throw new Error(`exit ${String(code)}`);
+        });
 
-      const result = verifyShieldsLockState("openclaw", target, {
-        exec,
-        assertLegacyLayout: () => {},
-      });
+      const { shieldsStatus } = await loadShieldsModule();
+      expect(() =>
+        shieldsStatus(sandboxName, true, {
+          verifyLockState: () => ({ ok: true, issues: [] }),
+          resolveConfig: () => {
+            throw new Error("agent config not found");
+          },
+        }),
+      ).toThrow("exit 2");
 
-      expect(result.ok).toBe(false);
-      expect(result.issues.some((issue) => issue.includes("stat failed"))).toBe(
-        true,
+      const allErrors = errorSpy.mock.calls.map((args) => args[0]).join("\n");
+      expect(allErrors).toContain(
+        "unable to resolve agent config target: agent config not found",
       );
-      expect(result.issues.some((issue) => issue.includes("Container not found"))).toBe(
-        true,
-      );
-    });
-
-    it("flags missing immutable bit only when verifyChattr is requested", async () => {
-      const { verifyShieldsLockState } = await loadShieldsModule();
-      const exec = (cmd: string[]): string => {
-        if (cmd[0] === "stat") {
-          if (cmd[cmd.length - 1] === "/sandbox/.openclaw") return "755 root:root";
-          return "444 root:root";
-        }
-        if (cmd[0] === "lsattr") {
-          // No 'i' flag present.
-          return `----e----- ${cmd[cmd.length - 1]}`;
-        }
-        return "";
-      };
-
-      const withoutChattrCheck = verifyShieldsLockState("openclaw", target, {
-        exec,
-        assertLegacyLayout: () => {},
-      });
-      expect(withoutChattrCheck.ok).toBe(true);
-
-      const withChattrCheck = verifyShieldsLockState("openclaw", target, {
-        exec,
-        verifyChattr: true,
-        assertLegacyLayout: () => {},
-      });
-      expect(withChattrCheck.ok).toBe(false);
-      expect(withChattrCheck.issues).toEqual(
-        expect.arrayContaining([
-          "/sandbox/.openclaw/openclaw.json immutable bit not set",
-          "/sandbox/.openclaw/.config-hash immutable bit not set",
-        ]),
-      );
-    });
-
-    it("surfaces a legacy state layout violation when the asserter throws", async () => {
-      const { verifyShieldsLockState } = await loadShieldsModule();
-      const exec = makeExec({
-        "/sandbox/.openclaw/openclaw.json": "444 root:root",
-        "/sandbox/.openclaw/.config-hash": "444 root:root",
-        "/sandbox/.openclaw": "755 root:root",
-      });
-
-      const result = verifyShieldsLockState("openclaw", target, {
-        exec,
-        assertLegacyLayout: () => {
-          throw new Error("legacy data dir exists: /sandbox/.openclaw-data");
-        },
-      });
-
-      expect(result.ok).toBe(false);
-      expect(result.issues).toContain(
-        "legacy data dir exists: /sandbox/.openclaw-data",
-      );
+      expect(exitSpy).toHaveBeenCalledWith(2);
     });
   });
 });
