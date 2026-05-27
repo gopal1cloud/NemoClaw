@@ -332,7 +332,6 @@ else
   CONFIG_DIR=$(dirname "${CONFIG_PATH}")
   HASH_PATH="${CONFIG_DIR}/.config-hash"
 
-  set +e
   docker exec --user root "${CTR}" sh -c "
     chmod 2770 '${CONFIG_DIR}' &&
     chown sandbox:sandbox '${CONFIG_DIR}' &&
@@ -340,7 +339,6 @@ else
     chown sandbox:sandbox '${CONFIG_PATH}' '${HASH_PATH}'
   " >/dev/null 2>&1
   TAMPER_EXIT=$?
-  set -e
 
   if [ "${TAMPER_EXIT}" != "0" ]; then
     fail "Could not apply tamper perms via docker exec (exit ${TAMPER_EXIT})"
@@ -348,10 +346,8 @@ else
     PERMS_TAMPERED=$(docker exec --user root "${CTR}" stat -c '%a %U:%G' "${CONFIG_PATH}" 2>/dev/null || true)
     info "Config perms after tamper: ${PERMS_TAMPERED}"
 
-    set +e
-    DRIFT_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields status 2>&1)
+    DRIFT_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields status 2>&1) || true
     DRIFT_EXIT=$?
-    set -e
     echo "$DRIFT_OUTPUT"
 
     if [ "${DRIFT_EXIT}" = "2" ]; then
@@ -379,7 +375,6 @@ else
     fi
 
     info "Restoring lockdown perms so Phase 6 can run shields down cleanly"
-    set +e
     docker exec --user root "${CTR}" sh -c "
       chmod 755 '${CONFIG_DIR}' &&
       chown root:root '${CONFIG_DIR}' &&
@@ -387,15 +382,12 @@ else
       chown root:root '${CONFIG_PATH}' '${HASH_PATH}'
     " >/dev/null 2>&1
     RESTORE_EXIT=$?
-    set -e
 
     if [ "${RESTORE_EXIT}" != "0" ]; then
       fail "Could not restore lockdown perms via docker exec (exit ${RESTORE_EXIT})"
     else
-      set +e
-      CLEAN_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields status 2>&1)
+      CLEAN_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields status 2>&1) || true
       CLEAN_EXIT=$?
-      set -e
 
       if [ "${CLEAN_EXIT}" = "0" ] && echo "$CLEAN_OUTPUT" | grep -q "Shields: UP (lockdown active)"; then
         pass "shields status returns to clean UP after manual re-lock"
