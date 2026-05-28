@@ -172,43 +172,64 @@ function fail(message) {
   process.exit(1);
 }
 
-function resolveOpenClawRoot() {
-  const candidates = [];
+function resolveOpenClawSlackApiLocation() {
+  const externalCandidates = [];
+  const coreCandidates = [];
   const seen = new Set();
   const require = createRequire(import.meta.url);
-  const addCandidate = (candidate) => {
+  const addExternalCandidate = (candidate) => {
     if (!candidate) return;
     const normalized = path.resolve(candidate);
     if (!seen.has(normalized)) {
       seen.add(normalized);
-      candidates.push(normalized);
+      externalCandidates.push(normalized);
+    }
+  };
+  const addCoreCandidate = (candidate) => {
+    if (!candidate) return;
+    const normalized = path.resolve(candidate);
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      coreCandidates.push(normalized);
     }
   };
   const addPathWalk = (start) => {
     if (!start) return;
     let current = path.resolve(start);
     for (let depth = 0; depth < 8; depth += 1) {
-      addCandidate(current);
-      if (path.basename(current) === "openclaw") addCandidate(current);
+      addExternalCandidate(path.join(current, "node_modules/@openclaw/slack"));
+      addCoreCandidate(current);
+      if (path.basename(current) === "openclaw") addCoreCandidate(current);
       const parent = path.dirname(current);
       if (parent === current) break;
       current = parent;
     }
   };
 
-  addCandidate(process.env.OPENCLAW_PACKAGE_ROOT);
+  if (process.env.OPENCLAW_SLACK_PACKAGE_ROOT) {
+    addExternalCandidate(process.env.OPENCLAW_SLACK_PACKAGE_ROOT);
+  }
+  addCoreCandidate(process.env.OPENCLAW_PACKAGE_ROOT);
   for (const base of [process.cwd(), "/sandbox", "/usr/local/lib/node_modules", "/tmp/npm-global/lib/node_modules"]) {
     try {
-      addCandidate(path.dirname(require.resolve("openclaw/package.json", { paths: [base] })));
+      addExternalCandidate(path.dirname(require.resolve("@openclaw/slack/package.json", { paths: [base] })));
+    } catch {}
+    try {
+      addCoreCandidate(path.dirname(require.resolve("openclaw/package.json", { paths: [base] })));
     } catch {}
   }
   try {
     const globalRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
-    if (globalRoot) addCandidate(path.join(globalRoot, "openclaw"));
+    if (globalRoot) {
+      addExternalCandidate(path.join(globalRoot, "@openclaw/slack"));
+      addCoreCandidate(path.join(globalRoot, "openclaw"));
+    }
   } catch {}
   try {
-    const require = createRequire(import.meta.url);
-    addCandidate(path.dirname(require.resolve("openclaw/package.json")));
+    addExternalCandidate(path.dirname(require.resolve("@openclaw/slack/package.json")));
+  } catch {}
+  try {
+    addCoreCandidate(path.dirname(require.resolve("openclaw/package.json")));
   } catch {}
   try {
     const openclawBin = execFileSync("sh", ["-lc", "command -v openclaw || true"], { encoding: "utf8" }).trim();
@@ -220,19 +241,43 @@ function resolveOpenClawRoot() {
   try {
     const searchRoots = ["/usr/local", "/tmp/npm-global", "/sandbox"].filter((root) => fs.existsSync(root));
     const discovered = searchRoots.length
-      ? execFileSync("find", [...searchRoots, "-path", "*/dist/extensions/slack/test-api.js", "-print", "-quit"], {
+      ? execFileSync("find", [
+          ...searchRoots,
+          "(",
+          "-path",
+          "*/node_modules/@openclaw/slack/dist/test-api.js",
+          "-o",
+          "-path",
+          "*/node_modules/openclaw/dist/extensions/slack/test-api.js",
+          ")",
+          "-print",
+          "-quit",
+        ], {
           encoding: "utf8",
         }).trim()
       : "";
-    if (discovered) addCandidate(path.resolve(discovered, "../../../.."));
+    if (discovered.endsWith("/node_modules/@openclaw/slack/dist/test-api.js")) {
+      addExternalCandidate(path.resolve(discovered, "../.."));
+    } else if (discovered) {
+      addCoreCandidate(path.resolve(discovered, "../../../.."));
+    }
   } catch {}
-  addCandidate("/usr/local/lib/node_modules/openclaw");
-  addCandidate("/tmp/npm-global/lib/node_modules/openclaw");
+  addExternalCandidate("/usr/local/lib/node_modules/@openclaw/slack");
+  addExternalCandidate("/tmp/npm-global/lib/node_modules/@openclaw/slack");
+  addCoreCandidate("/usr/local/lib/node_modules/openclaw");
+  addCoreCandidate("/tmp/npm-global/lib/node_modules/openclaw");
 
-  for (const candidate of candidates) {
+  for (const candidate of externalCandidates) {
+    const testApiPath = path.join(candidate, "dist/test-api.js");
+    if (fs.existsSync(testApiPath)) {
+      console.error(`OpenClaw Slack external test API root: ${candidate}`);
+      return { kind: "external", root: candidate, testApiPath };
+    }
+  }
+  for (const candidate of coreCandidates) {
     if (fs.existsSync(path.join(candidate, "dist/extensions/slack/test-api.js"))) {
-      console.error(`OpenClaw Slack test API root: ${candidate}`);
-      return candidate;
+      console.error(`OpenClaw Slack core test API root: ${candidate}`);
+      return { kind: "core", root: candidate };
     }
   }
   return null;
@@ -327,8 +372,17 @@ function resolveSlackTestApiImport(testApiSource, exportName) {
   return match[1];
 }
 
-async function importOpenClawSlackProofApi(openclawRoot) {
-  const proofRoot = createOpenClawSlackProofRoot(openclawRoot);
+async function importOpenClawSlackProofApi(location) {
+  if (location.kind === "external") {
+    const module = await import(pathToFileURL(location.testApiPath).href);
+    return {
+      createInboundSlackTestContext: module.createInboundSlackTestContext,
+      prepareSlackMessage: module.prepareSlackMessage,
+      sendMessageSlack: module.sendMessageSlack,
+    };
+  }
+
+  const proofRoot = createOpenClawSlackProofRoot(location.root);
   const slackDir = path.join(proofRoot, "dist/extensions/slack");
   const testApiSource = fs.readFileSync(path.join(slackDir, "test-api.js"), "utf8");
   const helperPath = resolveSlackTestApiImport(testApiSource, "createInboundSlackTestContext");
@@ -432,9 +486,16 @@ async function postChannelProofMessage() {
   return response.body;
 }
 
-async function runOpenClawPrivateProof(openclawRoot) {
-  const slackApi = await importOpenClawSlackProofApi(openclawRoot);
+async function runOpenClawPrivateProof(location) {
+  const slackApi = await importOpenClawSlackProofApi(location);
   const { createInboundSlackTestContext, prepareSlackMessage, sendMessageSlack } = slackApi;
+  if (
+    typeof createInboundSlackTestContext !== "function" ||
+    typeof prepareSlackMessage !== "function" ||
+    typeof sendMessageSlack !== "function"
+  ) {
+    fail("installed OpenClaw Slack test API does not expose the required proof helpers");
+  }
   const appClient = {
     assistant: {
       threads: {
@@ -559,11 +620,11 @@ async function runHermeticSlackProof() {
   };
 }
 
-const openclawRoot = resolveOpenClawRoot();
+const slackApiLocation = resolveOpenClawSlackApiLocation();
 let result;
-if (openclawRoot) {
+if (slackApiLocation) {
   try {
-    result = await runOpenClawPrivateProof(openclawRoot);
+    result = await runOpenClawPrivateProof(slackApiLocation);
   } catch (error) {
     console.error(`[slack-proof] OpenClaw Slack helper unavailable (${error.message}); using NemoClaw hermetic proof`);
     result = await runHermeticSlackProof();

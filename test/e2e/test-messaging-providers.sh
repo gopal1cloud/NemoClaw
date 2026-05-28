@@ -28,9 +28,10 @@
 #      openclaw.json, creates no providers, and leaks no token placeholders
 #
 # Uses fake tokens by default (no external accounts needed). With fake tokens,
-# the API returns 401 — proving the full chain worked (request reached the
-# real API with the token rewritten). Optional real tokens enable a bonus
-# round-trip phase.
+# the live API probes return 401/404 — proving the full chain worked (request
+# reached the real API with the token rewritten). The OpenClaw plugin-send phase
+# then sends messages to host-side fake provider APIs when complete real
+# credentials/targets are not configured.
 #
 # Prerequisites:
 #   - Docker running
@@ -379,11 +380,13 @@ else:
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
 
-# Default to fake tokens if not provided
-TELEGRAM_TOKEN="${TELEGRAM_BOT_TOKEN:-${TELEGRAM_BOT_TOKEN_REAL:-test-fake-telegram-token-e2e}}"
-DISCORD_TOKEN="${DISCORD_BOT_TOKEN:-${DISCORD_BOT_TOKEN_REAL:-test-fake-discord-token-e2e}}"
-SLACK_TOKEN="${SLACK_BOT_TOKEN:-${SLACK_BOT_TOKEN_REAL:-xoxb-fake-slack-token-e2e}}"
-SLACK_APP="${SLACK_APP_TOKEN:-${SLACK_APP_TOKEN_REAL:-xapp-fake-slack-app-token-e2e}}"
+# Default to hermetic fake tokens, but let repository live-message secrets win
+# when they are available. The workflow always provides fake env_json values so
+# the _REAL variables must take precedence here.
+TELEGRAM_TOKEN="${TELEGRAM_BOT_TOKEN_REAL:-${TELEGRAM_BOT_TOKEN:-test-fake-telegram-token-e2e}}"
+DISCORD_TOKEN="${DISCORD_BOT_TOKEN_REAL:-${DISCORD_BOT_TOKEN:-test-fake-discord-token-e2e}}"
+SLACK_TOKEN="${SLACK_BOT_TOKEN_REAL:-${SLACK_BOT_TOKEN:-xoxb-fake-slack-token-e2e}}"
+SLACK_APP="${SLACK_APP_TOKEN_REAL:-${SLACK_APP_TOKEN:-xapp-fake-slack-app-token-e2e}}"
 TELEGRAM_IDS="${TELEGRAM_ALLOWED_IDS:-123456789,987654321}"
 SLACK_IDS="${SLACK_ALLOWED_USERS-U0AR85ATALW,U09E2ESLACK}"
 # WeChat: pre-seeding WECHAT_BOT_TOKEN + the per-account metadata env vars lets
@@ -492,6 +495,8 @@ openclaw_message_send_exit_code() {
 . "$(dirname "${BASH_SOURCE[0]}")/lib/discord-rest-policy-proof.sh"
 # shellcheck source=test/e2e/lib/slack-api-proof.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/slack-api-proof.sh"
+# shellcheck source=test/e2e/lib/telegram-api-proof.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/telegram-api-proof.sh"
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 0: Prerequisites
@@ -2353,6 +2358,7 @@ info "Running Slack channel @mention allowlist proof through installed OpenClaw.
 sl_channel_proof=""
 sl_allowed_user="${SLACK_IDS%%,*}"
 sl_allowed_user="${sl_allowed_user//[[:space:]]/}"
+slack_openclaw_plugin_mock_send_ok=0
 if [ "$fake_slack_ready" = "1" ] && [ -n "$sl_allowed_user" ]; then
   sl_channel_proof=$(run_fake_slack_channel_mention_proof "$FAKE_SLACK_API_PORT" "$sl_allowed_user" "U999DENIED" || true)
 fi
@@ -2373,6 +2379,26 @@ if echo "$sl_channel_proof" | grep -q '"ok":true' \
   else
     fail "M-S17b: fake Slack did not capture expected channel reply metadata: ${sl_message_capture:0:300}"
   fi
+  sl_proof_kind=$(printf '%s\n' "$sl_channel_proof" | python3 -c '
+import json
+import sys
+for line in sys.stdin:
+    line = line.strip()
+    if not line.startswith("{"):
+        continue
+    try:
+        value = json.loads(line)
+    except Exception:
+        continue
+    print(value.get("proof", ""))
+    break
+' 2>/dev/null || true)
+  if [ "$sl_proof_kind" = "openclaw-private-helper" ] && [ "$sl_message_capture" = "OK" ]; then
+    slack_openclaw_plugin_mock_send_ok=1
+    pass "M-S17c: installed OpenClaw Slack send helper drove the host-side fake Slack message"
+  else
+    fail "M-S17c: Slack proof did not use the installed OpenClaw Slack send helper (proof=${sl_proof_kind:-missing})"
+  fi
 elif [ "$fake_slack_ready" != "1" ]; then
   skip "M-S17: fake Slack API was not ready"
 elif [ -z "$sl_allowed_user" ]; then
@@ -2382,11 +2408,11 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════
-# Phase 6: Real OpenClaw Plugin Sends (Optional)
+# Phase 6: OpenClaw Plugin Sends
 # ══════════════════════════════════════════════════════════════════
-section "Phase 6: Real OpenClaw Plugin Sends (Optional)"
+section "Phase 6: OpenClaw Plugin Sends"
 
-if [ -n "${TELEGRAM_BOT_TOKEN_REAL:-}" ]; then
+if [ -n "${TELEGRAM_BOT_TOKEN_REAL:-}" ] && [ -n "${TELEGRAM_CHAT_ID_E2E:-}" ]; then
   info "Real Telegram token available — testing live round-trip"
 
   # M18: Telegram getMe with real token should return 200 + bot info
@@ -2402,81 +2428,117 @@ if [ -n "${TELEGRAM_BOT_TOKEN_REAL:-}" ]; then
   fi
 
   # M19: real send through OpenClaw's message CLI/plugin path.
-  if [ -n "${TELEGRAM_CHAT_ID_E2E:-}" ]; then
-    info "Sending Telegram test message through OpenClaw plugin to chat ${TELEGRAM_CHAT_ID_E2E}..."
-    send_result=$(run_openclaw_message_send \
-      "telegram" \
-      "${TELEGRAM_CHAT_ID_E2E}" \
-      "NemoClaw OpenClaw Telegram plugin E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true)
-    send_exit=$(printf '%s\n' "$send_result" | openclaw_message_send_exit_code)
+  info "Sending Telegram test message through OpenClaw plugin to chat ${TELEGRAM_CHAT_ID_E2E}..."
+  send_result=$(run_openclaw_message_send \
+    "telegram" \
+    "${TELEGRAM_CHAT_ID_E2E}" \
+    "NemoClaw OpenClaw Telegram plugin E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true)
+  send_exit=$(printf '%s\n' "$send_result" | openclaw_message_send_exit_code)
 
-    if [ "$send_exit" = "0" ]; then
-      pass "M19: Telegram openclaw message send succeeded through plugin"
-    else
-      fail "M19: Telegram openclaw message send failed: ${send_result:0:300}"
-    fi
+  if [ "$send_exit" = "0" ]; then
+    pass "M19: Telegram openclaw message send succeeded through plugin"
   else
-    skip "M19: TELEGRAM_CHAT_ID_E2E not set — skipping OpenClaw Telegram message send"
+    fail "M19: Telegram openclaw message send failed: ${send_result:0:300}"
   fi
 else
-  skip "M18: TELEGRAM_BOT_TOKEN_REAL not set — skipping real Telegram round-trip"
-  skip "M19: TELEGRAM_BOT_TOKEN_REAL not set — skipping OpenClaw Telegram message send"
+  telegram_mock_chat_id="${TELEGRAM_CHAT_ID_E2E:-42424242}"
+  telegram_mock_text="NemoClaw OpenClaw Telegram plugin mock E2E"
+  info "Complete real Telegram credentials are not available — using host-side fake Telegram Bot API"
+  if start_fake_telegram_api "$TELEGRAM_TOKEN"; then
+    pass "M18: Host-side fake Telegram Bot API started for OpenClaw plugin send"
+    if apply_fake_telegram_api_policy "$SANDBOX_NAME" "$FAKE_TELEGRAM_API_PORT" >/tmp/nemoclaw-fake-telegram-policy.log 2>&1; then
+      pass "M18a: Applied REST policy for host-side fake Telegram Bot API"
+      tg_mock_send_result=$(run_openclaw_telegram_mock_send "$FAKE_TELEGRAM_API_PORT" "$telegram_mock_chat_id" "$telegram_mock_text" || true)
+      tg_mock_send_exit=$(printf '%s\n' "$tg_mock_send_result" | openclaw_message_send_exit_code)
+      tg_mock_capture=$(check_fake_telegram_capture_send "$TELEGRAM_TOKEN" "$telegram_mock_chat_id" "$telegram_mock_text" || true)
+
+      if [ "$tg_mock_send_exit" = "0" ] && [ "$tg_mock_capture" = "OK" ]; then
+        pass "M19: Telegram openclaw message send succeeded through plugin against host mock"
+      elif [ "$tg_mock_send_exit" != "0" ]; then
+        fail "M19: Telegram OpenClaw mock message send failed: ${tg_mock_send_result:0:300}"
+      else
+        fail "M19: Fake Telegram did not capture the expected rewritten message: ${tg_mock_capture:0:300}"
+      fi
+    else
+      fail "M18a: Failed to apply fake Telegram policy: $(tail -20 /tmp/nemoclaw-fake-telegram-policy.log 2>/dev/null | tr '\n' ' ' | cut -c1-300)"
+      fail "M19: Telegram OpenClaw mock message send could not run without fake Telegram policy"
+    fi
+  else
+    fail "M18: Could not start host-side fake Telegram Bot API"
+    fail "M19: Telegram OpenClaw mock message send could not run without fake Telegram"
+  fi
 fi
 
-if [ -n "${DISCORD_BOT_TOKEN_REAL:-}" ]; then
+if [ -n "${DISCORD_BOT_TOKEN_REAL:-}" ] && [ -n "${DISCORD_CHANNEL_ID_E2E:-}" ]; then
   if [ "$dc_status" = "200" ]; then
     pass "M20: Discord users/@me returned 200 with real token"
   else
     fail "M20: Expected Discord users/@me 200 with real token, got: $dc_status"
   fi
 
-  if [ -n "${DISCORD_CHANNEL_ID_E2E:-}" ]; then
-    info "Sending Discord test message through OpenClaw plugin to channel ${DISCORD_CHANNEL_ID_E2E}..."
-    dc_send_result=$(run_openclaw_message_send \
-      "discord" \
-      "channel:${DISCORD_CHANNEL_ID_E2E}" \
-      "NemoClaw OpenClaw Discord plugin E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true)
-    dc_send_exit=$(printf '%s\n' "$dc_send_result" | openclaw_message_send_exit_code)
+  info "Sending Discord test message through OpenClaw plugin to channel ${DISCORD_CHANNEL_ID_E2E}..."
+  dc_send_result=$(run_openclaw_message_send \
+    "discord" \
+    "channel:${DISCORD_CHANNEL_ID_E2E}" \
+    "NemoClaw OpenClaw Discord plugin E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true)
+  dc_send_exit=$(printf '%s\n' "$dc_send_result" | openclaw_message_send_exit_code)
 
-    if [ "$dc_send_exit" = "0" ]; then
-      pass "M21: Discord openclaw message send succeeded through plugin"
-    else
-      fail "M21: Discord openclaw message send failed: ${dc_send_result:0:300}"
-    fi
+  if [ "$dc_send_exit" = "0" ]; then
+    pass "M21: Discord openclaw message send succeeded through plugin"
   else
-    skip "M21: DISCORD_CHANNEL_ID_E2E not set — skipping OpenClaw Discord message send"
+    fail "M21: Discord openclaw message send failed: ${dc_send_result:0:300}"
   fi
 else
-  skip "M20: DISCORD_BOT_TOKEN_REAL not set — skipping real Discord round-trip"
-  skip "M21: DISCORD_BOT_TOKEN_REAL not set — skipping OpenClaw Discord message send"
+  discord_mock_channel_id="${DISCORD_CHANNEL_ID_E2E:-420000000000000123}"
+  discord_mock_text="NemoClaw OpenClaw Discord plugin mock E2E"
+  info "Complete real Discord credentials are not available — using host-side fake Discord message API"
+  if start_fake_discord_message_api "$DISCORD_TOKEN"; then
+    pass "M20: Host-side fake Discord message API started for OpenClaw plugin send"
+    if apply_fake_discord_message_api_policy "$SANDBOX_NAME" "$FAKE_DISCORD_MESSAGE_API_PORT" >/tmp/nemoclaw-fake-discord-message-policy.log 2>&1; then
+      pass "M20a: Applied REST policy for host-side fake Discord message API"
+      dc_mock_send_result=$(run_fake_discord_plugin_send_proof "$FAKE_DISCORD_MESSAGE_API_PORT" "$discord_mock_channel_id" "$discord_mock_text" || true)
+      dc_mock_capture=$(check_fake_discord_message_capture "$discord_mock_channel_id" "$discord_mock_text" || true)
+
+      if echo "$dc_mock_send_result" | grep -q '"ok":true' && [ "$dc_mock_capture" = "OK" ]; then
+        pass "M21: Discord installed OpenClaw send helper posted through host mock"
+      elif ! echo "$dc_mock_send_result" | grep -q '"ok":true'; then
+        fail "M21: Discord OpenClaw mock message send failed: ${dc_mock_send_result:0:500}"
+      else
+        fail "M21: Fake Discord did not capture the expected rewritten message: ${dc_mock_capture:0:300}"
+      fi
+    else
+      fail "M20a: Failed to apply fake Discord message policy: $(tail -20 /tmp/nemoclaw-fake-discord-message-policy.log 2>/dev/null | tr '\n' ' ' | cut -c1-300)"
+      fail "M21: Discord OpenClaw mock message send could not run without fake Discord policy"
+    fi
+  else
+    fail "M20: Could not start host-side fake Discord message API"
+    fail "M21: Discord OpenClaw mock message send could not run without fake Discord"
+  fi
 fi
 
-if [ -n "${SLACK_BOT_TOKEN_REAL:-}" ]; then
-  if [ "$sl_status" = "200" ] && echo "$sl_api" | grep -q '"ok":true'; then
-    pass "M22: Slack auth.test returned ok:true with real token"
-  else
-    fail "M22: Expected Slack auth.test ok:true with real token, got status=${sl_status}: ${sl_api:0:200}"
-  fi
+if [ -n "${SLACK_BOT_TOKEN_REAL:-}" ] && [ -n "${SLACK_CHANNEL_ID_E2E:-}" ]; then
+  pass "M22: Complete real Slack credentials are available for live OpenClaw send"
+  info "Sending Slack test message through OpenClaw plugin to channel ${SLACK_CHANNEL_ID_E2E}..."
+  sl_send_result=$(run_openclaw_message_send \
+    "slack" \
+    "channel:${SLACK_CHANNEL_ID_E2E}" \
+    "NemoClaw OpenClaw Slack plugin E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true)
+  sl_send_exit=$(printf '%s\n' "$sl_send_result" | openclaw_message_send_exit_code)
 
-  if [ -n "${SLACK_CHANNEL_ID_E2E:-}" ]; then
-    info "Sending Slack test message through OpenClaw plugin to channel ${SLACK_CHANNEL_ID_E2E}..."
-    sl_send_result=$(run_openclaw_message_send \
-      "slack" \
-      "channel:${SLACK_CHANNEL_ID_E2E}" \
-      "NemoClaw OpenClaw Slack plugin E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true)
-    sl_send_exit=$(printf '%s\n' "$sl_send_result" | openclaw_message_send_exit_code)
-
-    if [ "$sl_send_exit" = "0" ]; then
-      pass "M23: Slack openclaw message send succeeded through plugin"
-    else
-      fail "M23: Slack openclaw message send failed: ${sl_send_result:0:300}"
-    fi
+  if [ "$sl_send_exit" = "0" ]; then
+    pass "M23: Slack openclaw message send succeeded through plugin"
   else
-    skip "M23: SLACK_CHANNEL_ID_E2E not set — skipping OpenClaw Slack message send"
+    fail "M23: Slack openclaw message send failed: ${sl_send_result:0:300}"
   fi
 else
-  skip "M22: SLACK_BOT_TOKEN_REAL not set — skipping real Slack round-trip"
-  skip "M23: SLACK_BOT_TOKEN_REAL not set — skipping OpenClaw Slack message send"
+  info "Complete real Slack credentials are not available — requiring installed OpenClaw Slack helper proof against host fake Slack"
+  if [ "$slack_openclaw_plugin_mock_send_ok" = "1" ]; then
+    pass "M22: Slack host mock accepted the OpenShell-rewritten bot token"
+    pass "M23: Slack installed OpenClaw send helper posted through host mock"
+  else
+    fail "M22: Slack host mock did not prove OpenShell-rewritten bot token through installed OpenClaw helper"
+    fail "M23: Slack installed OpenClaw send helper did not post through host mock"
+  fi
 fi
 
 # ══════════════════════════════════════════════════════════════════
