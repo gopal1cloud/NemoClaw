@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Run typed scenarios
-        run: npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "$SCENARIOS" --plan-only
+        run: bash test/e2e-scenario/runtime/run-scenario.sh "$SCENARIOS" --plan-only
       - name: Upload scenario artifacts
         uses: actions/upload-artifact@v4
         with:

@@ -81,7 +81,7 @@ jobs:
           for raw in "${IDS[@]}"; do
             id="${raw//[[:space:]]/}"
             [ -n "${id}" ] || continue
-            npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "${id}" --plan-only >/dev/null
+            bash test/e2e-scenario/runtime/run-scenario.sh "${id}" --plan-only >/dev/null
             runner="${ROUTES[$id]:-}"
             if [ -z "${runner}" ]; then
               echo "::error::No runner route for scenario: ${id}" >&2
@@ -135,7 +135,11 @@ jobs:
             echo "::error::Invalid scenario input: ${SCENARIOS}" >&2
             exit 1
           fi
-          npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "${SCENARIOS}" --dry-run
+          IFS=',' read -ra IDS <<< "${SCENARIOS}"
+          for id in "${IDS[@]}"; do
+            [ -n "${id}" ] || continue
+            bash test/e2e-scenario/runtime/run-scenario.sh "${id}" --dry-run
+          done
 
       - name: Resolve workspace paths for WSL
         if: contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
@@ -172,7 +176,11 @@ jobs:
               mkdir -p "${WSL_WORKDIR}"
               export E2E_CONTEXT_DIR="${WSL_WORKDIR}"
               npm ci --ignore-scripts
-              npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "${SCENARIOS}" --dry-run
+              IFS="," read -ra IDS <<< "${SCENARIOS}"
+              for id in "${IDS[@]}"; do
+                [ -n "${id}" ] || continue
+                bash test/e2e-scenario/runtime/run-scenario.sh "${id}" --dry-run
+              done
             '
 
       - name: Append plan summary

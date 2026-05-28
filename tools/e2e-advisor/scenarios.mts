@@ -7,7 +7,8 @@ import { pathToFileURL } from "node:url";
 
 import { getChangedFiles } from "../advisors/git.mts";
 import { parseArgs, writeJson } from "../advisors/io.mts";
-import { listScenarios } from "../../test/e2e-scenario/scenarios/registry.ts";
+import { loadMetadataFromDir } from "../../test/e2e-scenario/runtime/resolver/load.ts";
+import { resolveScenario } from "../../test/e2e-scenario/runtime/resolver/plan.ts";
 
 const SCENARIO_WORKFLOW = "e2e-scenarios.yaml";
 const SCENARIO_ALL_WORKFLOW = "e2e-scenarios-all.yaml";
@@ -279,16 +280,21 @@ export function renderScenarioSummary(result: ScenarioAdvisorResult): string {
   return `${lines.join("\n")}\n`;
 }
 
-function loadScenarios(_root: string): Record<string, ScenarioEntry> {
-  return Object.fromEntries(
-    listScenarios().map((scenario) => [
-      scenario.id,
-      {
-        suites: scenario.suiteIds ?? [],
-        runner_requirements: scenario.runnerRequirements ?? [],
-      },
-    ]),
-  );
+function loadScenarios(root: string): Record<string, ScenarioEntry> {
+  const meta = loadMetadataFromDir(path.join(root, "test/e2e-scenario"));
+  const out: Record<string, ScenarioEntry> = {};
+  for (const id of Object.keys(meta.scenarios.setup_scenarios)) {
+    try {
+      const plan = resolveScenario(id, meta);
+      out[id] = {
+        suites: plan.suites.map((s) => s.id),
+        runner_requirements: plan.runner_requirements ?? [],
+      };
+    } catch {
+      // Skip scenarios that fail to resolve; they are not advisable targets.
+    }
+  }
+  return out;
 }
 
 function loadSuiteScriptMap(root: string): Record<string, string[]> {

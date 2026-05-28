@@ -90,13 +90,11 @@ export function validateE2eScenariosWorkflowBoundary(
 
   const steps = asSteps(runScenario.steps);
   const normalRun = requireStep(errors, steps, "Run typed scenarios");
-  requireRunContains(errors, normalRun, "npx tsx test/e2e-scenario/scenarios/run.ts");
-  requireRunContains(errors, normalRun, "--scenarios");
+  requireRunContains(errors, normalRun, "bash test/e2e-scenario/runtime/run-scenario.sh");
   requireRunContains(errors, normalRun, "--dry-run");
 
   const wslRun = requireStep(errors, steps, "Run typed scenarios in WSL");
-  requireRunContains(errors, wslRun, "npx tsx test/e2e-scenario/scenarios/run.ts");
-  requireRunContains(errors, wslRun, "--scenarios");
+  requireRunContains(errors, wslRun, "bash test/e2e-scenario/runtime/run-scenario.sh");
   requireRunContains(errors, wslRun, "--dry-run");
 
   const upload = requireStep(errors, steps, "Upload scenario artifacts");
