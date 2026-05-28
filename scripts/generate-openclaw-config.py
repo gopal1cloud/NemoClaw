@@ -562,17 +562,13 @@ def build_config(env: dict | None = None) -> dict:
             return f"xapp-OPENSHELL-RESOLVE-ENV-{env_key}"
         return f"openshell:resolve:env:{env_key}"
 
-    _openclaw_channel_plugins = {"discord", "slack", "telegram", "whatsapp"}
     _ch_cfg = {}
     for ch in msg_channels:
         if ch == "whatsapp":
             _ch_cfg[ch] = {
                 "enabled": True,
                 "accounts": {
-                    "default": {
-                        "enabled": True,
-                        "healthMonitor": {"enabled": False},
-                    }
+                    "default": {"enabled": True, "healthMonitor": {"enabled": False}}
                 }
             }
             continue
@@ -587,7 +583,6 @@ def build_config(env: dict | None = None) -> dict:
             account["appToken"] = _placeholder(ch, "SLACK_APP_TOKEN")
         if ch == "telegram":
             account["proxy"] = proxy_url
-        if ch == "telegram":
             account["groupPolicy"] = "open"
         if ch in _allowed_ids and _allowed_ids[ch]:
             account["dmPolicy"] = "allowlist"
@@ -719,10 +714,7 @@ def build_config(env: dict | None = None) -> dict:
         "openclaw-weixin": {"enabled": True},
     }
     plugin_entries.update(
-        {
-            channel: {"enabled": True}
-            for channel in sorted(_openclaw_channel_plugins & _ch_cfg.keys())
-        }
+        {ch: {"enabled": True} for ch in ("discord", "slack", "telegram", "whatsapp") if ch in _ch_cfg}
     )
     _bundled_provider_plugins = {
         "amazon-bedrock": {"amazon-bedrock", "bedrock"},
