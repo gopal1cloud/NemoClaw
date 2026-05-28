@@ -1,0 +1,24 @@
+{
+  "name": "@openshell/sdk",
+  "version": "0.0.0-alpha.0",
+  "description": "Temporary NemoClaw draft placeholder for the unpublished OpenShell SDK package.",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./lib.d.ts",
+        "default": "./lib.mjs"
+      },
+      "require": {
+        "types": "./index.d.ts",
+        "default": "./index.js"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">= 18"
+  }
+}
