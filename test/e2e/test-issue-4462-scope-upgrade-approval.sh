@@ -429,7 +429,7 @@ exit "$approve_rc"
 
 legacy_gateway_pinned_approve_must_fail() {
   local request_id="$1"
-  local output legacy_rc before_url state pending_after recovery_request_id
+  local output legacy_rc before_url legacy_output state pending_after recovery_request_id paired_after_legacy
   output=$(sandbox_exec_sh_script 90 '
 set -u
 request_id="$1"
@@ -492,6 +492,11 @@ exit 0
     fail "legacy gateway-pinned devices approve unexpectedly succeeded: ${output:0:500}"
     return 1
   fi
+  legacy_output=$(sed -n '/^__LEGACY_APPROVE_OUTPUT_BEGIN__$/,/^__LEGACY_APPROVE_OUTPUT_END__$/p' <<<"$output" | sed '1d;$d')
+  if ! grep -Eiq 'scope upgrade pending approval|pairing required' <<<"$legacy_output"; then
+    fail "legacy gateway-pinned approve failed without the expected scope-upgrade fingerprint: ${legacy_output:0:500}"
+    return 1
+  fi
   pass "legacy gateway-pinned devices approve fails for the pending scope upgrade"
 
   state="$(device_state_json 2>&1)" || {
@@ -500,15 +505,21 @@ exit 0
   }
   printf '=== state after legacy gateway-pinned approve failure ===\n%s\n' "$state" >>"$STATE_LOG"
   pending_after=$(printf '%s' "$state" | select_cli_request scope-upgrade 2>/dev/null) || pending_after=""
-  if [ -z "$pending_after" ]; then
-    fail "legacy gateway-pinned approve did not leave a CLI scope-upgrade request pending: $(printf '%s' "$state" | summarize_device_state)"
-    return 1
-  fi
-  pass "legacy gateway-pinned approve leaves the CLI scope-upgrade request pending"
+  paired_after_legacy=$(printf '%s' "$state" | select_cli_paired_with_agent_scopes 2>/dev/null) || paired_after_legacy=""
+  if [ -n "$pending_after" ]; then
+    pass "legacy gateway-pinned approve leaves the CLI scope-upgrade request pending"
 
-  recovery_request_id="$pending_after"
-  approve_request "$recovery_request_id" "recovery after legacy reproducer" || return 1
-  pass "fixed devices approve path recovers the request after reproducing the old failure"
+    recovery_request_id="$pending_after"
+    approve_request "$recovery_request_id" "recovery after legacy reproducer" || return 1
+    pass "fixed devices approve path recovers the request after reproducing the old failure"
+    return 0
+  fi
+  if [ -n "$paired_after_legacy" ]; then
+    pass "legacy gateway-pinned approve emitted the old failure fingerprint but left the CLI device approved"
+    return 0
+  fi
+  fail "legacy gateway-pinned approve left neither a pending request nor an approved CLI device: $(printf '%s' "$state" | summarize_device_state)"
+  return 1
 }
 
 wait_for_auto_pair_watcher_inactive() {
