@@ -389,25 +389,6 @@ function linkNodeModulesEntries(nodeModulesRoot, sourceNodeModules, skip = new S
   }
 }
 
-function createExternalOpenClawSlackProofApiPath(location) {
-  if (!location.openclawRoot) return location.testApiPath;
-
-  const proofWorkspace = fs.mkdtempSync("/tmp/openclaw-slack-external-proof-");
-  const nodeModulesRoot = path.join(proofWorkspace, "node_modules");
-  const openclawScopeRoot = path.join(nodeModulesRoot, "@openclaw");
-  fs.mkdirSync(openclawScopeRoot, { recursive: true });
-
-  fs.symlinkSync(location.root, path.join(openclawScopeRoot, "slack"), "dir");
-  fs.symlinkSync(location.openclawRoot, path.join(nodeModulesRoot, "openclaw"), "dir");
-
-  linkNodeModulesEntries(nodeModulesRoot, path.resolve(location.root, "../.."), new Set(["openclaw", "@openclaw/slack"]));
-  linkNodeModulesEntries(nodeModulesRoot, path.join(location.root, "node_modules"), new Set(["openclaw", "@openclaw/slack"]));
-  linkNodeModulesEntries(nodeModulesRoot, path.dirname(location.openclawRoot), new Set(["openclaw", "@openclaw/slack"]));
-  linkNodeModulesEntries(nodeModulesRoot, path.join(location.openclawRoot, "node_modules"), new Set(["openclaw", "@openclaw/slack"]));
-
-  return path.join(openclawScopeRoot, "slack/dist/test-api.js");
-}
-
 function resolveSlackTestApiImport(testApiSource, exportName) {
   const escapedExportName = exportName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const patterns = [
@@ -419,19 +400,27 @@ function resolveSlackTestApiImport(testApiSource, exportName) {
   return match[1];
 }
 
-async function importOpenClawSlackProofApi(location) {
-  if (location.kind === "external") {
-    const testApiPath = createExternalOpenClawSlackProofApiPath(location);
-    const module = await import(pathToFileURL(testApiPath).href);
-    return {
-      createInboundSlackTestContext: module.createInboundSlackTestContext,
-      prepareSlackMessage: module.prepareSlackMessage,
-      sendMessageSlack: module.sendMessageSlack,
-    };
-  }
+function createExternalOpenClawSlackProofRoot(location) {
+  if (!location.openclawRoot) return location.root;
 
-  const proofRoot = createOpenClawSlackProofRoot(location.root);
-  const slackDir = path.join(proofRoot, "dist/extensions/slack");
+  const proofWorkspace = fs.mkdtempSync("/tmp/openclaw-slack-external-proof-");
+  const nodeModulesRoot = path.join(proofWorkspace, "node_modules");
+  const openclawScopeRoot = path.join(nodeModulesRoot, "@openclaw");
+  fs.mkdirSync(openclawScopeRoot, { recursive: true });
+
+  const slackProofRoot = path.join(openclawScopeRoot, "slack");
+  fs.symlinkSync(location.root, slackProofRoot, "dir");
+  fs.symlinkSync(location.openclawRoot, path.join(nodeModulesRoot, "openclaw"), "dir");
+
+  linkNodeModulesEntries(nodeModulesRoot, path.resolve(location.root, "../.."), new Set(["openclaw", "@openclaw/slack"]));
+  linkNodeModulesEntries(nodeModulesRoot, path.join(location.root, "node_modules"), new Set(["openclaw", "@openclaw/slack"]));
+  linkNodeModulesEntries(nodeModulesRoot, path.dirname(location.openclawRoot), new Set(["openclaw", "@openclaw/slack"]));
+  linkNodeModulesEntries(nodeModulesRoot, path.join(location.openclawRoot, "node_modules"), new Set(["openclaw", "@openclaw/slack"]));
+
+  return slackProofRoot;
+}
+
+async function importSlackProofModulesFromDir(slackDir) {
   const testApiSource = fs.readFileSync(path.join(slackDir, "test-api.js"), "utf8");
   const helperPath = resolveSlackTestApiImport(testApiSource, "createInboundSlackTestContext");
   const preparePath = resolveSlackTestApiImport(testApiSource, "prepareSlackMessage");
@@ -446,6 +435,16 @@ async function importOpenClawSlackProofApi(location) {
     prepareSlackMessage: prepareModule.prepareSlackMessage ?? prepareModule.t,
     sendMessageSlack: sendModule.sendMessageSlack ?? sendModule.t,
   };
+}
+
+async function importOpenClawSlackProofApi(location) {
+  if (location.kind === "external") {
+    const proofRoot = createExternalOpenClawSlackProofRoot(location);
+    return importSlackProofModulesFromDir(path.join(proofRoot, "dist"));
+  }
+
+  const proofRoot = createOpenClawSlackProofRoot(location.root);
+  return importSlackProofModulesFromDir(path.join(proofRoot, "dist/extensions/slack"));
 }
 
 function postForm(pathname, fields, authorization) {
