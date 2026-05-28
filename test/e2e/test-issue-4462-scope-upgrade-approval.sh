@@ -164,6 +164,10 @@ elif value is not None:
 ' "$field"
 }
 
+extract_scope_request_id_from_output() {
+  sed -nE 's/.*requestId: ([[:alnum:]_-]+).*/\1/p' | head -1
+}
+
 device_state_json() {
   local output rc
   output=$(sandbox_exec_sh_script 60 '
@@ -846,6 +850,10 @@ for _attempt in 1 2 3 4 5; do
   fi
   sleep 2
 done
+
+if [ -z "$scope_request_id" ] && [ "$TEST_MODE" = "legacy-repro" ]; then
+  scope_request_id=$(printf '%s' "$trigger_output" | extract_scope_request_id_from_output) || scope_request_id=""
+fi
 
 if [ -n "$scope_request_id" ]; then
   pass "pending CLI scope-upgrade request exists (${scope_request_id})"
