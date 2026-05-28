@@ -23,10 +23,8 @@
 #   - NEMOCLAW_NON_INTERACTIVE=1
 #   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 
-# shellcheck disable=SC2016,SC2329
+# shellcheck disable=SC2016
 # SC2016: remote sandbox scripts intentionally expand inside the sandbox.
-# SC2329: keep the conventional E2E skip helper even if this lane currently
-# has no optional skip path.
 
 set -uo pipefail
 
@@ -50,12 +48,6 @@ fail() {
   ((FAIL++))
   ((TOTAL++))
   printf '\033[31m  FAIL: %s\033[0m\n' "$1"
-}
-
-skip() {
-  ((SKIP++))
-  ((TOTAL++))
-  printf '\033[33m  SKIP: %s\033[0m\n' "$1"
 }
 
 section() {
