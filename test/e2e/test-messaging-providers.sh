@@ -46,8 +46,10 @@
 #   TELEGRAM_BOT_TOKEN                     — defaults to fake token
 #   DISCORD_BOT_TOKEN                      — defaults to fake token
 #   TELEGRAM_ALLOWED_IDS                   — comma-separated Telegram user IDs for DM allowlisting
-#   TELEGRAM_BOT_TOKEN_REAL                — optional: enables Phase 6 real round-trip
-#   DISCORD_BOT_TOKEN_REAL                 — optional: enables Phase 6 real round-trip
+#   TELEGRAM_BOT_TOKEN_REAL                — optional: enables Phase 6 real OpenClaw send
+#   DISCORD_BOT_TOKEN_REAL                 — optional: enables Phase 6 real OpenClaw send
+#   SLACK_BOT_TOKEN_REAL                   — optional: enables Phase 6 real OpenClaw send
+#   SLACK_APP_TOKEN_REAL                   — optional paired Slack app token for real Slack run
 #   SLACK_BOT_TOKEN                        — defaults to fake token (xoxb-fake-...)
 #   SLACK_APP_TOKEN                        — defaults to fake token (xapp-fake-...)
 #   SLACK_ALLOWED_USERS                    — comma-separated Slack user IDs for DM and channel @mention allowlisting
@@ -62,7 +64,9 @@
 #   WHATSAPP_TOKEN / WHATSAPP_BOT_TOKEN / WHATSAPP_SESSION_SECRET
 #                                          — overwritten with fake decoys to prove NemoClaw ignores host-side
 #                                            WhatsApp credential-shaped env vars
-#   TELEGRAM_CHAT_ID_E2E                   — optional: enables sendMessage test
+#   TELEGRAM_CHAT_ID_E2E                   — optional: target for real Telegram send
+#   DISCORD_CHANNEL_ID_E2E                 — optional: target for real Discord send
+#   SLACK_CHANNEL_ID_E2E                   — optional: target for real Slack send
 #   NEMOCLAW_OPENSHELL_BIN                 — optional OpenShell binary under test
 #   NEMOCLAW_FRESH=1                       — auto-set to discard interrupted onboard sessions
 #
@@ -317,15 +321,69 @@ else:
   fi
 }
 
+assert_openclaw_runtime_channel_installed() {
+  local assertion_id="$1"
+  local channel="$2"
+  local label="$3"
+  local runtime_state
+
+  runtime_state=$(printf '%s\n' "$openclaw_channels_list_json" | CHANNEL="$channel" python3 -c '
+import json
+import os
+import sys
+
+channel = os.environ["CHANNEL"]
+try:
+    data = json.load(sys.stdin)
+except json.JSONDecodeError as exc:
+    print("error invalid_json=%s" % exc.msg)
+    raise SystemExit(0)
+
+chat = data.get("chat") if isinstance(data, dict) else None
+if not isinstance(chat, dict):
+    print("no missing_chat")
+    raise SystemExit(0)
+
+entry = chat.get(channel)
+if not isinstance(entry, dict):
+    print("no missing_channel")
+    raise SystemExit(0)
+
+accounts = entry.get("accounts")
+if not isinstance(accounts, list) or any(not isinstance(item, str) for item in accounts):
+    print(
+        "no installed=%s origin=%s accounts_shape=%s"
+        % (entry.get("installed"), entry.get("origin"), type(accounts).__name__)
+    )
+    raise SystemExit(0)
+
+installed = entry.get("installed") is True
+origin_ok = entry.get("origin") in ("available", "configured")
+if installed and origin_ok:
+    print("yes")
+else:
+    print(
+        "no installed=%s origin=%s accounts=%s"
+        % (entry.get("installed"), entry.get("origin"), accounts)
+    )
+' 2>/dev/null || true)
+
+  if [ "$runtime_state" = "yes" ]; then
+    pass "${assertion_id}: OpenClaw channels list reports ${label} plugin installed"
+  else
+    fail "${assertion_id}: OpenClaw channels list did not report ${label} plugin installed (${runtime_state}; summary=${openclaw_channels_summary:-unavailable})"
+  fi
+}
+
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
 
 # Default to fake tokens if not provided
-TELEGRAM_TOKEN="${TELEGRAM_BOT_TOKEN:-test-fake-telegram-token-e2e}"
-DISCORD_TOKEN="${DISCORD_BOT_TOKEN:-test-fake-discord-token-e2e}"
-SLACK_TOKEN="${SLACK_BOT_TOKEN:-xoxb-fake-slack-token-e2e}"
-SLACK_APP="${SLACK_APP_TOKEN:-xapp-fake-slack-app-token-e2e}"
+TELEGRAM_TOKEN="${TELEGRAM_BOT_TOKEN:-${TELEGRAM_BOT_TOKEN_REAL:-test-fake-telegram-token-e2e}}"
+DISCORD_TOKEN="${DISCORD_BOT_TOKEN:-${DISCORD_BOT_TOKEN_REAL:-test-fake-discord-token-e2e}}"
+SLACK_TOKEN="${SLACK_BOT_TOKEN:-${SLACK_BOT_TOKEN_REAL:-xoxb-fake-slack-token-e2e}}"
+SLACK_APP="${SLACK_APP_TOKEN:-${SLACK_APP_TOKEN_REAL:-xapp-fake-slack-app-token-e2e}}"
 TELEGRAM_IDS="${TELEGRAM_ALLOWED_IDS:-123456789,987654321}"
 SLACK_IDS="${SLACK_ALLOWED_USERS-U0AR85ATALW,U09E2ESLACK}"
 # WeChat: pre-seeding WECHAT_BOT_TOKEN + the per-account metadata env vars lets
@@ -397,6 +455,35 @@ sandbox_exec() {
 
   rm -f "$ssh_config"
   echo "$result"
+}
+
+run_openclaw_message_send() {
+  local channel="$1"
+  local target="$2"
+  local message="$3"
+  local channel_b64 target_b64 message_b64
+  channel_b64=$(printf '%s' "$channel" | base64 | tr -d '\n')
+  target_b64=$(printf '%s' "$target" | base64 | tr -d '\n')
+  message_b64=$(printf '%s' "$message" | base64 | tr -d '\n')
+
+  sandbox_exec_stdin "OPENCLAW_MESSAGE_CHANNEL_B64='$channel_b64' OPENCLAW_MESSAGE_TARGET_B64='$target_b64' OPENCLAW_MESSAGE_TEXT_B64='$message_b64' bash -s" <<'SH'
+decode_b64() {
+  printf '%s' "$1" | base64 -d
+}
+
+channel="$(decode_b64 "$OPENCLAW_MESSAGE_CHANNEL_B64")"
+target="$(decode_b64 "$OPENCLAW_MESSAGE_TARGET_B64")"
+message="$(decode_b64 "$OPENCLAW_MESSAGE_TEXT_B64")"
+
+set +e
+OPENCLAW_NO_COLOR=1 openclaw message send --channel "$channel" --target "$target" --message "$message" --json
+rc=$?
+echo "__OPENCLAW_MESSAGE_SEND_EXIT__:$rc"
+SH
+}
+
+openclaw_message_send_exit_code() {
+  awk -F: '/^__OPENCLAW_MESSAGE_SEND_EXIT__:/ { code = $2 } END { if (code != "") print code }'
 }
 
 # shellcheck source=test/e2e/lib/discord-gateway-proof.sh
@@ -1058,7 +1145,9 @@ else
   assert_openclaw_runtime_channel "M6e" "telegram" "Telegram" "default"
   assert_openclaw_runtime_channel "M6f" "discord" "Discord" "default"
   assert_openclaw_runtime_channel "M6g" "slack" "Slack" "default"
-  assert_openclaw_runtime_channel "M6h" "whatsapp" "WhatsApp" "default"
+  # WhatsApp has no host-side token provider; before QR pairing OpenClaw can
+  # prove only that the external plugin is installed and loadable.
+  assert_openclaw_runtime_channel_installed "M6h" "whatsapp" "WhatsApp"
 
   # M6: Telegram channel exists with a bot token
   # Note: non-root sandboxes cannot patch openclaw.json (chmod 444, root-owned).
@@ -2293,9 +2382,9 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════
-# Phase 6: Real API Round-Trip (Optional)
+# Phase 6: Real OpenClaw Plugin Sends (Optional)
 # ══════════════════════════════════════════════════════════════════
-section "Phase 6: Real API Round-Trip (Optional)"
+section "Phase 6: Real OpenClaw Plugin Sends (Optional)"
 
 if [ -n "${TELEGRAM_BOT_TOKEN_REAL:-}" ]; then
   info "Real Telegram token available — testing live round-trip"
@@ -2312,43 +2401,26 @@ if [ -n "${TELEGRAM_BOT_TOKEN_REAL:-}" ]; then
     fail "M18: Expected Telegram getMe 200 with real token, got: $tg_status"
   fi
 
-  # M19: sendMessage if chat ID is available
+  # M19: real send through OpenClaw's message CLI/plugin path.
   if [ -n "${TELEGRAM_CHAT_ID_E2E:-}" ]; then
-    info "Sending test message to chat ${TELEGRAM_CHAT_ID_E2E}..."
-    send_result=$(sandbox_exec "node -e \"
-const https = require('https');
-const token = process.env.TELEGRAM_BOT_TOKEN || '';
-const chatId = '${TELEGRAM_CHAT_ID_E2E}';
-const msg = 'NemoClaw E2E test ' + new Date().toISOString();
-const data = JSON.stringify({ chat_id: chatId, text: msg });
-const options = {
-  hostname: 'api.telegram.org',
-  path: '/bot' + token + '/sendMessage',
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json', 'Content-Length': data.length },
-};
-const req = https.request(options, (res) => {
-  let body = '';
-  res.on('data', (d) => body += d);
-  res.on('end', () => console.log(res.statusCode + ' ' + body.slice(0, 300)));
-});
-req.on('error', (e) => console.log('ERROR: ' + e.message));
-req.setTimeout(30000, () => { req.destroy(); console.log('TIMEOUT'); });
-req.write(data);
-req.end();
-\"" 2>/dev/null || true)
+    info "Sending Telegram test message through OpenClaw plugin to chat ${TELEGRAM_CHAT_ID_E2E}..."
+    send_result=$(run_openclaw_message_send \
+      "telegram" \
+      "${TELEGRAM_CHAT_ID_E2E}" \
+      "NemoClaw OpenClaw Telegram plugin E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true)
+    send_exit=$(printf '%s\n' "$send_result" | openclaw_message_send_exit_code)
 
-    if echo "$send_result" | grep -q "^200"; then
-      pass "M19: Telegram sendMessage succeeded"
+    if [ "$send_exit" = "0" ]; then
+      pass "M19: Telegram openclaw message send succeeded through plugin"
     else
-      fail "M19: Telegram sendMessage failed: ${send_result:0:200}"
+      fail "M19: Telegram openclaw message send failed: ${send_result:0:300}"
     fi
   else
-    skip "M19: TELEGRAM_CHAT_ID_E2E not set — skipping sendMessage test"
+    skip "M19: TELEGRAM_CHAT_ID_E2E not set — skipping OpenClaw Telegram message send"
   fi
 else
   skip "M18: TELEGRAM_BOT_TOKEN_REAL not set — skipping real Telegram round-trip"
-  skip "M19: TELEGRAM_BOT_TOKEN_REAL not set — skipping sendMessage test"
+  skip "M19: TELEGRAM_BOT_TOKEN_REAL not set — skipping OpenClaw Telegram message send"
 fi
 
 if [ -n "${DISCORD_BOT_TOKEN_REAL:-}" ]; then
@@ -2357,8 +2429,54 @@ if [ -n "${DISCORD_BOT_TOKEN_REAL:-}" ]; then
   else
     fail "M20: Expected Discord users/@me 200 with real token, got: $dc_status"
   fi
+
+  if [ -n "${DISCORD_CHANNEL_ID_E2E:-}" ]; then
+    info "Sending Discord test message through OpenClaw plugin to channel ${DISCORD_CHANNEL_ID_E2E}..."
+    dc_send_result=$(run_openclaw_message_send \
+      "discord" \
+      "channel:${DISCORD_CHANNEL_ID_E2E}" \
+      "NemoClaw OpenClaw Discord plugin E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true)
+    dc_send_exit=$(printf '%s\n' "$dc_send_result" | openclaw_message_send_exit_code)
+
+    if [ "$dc_send_exit" = "0" ]; then
+      pass "M21: Discord openclaw message send succeeded through plugin"
+    else
+      fail "M21: Discord openclaw message send failed: ${dc_send_result:0:300}"
+    fi
+  else
+    skip "M21: DISCORD_CHANNEL_ID_E2E not set — skipping OpenClaw Discord message send"
+  fi
 else
   skip "M20: DISCORD_BOT_TOKEN_REAL not set — skipping real Discord round-trip"
+  skip "M21: DISCORD_BOT_TOKEN_REAL not set — skipping OpenClaw Discord message send"
+fi
+
+if [ -n "${SLACK_BOT_TOKEN_REAL:-}" ]; then
+  if [ "$sl_status" = "200" ] && echo "$sl_api" | grep -q '"ok":true'; then
+    pass "M22: Slack auth.test returned ok:true with real token"
+  else
+    fail "M22: Expected Slack auth.test ok:true with real token, got status=${sl_status}: ${sl_api:0:200}"
+  fi
+
+  if [ -n "${SLACK_CHANNEL_ID_E2E:-}" ]; then
+    info "Sending Slack test message through OpenClaw plugin to channel ${SLACK_CHANNEL_ID_E2E}..."
+    sl_send_result=$(run_openclaw_message_send \
+      "slack" \
+      "channel:${SLACK_CHANNEL_ID_E2E}" \
+      "NemoClaw OpenClaw Slack plugin E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true)
+    sl_send_exit=$(printf '%s\n' "$sl_send_result" | openclaw_message_send_exit_code)
+
+    if [ "$sl_send_exit" = "0" ]; then
+      pass "M23: Slack openclaw message send succeeded through plugin"
+    else
+      fail "M23: Slack openclaw message send failed: ${sl_send_result:0:300}"
+    fi
+  else
+    skip "M23: SLACK_CHANNEL_ID_E2E not set — skipping OpenClaw Slack message send"
+  fi
+else
+  skip "M22: SLACK_BOT_TOKEN_REAL not set — skipping real Slack round-trip"
+  skip "M23: SLACK_BOT_TOKEN_REAL not set — skipping OpenClaw Slack message send"
 fi
 
 # ══════════════════════════════════════════════════════════════════
