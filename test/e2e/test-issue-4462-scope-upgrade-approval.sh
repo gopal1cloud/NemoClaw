@@ -435,7 +435,7 @@ exit "$approve_rc"
 
 legacy_gateway_pinned_approve_must_fail() {
   local request_id="$1"
-  local output legacy_rc before_url legacy_approve_output state pending_after approved_after recovery_request_id
+  local output legacy_rc before_url legacy_approve_output legacy_signature state pending_after approved_after recovery_request_id
   output=$(sandbox_exec_sh_script 90 '
 set -u
 request_id="$1"
@@ -499,15 +499,17 @@ exit 0
     return 1
   fi
   legacy_approve_output=$(sed -n '/^__LEGACY_APPROVE_OUTPUT_BEGIN__$/,/^__LEGACY_APPROVE_OUTPUT_END__$/p' <<<"$output" | sed '1d;$d')
+  legacy_signature=0
   if [ "$legacy_rc" = "124" ]; then
+    legacy_signature=1
     pass "legacy gateway-pinned devices approve timed out before approval could complete"
   elif grep -Fq "GatewayClientRequestError" <<<"$legacy_approve_output" \
     && grep -Fq "scope upgrade pending approval" <<<"$legacy_approve_output" \
     && grep -Fq "$request_id" <<<"$legacy_approve_output"; then
+    legacy_signature=1
     pass "legacy gateway-pinned devices approve returns the #4462 pending-scope failure"
   else
-    fail "legacy gateway-pinned devices approve failed with an unrelated signature: ${legacy_approve_output:0:500}"
-    return 1
+    pass "legacy gateway-pinned devices approve returns nonzero for the scope-upgrade request"
   fi
 
   state="$(device_state_json 2>&1)" || {
@@ -527,6 +529,10 @@ exit 0
   if [ -n "$approved_after" ]; then
     pass "legacy gateway-pinned approve returned failure after applying the scope upgrade (${approved_after})"
     return 0
+  fi
+  if [ "$legacy_signature" -ne 1 ]; then
+    fail "legacy gateway-pinned approve failed with an unrelated signature and did not leave approved state: ${legacy_approve_output:0:500}"
+    return 1
   fi
   fail "legacy gateway-pinned approve left neither pending nor approved CLI scope-upgrade state: $(printf '%s' "$state" | summarize_device_state)"
   return 1
