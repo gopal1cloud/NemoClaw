@@ -102,7 +102,7 @@ jobs:
     env:
       WSL_DISTRO: Ubuntu
       NEMOCLAW_RECREATE_SANDBOX: "1"
-      E2E_CONTEXT_DIR: ${{ github.workspace }}
+      E2E_CONTEXT_DIR: ${{ github.workspace }}/.e2e
     steps:
       - name: Force LF line endings for WSL checkout
         if: contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
@@ -187,9 +187,15 @@ jobs:
         if: always()
         shell: bash
         run: |
-          if [ -f .e2e/plan.txt ]; then
-            echo '## E2E scenario plan' >> "$GITHUB_STEP_SUMMARY"
-            cat .e2e/plan.txt >> "$GITHUB_STEP_SUMMARY"
+          # run-scenario.sh emits plan.json under E2E_CONTEXT_DIR via the
+          # YAML resolver (test/e2e-scenario/runtime/resolver/index.ts).
+          if [ -f .e2e/plan.json ]; then
+            {
+              echo '## E2E scenario plan'
+              echo '```json'
+              cat .e2e/plan.json
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload scenario artifacts
@@ -197,12 +203,11 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: e2e-scenario-${{ inputs.scenarios || github.event.inputs.scenarios }}
+          # run-scenario.sh writes plan.json, expected-state-report.json,
+          # expected-vs-actual.json, install.log, onboard.log, post-install-path.log,
+          # negative-*.log under E2E_CONTEXT_DIR (.e2e/). The .e2e/ glob
+          # captures all of them.
           path: |
-            .e2e/run-plan.json
-            .e2e/plan.txt
-            .e2e/environment.result.json
-            .e2e/onboarding.result.json
-            .e2e/runtime.result.json
             .e2e/
             test/e2e/logs/
           if-no-files-found: warn
