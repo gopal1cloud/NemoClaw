@@ -1,0 +1,786 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Issue #4462 E2E:
+#
+# Build a real NemoClaw/OpenClaw sandbox, create a low-scope CLI device
+# approval, trigger the later `openclaw agent` operator.write scope upgrade, and
+# then run in one of two modes:
+#
+#   approval     Approve the pending request through the fixed proxy-env guard,
+#                verify the request is no longer pending, and verify the next
+#                `openclaw agent` turn stays on the gateway path.
+#   legacy-repro Force the old gateway-pinned approve path, verify approval
+#                fails and leaves the request pending, then recover through the
+#                fixed proxy-env guard so the sandbox is not left dirty.
+#
+# Prerequisites:
+#   - Docker running
+#   - NVIDIA_API_KEY set
+#   - NEMOCLAW_NON_INTERACTIVE=1
+#   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
+
+# shellcheck disable=SC2016,SC2329
+# SC2016: remote sandbox scripts intentionally expand inside the sandbox.
+# SC2329: keep the conventional E2E skip helper even if this lane currently
+# has no optional skip path.
+
+set -uo pipefail
+
+export NEMOCLAW_E2E_DEFAULT_TIMEOUT="${NEMOCLAW_E2E_DEFAULT_TIMEOUT:-2700}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=test/e2e/e2e-timeout.sh
+. "${SCRIPT_DIR}/e2e-timeout.sh"
+
+PASS=0
+FAIL=0
+SKIP=0
+TOTAL=0
+
+pass() {
+  ((PASS++))
+  ((TOTAL++))
+  printf '\033[32m  PASS: %s\033[0m\n' "$1"
+}
+
+fail() {
+  ((FAIL++))
+  ((TOTAL++))
+  printf '\033[31m  FAIL: %s\033[0m\n' "$1"
+}
+
+skip() {
+  ((SKIP++))
+  ((TOTAL++))
+  printf '\033[33m  SKIP: %s\033[0m\n' "$1"
+}
+
+section() {
+  echo ""
+  printf '\033[1;36m=== %s ===\033[0m\n' "$1"
+}
+
+info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
+
+if [ -d /workspace ] && [ -f /workspace/install.sh ]; then
+  REPO="/workspace"
+elif [ -f "$(cd "${SCRIPT_DIR}/../.." && pwd)/install.sh" ]; then
+  REPO="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+else
+  echo "ERROR: Cannot find repo root." >&2
+  exit 1
+fi
+
+E2E_DIR="${SCRIPT_DIR}"
+SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-issue-4462-scope-upgrade}"
+OPENSHELL_BIN="${NEMOCLAW_OPENSHELL_BIN:-openshell}"
+TEST_MODE="${NEMOCLAW_4462_MODE:-approval}"
+INSTALL_LOG="${NEMOCLAW_4462_INSTALL_LOG:-/tmp/nemoclaw-e2e-issue-4462-scope-upgrade-install.log}"
+APPROVAL_LOG="${NEMOCLAW_4462_APPROVAL_LOG:-/tmp/nemoclaw-issue-4462-scope-upgrade-approval.log}"
+AGENT_LOG="${NEMOCLAW_4462_AGENT_LOG:-/tmp/nemoclaw-issue-4462-scope-upgrade-agent.log}"
+STATE_LOG="${NEMOCLAW_4462_STATE_LOG:-/tmp/nemoclaw-issue-4462-scope-upgrade-state.log}"
+INSTALL_TIMEOUT_SECONDS="${NEMOCLAW_E2E_INSTALL_TIMEOUT_SECONDS:-1800}"
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "${E2E_DIR}/lib/sandbox-teardown.sh"
+# shellcheck source=test/e2e/lib/install-path-refresh.sh
+. "${E2E_DIR}/lib/install-path-refresh.sh"
+# shellcheck source=test/e2e/lib/openclaw-json.sh
+. "${E2E_DIR}/lib/openclaw-json.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
+quote_for_remote_sh() {
+  local value="${1:-}"
+  printf "'%s'" "$(printf '%s' "$value" | sed "s/'/'\\\\''/g")"
+}
+
+sandbox_exec_sh_script() {
+  local seconds="$1"
+  local script="$2"
+  shift 2
+  local encoded remote_cmd arg
+  encoded="$(printf '%s' "$script" | base64 | tr -d '\n')"
+  remote_cmd="tmp=\$(mktemp); trap 'rm -f \"\$tmp\"' EXIT; printf %s $(quote_for_remote_sh "$encoded") | base64 -d > \"\$tmp\"; bash \"\$tmp\""
+  for arg in "$@"; do
+    remote_cmd+=" $(quote_for_remote_sh "$arg")"
+  done
+  run_with_timeout "$seconds" "$OPENSHELL_BIN" sandbox exec --name "$SANDBOX_NAME" -- sh -lc "$remote_cmd"
+}
+
+extract_json_doc() {
+  python3 -c '
+import json
+import sys
+
+raw = sys.stdin.read()
+decoder = json.JSONDecoder()
+for idx, char in enumerate(raw):
+    if char != "{":
+        continue
+    try:
+        doc, _end = decoder.raw_decode(raw[idx:])
+    except Exception:
+        continue
+    print(json.dumps(doc, sort_keys=True))
+    raise SystemExit(0)
+raise SystemExit(1)
+'
+}
+
+json_field() {
+  local field="$1"
+  python3 -c '
+import json
+import sys
+
+field = sys.argv[1]
+doc = json.load(sys.stdin)
+value = doc
+for part in field.split("."):
+    if not isinstance(value, dict):
+        value = None
+        break
+    value = value.get(part)
+if isinstance(value, (dict, list)):
+    print(json.dumps(value, sort_keys=True))
+elif value is not None:
+    print(value)
+' "$field"
+}
+
+device_state_json() {
+  local output rc
+  output=$(sandbox_exec_sh_script 60 '
+set -u
+if [ -r /tmp/nemoclaw-proxy-env.sh ]; then
+  # shellcheck source=/dev/null
+  . /tmp/nemoclaw-proxy-env.sh
+fi
+python3 - <<'"'"'PY'"'"'
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ.get("OPENCLAW_STATE_DIR") or "/sandbox/.openclaw") / "devices"
+
+def load(name):
+    path = root / name
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return value
+
+pending = load("pending.json")
+paired = load("paired.json")
+print(json.dumps({
+    "pending": list(pending.values()),
+    "paired": list(paired.values()),
+    "paths": {
+        "pending": str(root / "pending.json"),
+        "paired": str(root / "paired.json"),
+    },
+}, sort_keys=True))
+PY
+' 2>&1)
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    printf '%s\n' "$output"
+    return "$rc"
+  fi
+  printf '%s\n' "$output" | extract_json_doc
+}
+
+summarize_device_state() {
+  python3 -c '
+import json
+import sys
+
+doc = json.load(sys.stdin)
+pending = doc.get("pending") or []
+paired = doc.get("paired") or []
+
+def is_cli(entry):
+    mode = str(entry.get("clientMode") or "").lower()
+    client = str(entry.get("clientId") or "").lower()
+    return mode == "cli" or "cli" in client
+
+def scopes(entry):
+    return [s for s in entry.get("scopes") or entry.get("approvedScopes") or [] if isinstance(s, str)]
+
+print(f"pending={len(pending)} paired={len(paired)}")
+for label, rows in (("pending", pending), ("paired", paired)):
+    for row in rows:
+        if not isinstance(row, dict) or not is_cli(row):
+            continue
+        request_id = row.get("requestId") or "-"
+        device_id = row.get("deviceId") or "-"
+        print(f"{label}: requestId={request_id} deviceId={device_id} scopes={','.join(scopes(row)) or '-'}")
+'
+}
+
+select_cli_request() {
+  local kind="$1"
+  python3 -c '
+import json
+import sys
+
+kind = sys.argv[1]
+doc = json.load(sys.stdin)
+pending = [p for p in doc.get("pending") or [] if isinstance(p, dict)]
+paired = [p for p in doc.get("paired") or [] if isinstance(p, dict)]
+
+def norm(value):
+    return str(value or "").strip()
+
+def is_cli(entry):
+    return norm(entry.get("clientMode")).lower() == "cli" or "cli" in norm(entry.get("clientId")).lower()
+
+def roles(entry):
+    out = set()
+    role = norm(entry.get("role"))
+    if role:
+        out.add(role)
+    for role in entry.get("roles") or []:
+        role = norm(role)
+        if role:
+            out.add(role)
+    return out
+
+def scopes(entry):
+    return {norm(scope) for scope in (entry.get("scopes") or []) if norm(scope)}
+
+def approved_scopes(entry):
+    return {norm(scope) for scope in (entry.get("approvedScopes") or entry.get("scopes") or []) if norm(scope)}
+
+paired_by_device = {norm(item.get("deviceId")): item for item in paired if norm(item.get("deviceId"))}
+
+for req in sorted(pending, key=lambda item: item.get("ts") or 0, reverse=True):
+    if not is_cli(req) or not norm(req.get("requestId")):
+        continue
+    paired_entry = paired_by_device.get(norm(req.get("deviceId")))
+    requested = scopes(req)
+    approved = approved_scopes(paired_entry or {})
+    if kind == "new" and not paired_entry:
+        print(req["requestId"])
+        raise SystemExit(0)
+    if kind == "scope-upgrade" and paired_entry and roles(req).issubset(roles(paired_entry) or roles(req)):
+        if requested and not requested.issubset(approved):
+            print(req["requestId"])
+            raise SystemExit(0)
+raise SystemExit(1)
+' "$kind"
+}
+
+select_cli_paired_without_write() {
+  python3 -c '
+import json
+import sys
+
+doc = json.load(sys.stdin)
+paired = [p for p in doc.get("paired") or [] if isinstance(p, dict)]
+
+def norm(value):
+    return str(value or "").strip()
+
+def is_cli(entry):
+    return norm(entry.get("clientMode")).lower() == "cli" or "cli" in norm(entry.get("clientId")).lower()
+
+def scopes(entry):
+    return {norm(scope) for scope in (entry.get("approvedScopes") or entry.get("scopes") or []) if norm(scope)}
+
+for device in sorted(paired, key=lambda item: item.get("approvedAtMs") or 0, reverse=True):
+    if not is_cli(device):
+        continue
+    approved = scopes(device)
+    if "operator.pairing" in approved and "operator.write" not in approved and "operator.admin" not in approved:
+        print(norm(device.get("deviceId")) or "cli-device")
+        raise SystemExit(0)
+raise SystemExit(1)
+'
+}
+
+select_cli_paired_with_write() {
+  python3 -c '
+import json
+import sys
+
+doc = json.load(sys.stdin)
+paired = [p for p in doc.get("paired") or [] if isinstance(p, dict)]
+
+def norm(value):
+    return str(value or "").strip()
+
+def is_cli(entry):
+    return norm(entry.get("clientMode")).lower() == "cli" or "cli" in norm(entry.get("clientId")).lower()
+
+def scopes(entry):
+    return {norm(scope) for scope in (entry.get("approvedScopes") or entry.get("scopes") or []) if norm(scope)}
+
+for device in sorted(paired, key=lambda item: item.get("approvedAtMs") or 0, reverse=True):
+    if not is_cli(device):
+        continue
+    approved = scopes(device)
+    if "operator.write" in approved or "operator.admin" in approved:
+        print(norm(device.get("deviceId")) or "cli-device")
+        raise SystemExit(0)
+raise SystemExit(1)
+'
+}
+
+approve_request() {
+  local request_id="$1"
+  local label="$2"
+  local output rc approve_json approved_id before_url after_url
+  output=$(sandbox_exec_sh_script 90 '
+set -u
+request_id="$1"
+if [ ! -r /tmp/nemoclaw-proxy-env.sh ]; then
+  echo "missing /tmp/nemoclaw-proxy-env.sh" >&2
+  exit 2
+fi
+# shellcheck source=/dev/null
+. /tmp/nemoclaw-proxy-env.sh
+printf "__URL_BEFORE__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
+set +e
+approve_output="$(openclaw devices approve "$request_id" --json 2>&1)"
+approve_rc=$?
+set -e
+printf "__APPROVE_RC__=%s\n" "$approve_rc"
+printf "__APPROVE_OUTPUT_BEGIN__\n%s\n__APPROVE_OUTPUT_END__\n" "$approve_output"
+printf "__URL_AFTER__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
+exit "$approve_rc"
+' "$request_id" 2>&1)
+  rc=$?
+  {
+    printf '=== approve %s request=%s rc=%s ===\n' "$label" "$request_id" "$rc"
+    printf '%s\n' "$output"
+  } >>"$APPROVAL_LOG"
+  if [ "$rc" -ne 0 ]; then
+    fail "${label}: openclaw devices approve failed for ${request_id}: ${output:0:500}"
+    return 1
+  fi
+  before_url=$(sed -n 's/^__URL_BEFORE__=//p' <<<"$output" | tail -1)
+  after_url=$(sed -n 's/^__URL_AFTER__=//p' <<<"$output" | tail -1)
+  if [[ "$before_url" != ws://127.0.0.1:* ]] && [[ "$before_url" != ws://localhost:* ]]; then
+    fail "${label}: proxy env did not expose a loopback OPENCLAW_GATEWAY_URL before approve (${before_url:-empty})"
+    return 1
+  fi
+  if [ "$after_url" != "$before_url" ]; then
+    fail "${label}: devices approve leaked OPENCLAW_GATEWAY_URL mutation into caller shell (${before_url} -> ${after_url})"
+    return 1
+  fi
+  approve_json=$(sed -n '/^__APPROVE_OUTPUT_BEGIN__$/,/^__APPROVE_OUTPUT_END__$/p' <<<"$output" | sed '1d;$d' | extract_json_doc 2>/dev/null) || approve_json=""
+  if [ -z "$approve_json" ]; then
+    fail "${label}: approve output did not contain JSON: ${output:0:500}"
+    return 1
+  fi
+  approved_id=$(printf '%s' "$approve_json" | json_field requestId)
+  if [ "$approved_id" != "$request_id" ]; then
+    fail "${label}: approve returned requestId=${approved_id:-empty}, expected ${request_id}"
+    return 1
+  fi
+  pass "${label}: openclaw devices approve ${request_id} --json succeeded with caller gateway URL preserved"
+}
+
+legacy_gateway_pinned_approve_must_fail() {
+  local request_id="$1"
+  local output legacy_rc before_url state pending_after recovery_request_id
+  output=$(sandbox_exec_sh_script 90 '
+set -u
+request_id="$1"
+if [ ! -r /tmp/nemoclaw-proxy-env.sh ]; then
+  echo "missing /tmp/nemoclaw-proxy-env.sh" >&2
+  exit 2
+fi
+# shellcheck source=/dev/null
+. /tmp/nemoclaw-proxy-env.sh
+printf "__URL_FOR_LEGACY_APPROVE__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
+OPENCLAW_4462_REQUEST_ID="$request_id" python3 - <<'"'"'PY'"'"'
+import os
+import subprocess
+
+request_id = os.environ["OPENCLAW_4462_REQUEST_ID"]
+env = os.environ.copy()
+try:
+    proc = subprocess.run(
+        ["openclaw", "devices", "approve", request_id, "--json"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        env=env,
+    )
+    print(f"__LEGACY_APPROVE_RC__={proc.returncode}")
+    print("__LEGACY_APPROVE_OUTPUT_BEGIN__")
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="")
+    print("\n__LEGACY_APPROVE_OUTPUT_END__")
+except subprocess.TimeoutExpired as exc:
+    print("__LEGACY_APPROVE_RC__=124")
+    print("__LEGACY_APPROVE_OUTPUT_BEGIN__")
+    if exc.stdout:
+        print(exc.stdout if isinstance(exc.stdout, str) else exc.stdout.decode(), end="")
+    if exc.stderr:
+        print(exc.stderr if isinstance(exc.stderr, str) else exc.stderr.decode(), end="")
+    print("\nTIMEOUT waiting for gateway-pinned devices approve")
+    print("__LEGACY_APPROVE_OUTPUT_END__")
+PY
+printf "__URL_AFTER_LEGACY_APPROVE__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
+exit 0
+' "$request_id" 2>&1)
+  {
+    printf '=== legacy gateway-pinned approve request=%s ===\n' "$request_id"
+    printf '%s\n' "$output"
+  } >>"$APPROVAL_LOG"
+  before_url=$(sed -n 's/^__URL_FOR_LEGACY_APPROVE__=//p' <<<"$output" | tail -1)
+  if [[ "$before_url" != ws://127.0.0.1:* ]] && [[ "$before_url" != ws://localhost:* ]]; then
+    fail "legacy reproducer did not run with gateway URL pinned (${before_url:-empty})"
+    return 1
+  fi
+  legacy_rc=$(sed -n 's/^__LEGACY_APPROVE_RC__=//p' <<<"$output" | tail -1)
+  if [ -z "$legacy_rc" ]; then
+    fail "legacy reproducer did not report approve rc: ${output:0:500}"
+    return 1
+  fi
+  if [ "$legacy_rc" = "0" ]; then
+    fail "legacy gateway-pinned devices approve unexpectedly succeeded: ${output:0:500}"
+    return 1
+  fi
+  pass "legacy gateway-pinned devices approve fails for the pending scope upgrade"
+
+  state="$(device_state_json 2>&1)" || {
+    fail "Could not read OpenClaw device state after legacy approve failure: ${state:0:500}"
+    return 1
+  }
+  printf '=== state after legacy gateway-pinned approve failure ===\n%s\n' "$state" >>"$STATE_LOG"
+  pending_after=$(printf '%s' "$state" | select_cli_request scope-upgrade 2>/dev/null) || pending_after=""
+  if [ -z "$pending_after" ]; then
+    fail "legacy gateway-pinned approve did not leave a CLI scope-upgrade request pending: $(printf '%s' "$state" | summarize_device_state)"
+    return 1
+  fi
+  pass "legacy gateway-pinned approve leaves the CLI scope-upgrade request pending"
+
+  recovery_request_id="$pending_after"
+  approve_request "$recovery_request_id" "recovery after legacy reproducer" || return 1
+  pass "fixed devices approve path recovers the request after reproducing the old failure"
+}
+
+section "Phase 0: Preflight"
+
+if [ -z "${NVIDIA_API_KEY:-}" ]; then
+  fail "NVIDIA_API_KEY not set"
+  exit 1
+fi
+pass "NVIDIA_API_KEY is set"
+
+if ! docker info >/dev/null 2>&1; then
+  fail "Docker is not running"
+  exit 1
+fi
+pass "Docker is running"
+
+command -v python3 >/dev/null 2>&1 || {
+  fail "python3 is required"
+  exit 1
+}
+pass "python3 is available"
+
+info "Repo: ${REPO}"
+info "Sandbox name: ${SANDBOX_NAME}"
+info "Mode: ${TEST_MODE}"
+info "Logs: ${INSTALL_LOG}, ${APPROVAL_LOG}, ${AGENT_LOG}, ${STATE_LOG}"
+: >"$APPROVAL_LOG"
+: >"$AGENT_LOG"
+: >"$STATE_LOG"
+
+section "Phase 1: Install real NemoClaw/OpenClaw sandbox"
+
+cd "$REPO" || {
+  fail "Could not cd to repo root"
+  exit 1
+}
+
+info "Pre-cleanup"
+if command -v nemoclaw >/dev/null 2>&1; then
+  run_with_timeout 120 nemoclaw "$SANDBOX_NAME" destroy --yes >/dev/null 2>&1 || true
+fi
+if command -v "$OPENSHELL_BIN" >/dev/null 2>&1 || [ "$OPENSHELL_BIN" != "openshell" ]; then
+  run_with_timeout 60 "$OPENSHELL_BIN" sandbox delete "$SANDBOX_NAME" >/dev/null 2>&1 || true
+  if [[ "${CI:-}" = "true" || "${NEMOCLAW_E2E_DESTROY_GATEWAY:-}" = "1" ]]; then
+    run_with_timeout 60 "$OPENSHELL_BIN" gateway destroy -g nemoclaw >/dev/null 2>&1 || true
+  fi
+fi
+pass "Pre-cleanup complete"
+
+info "Running install.sh --non-interactive"
+(
+  export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
+  export NEMOCLAW_RECREATE_SANDBOX=1
+  export NEMOCLAW_FRESH=1
+  export NEMOCLAW_NON_INTERACTIVE=1
+  export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
+  export NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS="${NEMOCLAW_4462_AUTO_PAIR_FAST_DEADLINE_SECS:-3}"
+  export NEMOCLAW_AUTO_PAIR_DEADLINE_SECS="${NEMOCLAW_4462_AUTO_PAIR_DEADLINE_SECS:-30}"
+  export NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS="${NEMOCLAW_4462_AUTO_PAIR_SLOW_INTERVAL_SECS:-600}"
+  run_with_timeout "$INSTALL_TIMEOUT_SECONDS" bash install.sh --non-interactive --yes-i-accept-third-party-software
+) >"$INSTALL_LOG" 2>&1
+install_rc=$?
+
+nemoclaw_refresh_install_env
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+# shellcheck source=/dev/null
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+nemoclaw_ensure_local_bin_on_path
+hash -r
+
+if [ "$install_rc" -ne 0 ]; then
+  fail "install.sh failed with exit ${install_rc}; see ${INSTALL_LOG}"
+  tail -40 "$INSTALL_LOG" || true
+  exit 1
+fi
+pass "NemoClaw installed and onboarded"
+
+command -v nemoclaw >/dev/null 2>&1 || {
+  fail "nemoclaw not found on PATH after install"
+  exit 1
+}
+command -v "$OPENSHELL_BIN" >/dev/null 2>&1 || {
+  fail "${OPENSHELL_BIN} not found on PATH after install"
+  exit 1
+}
+pass "nemoclaw and openshell are available"
+
+section "Phase 2: Verify in-sandbox proxy env guard"
+
+guard_probe=$(sandbox_exec_sh_script 60 '
+set -u
+if [ ! -r /tmp/nemoclaw-proxy-env.sh ]; then
+  echo "MISSING_PROXY_ENV"
+  exit 2
+fi
+# shellcheck source=/dev/null
+. /tmp/nemoclaw-proxy-env.sh
+printf "OPENCLAW_GATEWAY_URL=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
+type openclaw 2>/dev/null | sed -n "1,12p"
+grep -F "unset OPENCLAW_GATEWAY_URL; command openclaw" /tmp/nemoclaw-proxy-env.sh >/dev/null \
+  && echo "APPROVE_GUARD_PRESENT"
+' 2>&1)
+guard_rc=$?
+printf '%s\n' "$guard_probe" >>"$STATE_LOG"
+if [ "$guard_rc" -ne 0 ]; then
+  fail "Could not source /tmp/nemoclaw-proxy-env.sh: ${guard_probe:0:400}"
+  exit 1
+fi
+if grep -q '^OPENCLAW_GATEWAY_URL=ws://127\.0\.0\.1:' <<<"$guard_probe" \
+  && grep -q '^APPROVE_GUARD_PRESENT$' <<<"$guard_probe"; then
+  pass "proxy env preserves gateway URL and contains devices approve guard"
+else
+  fail "proxy env missing gateway URL or approve guard: ${guard_probe:0:600}"
+  exit 1
+fi
+
+section "Phase 3: Establish low-scope CLI device approval"
+
+info "Creating initial CLI pairing request with openclaw devices list"
+initial_list=$(sandbox_exec_sh_script 60 '
+set -u
+# shellcheck source=/dev/null
+. /tmp/nemoclaw-proxy-env.sh
+set +e
+openclaw devices list --json
+rc=$?
+set -e
+printf "__LIST_RC__=%s\n" "$rc" >&2
+exit 0
+' 2>&1)
+printf '=== initial devices list ===\n%s\n' "$initial_list" >>"$STATE_LOG"
+
+state="$(device_state_json 2>&1)" || {
+  fail "Could not read OpenClaw device state after initial list: ${state:0:500}"
+  exit 1
+}
+printf '=== state after initial list ===\n%s\n' "$state" >>"$STATE_LOG"
+summary=$(printf '%s' "$state" | summarize_device_state)
+info "$summary"
+
+initial_request_id=$(printf '%s' "$state" | select_cli_request new 2>/dev/null) || initial_request_id=""
+if [ -n "$initial_request_id" ]; then
+  pass "pending low-scope CLI pairing request exists (${initial_request_id})"
+  approve_request "$initial_request_id" "initial CLI pairing" || exit 1
+else
+  paired_without_write=$(printf '%s' "$state" | select_cli_paired_without_write 2>/dev/null) || paired_without_write=""
+  if [ -n "$paired_without_write" ]; then
+    pass "CLI device is already paired with low scope (${paired_without_write})"
+  else
+    fail "No pending or paired low-scope CLI device found after devices list: ${summary}"
+    exit 1
+  fi
+fi
+
+state="$(device_state_json 2>&1)" || {
+  fail "Could not read OpenClaw device state after initial approval: ${state:0:500}"
+  exit 1
+}
+printf '=== state after initial approval ===\n%s\n' "$state" >>"$STATE_LOG"
+paired_without_write=$(printf '%s' "$state" | select_cli_paired_without_write 2>/dev/null) || paired_without_write=""
+if [ -n "$paired_without_write" ]; then
+  pass "CLI device is paired with operator.pairing but not operator.write"
+else
+  fail "Initial approval did not leave a low-scope CLI device: $(printf '%s' "$state" | summarize_device_state)"
+  exit 1
+fi
+
+gateway_list=$(sandbox_exec_sh_script 60 '
+set -u
+# shellcheck source=/dev/null
+. /tmp/nemoclaw-proxy-env.sh
+printf "__URL_FOR_LIST__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}" >&2
+openclaw devices list --json
+' 2>&1)
+gateway_list_rc=$?
+printf '=== gateway devices list after initial approval rc=%s ===\n%s\n' "$gateway_list_rc" "$gateway_list" >>"$STATE_LOG"
+if [ "$gateway_list_rc" -eq 0 ] && grep -q '^__URL_FOR_LIST__=ws://' <<<"$gateway_list"; then
+  pass "openclaw devices list observes device state while OPENCLAW_GATEWAY_URL is set"
+else
+  fail "devices list did not work with gateway URL after initial approval: ${gateway_list:0:500}"
+  exit 1
+fi
+
+section "Phase 4: Trigger and approve CLI scope upgrade"
+
+info "Triggering agent operator.write scope upgrade"
+trigger_output=$(sandbox_exec_sh_script 120 '
+set -u
+# shellcheck source=/dev/null
+. /tmp/nemoclaw-proxy-env.sh
+session_id="issue-4462-trigger-$(date +%s)-$$"
+rm -f "/sandbox/.openclaw/agents/main/sessions/${session_id}.jsonl.lock" \
+      "/sandbox/.openclaw/agents/main/sessions/${session_id}.trajectory.jsonl" 2>/dev/null || true
+printf "__URL_FOR_TRIGGER_AGENT__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
+set +e
+openclaw agent --agent main --json --session-id "$session_id" \
+  -m "What is 6 multiplied by 7? Reply with only the integer, no extra words."
+agent_rc=$?
+set -e
+printf "__TRIGGER_AGENT_RC__=%s\n" "$agent_rc"
+exit 0
+' 2>&1)
+printf '=== trigger agent output ===\n%s\n' "$trigger_output" >>"$AGENT_LOG"
+
+scope_request_id=""
+for _attempt in 1 2 3 4 5; do
+  state="$(device_state_json 2>&1)" || state=""
+  if [ -n "$state" ]; then
+    printf '=== state while waiting for scope upgrade ===\n%s\n' "$state" >>"$STATE_LOG"
+    scope_request_id=$(printf '%s' "$state" | select_cli_request scope-upgrade 2>/dev/null) || scope_request_id=""
+  fi
+  [ -n "$scope_request_id" ] && break
+  sleep 2
+done
+
+if [ -z "$scope_request_id" ]; then
+  fail "No pending CLI scope-upgrade request appeared after agent trigger. State: $(printf '%s' "${state:-{}}" | summarize_device_state 2>/dev/null || true). Trigger: ${trigger_output:0:500}"
+  exit 1
+fi
+pass "pending CLI scope-upgrade request exists (${scope_request_id})"
+
+if [ "$TEST_MODE" = "legacy-repro" ]; then
+  legacy_gateway_pinned_approve_must_fail "$scope_request_id" || exit 1
+  section "Summary"
+  echo ""
+  printf '  Total: %d | \033[32mPass: %d\033[0m | \033[31mFail: %d\033[0m | \033[33mSkip: %d\033[0m\n' \
+    "$TOTAL" "$PASS" "$FAIL" "$SKIP"
+  echo ""
+  if [ "$FAIL" -gt 0 ]; then
+    echo "RESULT: FAILED - ${FAIL} test(s) failed"
+    exit 1
+  fi
+  echo "RESULT: PASSED - #4462 legacy gateway-pinned approval failure reproduced and recovered"
+  exit 0
+fi
+
+if [ "$TEST_MODE" != "approval" ]; then
+  fail "Unknown NEMOCLAW_4462_MODE=${TEST_MODE}; expected approval or legacy-repro"
+  exit 1
+fi
+
+approve_request "$scope_request_id" "CLI scope upgrade" || exit 1
+
+state="$(device_state_json 2>&1)" || {
+  fail "Could not read OpenClaw device state after scope-upgrade approval: ${state:0:500}"
+  exit 1
+}
+printf '=== state after scope-upgrade approval ===\n%s\n' "$state" >>"$STATE_LOG"
+pending_after_approval=$(printf '%s' "$state" | select_cli_request scope-upgrade 2>/dev/null) || pending_after_approval=""
+paired_with_write=$(printf '%s' "$state" | select_cli_paired_with_write 2>/dev/null) || paired_with_write=""
+if [ -n "$pending_after_approval" ]; then
+  fail "Scope-upgrade request is still pending after approval (${pending_after_approval})"
+  exit 1
+fi
+if [ -z "$paired_with_write" ]; then
+  fail "No CLI paired device has operator.write after approval: $(printf '%s' "$state" | summarize_device_state)"
+  exit 1
+fi
+pass "scope-upgrade approval grants the CLI device operator.write"
+
+section "Phase 5: Verify agent stays on gateway path"
+
+agent_ok=0
+last_agent_detail=""
+for attempt in 1 2; do
+  info "Running approved openclaw agent turn (attempt ${attempt}/2)"
+  final_output=$(sandbox_exec_sh_script 180 '
+set -u
+# shellcheck source=/dev/null
+. /tmp/nemoclaw-proxy-env.sh
+session_id="issue-4462-fixed-$(date +%s)-$$"
+rm -f "/sandbox/.openclaw/agents/main/sessions/${session_id}.jsonl.lock" \
+      "/sandbox/.openclaw/agents/main/sessions/${session_id}.trajectory.jsonl" 2>/dev/null || true
+printf "__URL_FOR_FINAL_AGENT__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
+openclaw agent --agent main --json --session-id "$session_id" \
+  -m "What is 6 multiplied by 7? Reply with only the integer, no extra words."
+' 2>&1)
+  final_rc=$?
+  printf '=== final agent attempt %s rc=%s ===\n%s\n' "$attempt" "$final_rc" "$final_output" >>"$AGENT_LOG"
+  reply=$(printf '%s' "$final_output" | parse_openclaw_agent_text 2>/dev/null) || reply=""
+  if grep -Eq 'EMBEDDED FALLBACK|fallbackFrom[": ]+gateway|transport[": ]+embedded' <<<"$final_output"; then
+    last_agent_detail="agent used embedded fallback: ${final_output:0:500}"
+  elif [ "$final_rc" -ne 0 ]; then
+    last_agent_detail="agent exited ${final_rc}: ${final_output:0:500}"
+  elif ! grep -q '^__URL_FOR_FINAL_AGENT__=ws://' <<<"$final_output"; then
+    last_agent_detail="agent command did not preserve OPENCLAW_GATEWAY_URL: ${final_output:0:500}"
+  elif grep -qE '(^|[^0-9])42([^0-9]|$)' <<<"$reply"; then
+    agent_ok=1
+    pass "approved openclaw agent turn answered through gateway mode"
+    break
+  else
+    last_agent_detail="expected reply 42, got reply='${reply:0:200}', raw='${final_output:0:400}'"
+  fi
+  sleep 5
+done
+
+if [ "$agent_ok" -ne 1 ]; then
+  fail "Final approved agent turn did not prove gateway-mode success: ${last_agent_detail}"
+  exit 1
+fi
+
+pass "approved agent output contains no embedded fallback markers"
+
+section "Summary"
+echo ""
+printf '  Total: %d | \033[32mPass: %d\033[0m | \033[31mFail: %d\033[0m | \033[33mSkip: %d\033[0m\n' \
+  "$TOTAL" "$PASS" "$FAIL" "$SKIP"
+echo ""
+
+if [ "$FAIL" -gt 0 ]; then
+  echo "RESULT: FAILED - ${FAIL} test(s) failed"
+  exit 1
+fi
+
+echo "RESULT: PASSED - #4462 CLI scope-upgrade approval stays on the gateway path"
+exit 0
