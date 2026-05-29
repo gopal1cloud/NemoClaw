@@ -62,11 +62,7 @@ describe("Brev nightly workflow contract", () => {
     expect(script).toContain(
       'sudo -n ufw allow from "$DOCKER_BRIDGE_POOL_CIDR" to any port "$port" proto tcp',
     );
-    expect(script).toContain(
-      'allow_docker_bridge_host_port "$OPENSHELL_GATEWAY_PORT" "OpenShell gateway"',
-    );
-    expect(script).toContain(
-      'allow_docker_bridge_host_port "$OLLAMA_AUTH_PROXY_PORT" "Ollama auth proxy"',
-    );
+    expect(script).toContain('allow_bridge_port "$OPENSHELL_GATEWAY_PORT" gateway');
+    expect(script).toContain('allow_bridge_port "$OLLAMA_AUTH_PROXY_PORT" auth-proxy');
   });
 });

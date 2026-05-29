@@ -24,18 +24,11 @@
 #   Writes /var/run/nemoclaw-launchable-ready when complete.
 #   Also writes "=== Ready ===" to /tmp/launch-plugin.log for backward compat.
 #
-# Usage (Brev launchable startup script — one-liner that curls this):
-#   curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/<ref>/scripts/brev-launchable-ci-cpu.sh | bash
-#
 # Environment overrides:
 #   OPENSHELL_VERSION     — OpenShell CLI release tag (default: v0.0.44)
 #   NEMOCLAW_REF          — NemoClaw git ref to clone (default: main)
 #   NEMOCLAW_CLONE_DIR    — Where to clone NemoClaw (default: ~/NemoClaw)
 #   SKIP_DOCKER_PULL      — Set to 1 to skip Docker image pre-pulls
-#
-# Related:
-#   - Epic: https://github.com/NVIDIA/NemoClaw/issues/1326
-#   - Issue: https://github.com/NVIDIA/NemoClaw/issues/1327
 
 set -euo pipefail
 
@@ -52,8 +45,6 @@ OLLAMA_AUTH_PROXY_PORT="11435"
 LAUNCH_LOG="${LAUNCH_LOG:-/tmp/launch-plugin.log}"
 SENTINEL="/var/run/nemoclaw-launchable-ready"
 
-# Docker images to pre-pull. These are the expensive layers that cause
-# timeouts when pulled during CI runs.
 DOCKER_IMAGES=(
   "ghcr.io/nvidia/nemoclaw/sandbox-base:latest"
   "node:22-trixie-slim"
@@ -95,29 +86,22 @@ retry() {
   done
 }
 
-allow_docker_bridge_host_port() {
-  local port="$1"
-  local label="$2"
-
+allow_bridge_port() {
+  local port="$1" label="$2"
   if ! command -v ufw >/dev/null 2>&1; then
-    warn "ufw not installed — skipping Docker bridge allow rule for $label"
+    warn "ufw missing; skip $label"
     return
   fi
-
   if sudo -n ufw allow from "$DOCKER_BRIDGE_POOL_CIDR" to any port "$port" proto tcp >/dev/null 2>&1; then
-    info "Allowed Docker bridge traffic to $label on port $port"
+    info "Allowed Docker bridge to $label:$port"
   else
-    warn "Could not add UFW allow rule for $label on port $port"
+    warn "Could not add UFW rule for $label:$port"
   fi
 }
 
 configure_openshell_bridge_firewall() {
-  # The openshell-docker network is created later, so this setup cannot know the
-  # exact future bridge subnet. Brev CI launchable VMs are single-use hosts; allow
-  # Docker's default local bridge pool to the host services sandbox containers
-  # must reach during onboarding.
-  allow_docker_bridge_host_port "$OPENSHELL_GATEWAY_PORT" "OpenShell gateway"
-  allow_docker_bridge_host_port "$OLLAMA_AUTH_PROXY_PORT" "Ollama auth proxy"
+  allow_bridge_port "$OPENSHELL_GATEWAY_PORT" gateway
+  allow_bridge_port "$OLLAMA_AUTH_PROXY_PORT" auth-proxy
 }
 
 # ── Wait for apt locks ───────────────────────────────────────────────
@@ -167,9 +151,7 @@ else
 fi
 sudo systemctl enable --now docker
 sudo usermod -aG docker "$TARGET_USER" 2>/dev/null || true
-# Make the socket world-accessible so SSH sessions (which don't pick up the
-# new docker group until re-login) can use Docker immediately.  This is a
-# short-lived CI VM — socket security is not a concern.
+# Short-lived CI VM: make Docker usable before a fresh login picks up the group.
 sudo chmod 666 /var/run/docker.sock
 info "Docker enabled ($(docker --version 2>/dev/null | head -c 40))"
 configure_openshell_bridge_firewall
