@@ -470,6 +470,8 @@ const dockerDriverGatewayEnv: typeof import("./onboard/docker-driver-gateway-env
 const { getDockerDriverGatewayEndpoint } = dockerDriverGatewayEnv;
 const dockerDriverGatewayRuntimeMarker: typeof import("./onboard/docker-driver-gateway-runtime-marker") =
   require("./onboard/docker-driver-gateway-runtime-marker");
+const dockerDriverGatewayDb: typeof import("./onboard/docker-driver-gateway-db") =
+  require("./onboard/docker-driver-gateway-db");
 const hostGatewayProcess: typeof import("./onboard/host-gateway-process") =
   require("./onboard/host-gateway-process");
 const vmDriverProcess: typeof import("./onboard/vm-driver-process") = require("./onboard/vm-driver-process");
@@ -2516,6 +2518,16 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
     processGatewayBin: gatewayBin,
   };
   dockerDriverGatewayLaunch.prepareAndLogDockerDriverGatewayLaunch(launch);
+  if (launch.mode === "host") {
+    // A prior container-mode gateway runs as root and can leave a root-owned
+    // openshell.db in the user-owned state dir. The host-mode gateway runs as
+    // the unprivileged user and would die with SQLITE_CANTOPEN ("unable to
+    // open database file") — see #4624. Clear an unreadable stale db so the
+    // host gateway recreates a fresh, user-owned one.
+    dockerDriverGatewayDb.clearInaccessibleGatewayDb(
+      typeof launch.env.OPENSHELL_DB_URL === "string" ? launch.env.OPENSHELL_DB_URL : null,
+    );
+  }
   const child = dockerDriverGatewayLaunch.spawnDockerDriverGateway(launch, logFd);
   const childExit = trackChildExit(child); // #3111 zombie-safe liveness
   child.unref();
