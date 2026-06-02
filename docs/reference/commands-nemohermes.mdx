@@ -278,6 +278,8 @@ NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_FROM_DOCKERFILE=path/to/Dockerfile NEMOCLAW_
 
 If a `--resume` is attempted with a different `--from` path than the original session, onboarding exits with a conflict error rather than silently building from the wrong image.
 
+For build context, base image caching, cold versus warm rebuilds, and trace collection, see [Docker Build Performance](../deployment/docker-build-performance).
+
 #### `--name <sandbox>`
 
 Set the sandbox name without going through the interactive prompt.

@@ -1,0 +1,235 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Docker Build Performance for Custom Sandbox Images"
+sidebar-title: "Docker Build Performance"
+description: "Best practices for fast custom sandbox image builds and rebuilds with nemoclaw onboard --from, plus how to diagnose where onboard time goes."
+description-agent: "Explains how build context size, base image caching, cold versus warm builds, and trace artifacts affect onboard wall-clock time for custom sandbox images. Use when a custom nemoclaw onboard --from build or sandbox rebuild is slow, when a build sends an unexpectedly large context, or when a user needs to tell a slow build apart from a hung onboard."
+keywords: ["nemoclaw onboard from dockerfile", "docker build context", "sandbox rebuild performance", "dockerignore", "onboard trace", "base image cache"]
+content:
+  type: "how_to"
+skill:
+  priority: 40
+---
+<!--
+Implementation work referenced by this page (for maintainers, not rendered):
+build-context staging and exclusions (#4679, #4680, #4682), base image pinning
+and cached bases (#3990, #4052), onboard trace artifacts (#3769).
+-->
+
+Custom sandbox images built with `nemoclaw onboard --from <Dockerfile>` can be fast or slow depending on how you shape the build directory and whether the base image is already cached.
+This page explains what NemoClaw does during image creation, how to keep custom builds fast, how cold builds differ from warm rebuilds, and how to capture trace artifacts when a build is slower than you expect.
+
+These practices reduce build time and avoid sending large or sensitive host directories to Docker.
+They do not guarantee a fixed build time, because pull speed, disk speed, and network conditions vary across machines.
+
+## How `onboard --from` Selects the Build Context
+
+`nemoclaw onboard --from <Dockerfile>` builds the sandbox image from your Dockerfile instead of the stock NemoClaw image.
+NemoClaw uses the Dockerfile's parent directory as the Docker build context, so every file your Dockerfile can `COPY` must live alongside it.
+
+Before the build starts, NemoClaw stages the context by copying the parent directory into a temporary directory and applying a built-in exclusion list.
+Anything left in that staged context is sent to the Docker daemon, read during the build, and counted toward the large-context warning described below.
+
+For the full flag reference, see [`onboard --from` in CLI Commands Reference](../reference/commands#nemoclaw-onboard-from).
+For an end-to-end custom image example, see [Install OpenClaw Plugins](install-openclaw-plugins).
+
+## Use a Dedicated Build Directory
+
+Put the Dockerfile and only the files it needs to `COPY` in a dedicated directory.
+
+```text
+my-plugin-sandbox/
+├── Dockerfile
+└── my-plugin/
+    ├── package.json
+    └── src/
+```
+
+A dedicated directory is the single most effective way to keep custom builds fast and safe.
+It bounds the build context to known files, keeps context staging quick, and prevents the build from sending unrelated host files to Docker.
+
+<Warning>
+Do not place a Dockerfile in a broad directory such as your home directory, a repository root, or `/tmp`.
+NemoClaw sends the Dockerfile's parent directory as the build context, so a broad parent directory stages a large, slow, and potentially sensitive context.
+</Warning>
+
+## Built-in Exclusions and `.dockerignore`
+
+NemoClaw applies its own built-in exclusion list while staging the context.
+It skips common large or generated directories and a set of credential-style files so they are neither sent to Docker nor baked into the image.
+
+Skipped directories and files include:
+
+- Large or generated directories such as `node_modules`, `.git`, `.venv`, `__pycache__`, and `.direnv`.
+- Credential directories and files such as `.ssh`, `.aws`, `.credentials`, `.netrc`, `.npmrc`, `.pypirc`, `secrets`, `credentials.json`, `secrets.json`, `secrets.yaml`, `token.json`, and `key.json`.
+- Environment files such as `.env`, `.env.*`, and `.envrc`.
+- Key and certificate files such as `*.pem`, `*.key`, `*.pfx`, `*.p12`, `*.jks`, `*.keystore`, `*_rsa`, `*_ecdsa`, and `*_ed25519`.
+- Other secret-bearing files such as `*.tfvars` and `service-account*.json`.
+
+Other build outputs such as `dist/`, `target/`, and `build/` are not excluded.
+If your Dockerfile does not need them, keep them out of the build directory so they do not slow staging or land in the image.
+
+<Note>
+NemoClaw's context staging does not currently read a `.dockerignore` file, so the built-in exclusion list above is what controls staging.
+A `.dockerignore` is still good practice for the Docker build step and for portability, but do not rely on it to keep large or sensitive files out of a NemoClaw custom build.
+Rely on a dedicated build directory and the built-in exclusions instead.
+</Note>
+
+<Warning>
+The built-in exclusions are a safety net, not a guarantee.
+They match well-known credential names and patterns, so a secret stored under an unusual name can still be copied.
+Keep secrets out of the build directory entirely, and pass values you need at build time as NemoClaw build arguments rather than files.
+</Warning>
+
+## Keep the Context Small
+
+Large build contexts slow onboard in two places.
+Context staging takes longer because NemoClaw copies more files, and the Docker build takes longer to start because the daemon must receive the whole context before the first instruction runs.
+
+If the staged context is larger than 100 MB, onboarding prints a warning before the Docker build starts.
+
+```text
+WARN: build context contains about 240.0 MB across 1300 files.
+The --from flag sends the Dockerfile's parent directory to Docker; use a dedicated directory if this is not intentional.
+```
+
+When you see this warning, stop and check the build directory.
+If the size is intentional, you can continue.
+If it is not, move the Dockerfile to a dedicated directory that contains only the files the build needs, then run onboard again.
+
+If the build directory contains unreadable files, for example Windows system files visible under WSL, onboarding exits with an error suggesting you move the Dockerfile to a dedicated directory.
+
+## Cold Builds Versus Warm Rebuilds
+
+The first custom build on a machine is a cold build.
+NemoClaw resolves the sandbox base image, pulls it over the network if it is not already present, then runs your Dockerfile instructions.
+The base image pull is usually the largest single cost of a cold build, and it depends on image size and network speed rather than on anything NemoClaw controls.
+
+A warm rebuild reuses what Docker has already cached.
+If the base image is present locally and your earlier layers have not changed, Docker reuses those cached layers and only re-runs instructions at and after the first change.
+Warm rebuilds are typically much faster than cold builds.
+
+<Tip>
+A slow first build or a slow base image pull is expected, not a hung onboard.
+NemoClaw shows step progress such as `[6/8] Creating sandbox` while the build runs.
+If progress is advancing, let the pull and build finish before assuming onboard is stuck.
+</Tip>
+
+### Expectations for the First Base Image Pull
+
+The first time a machine builds or runs a sandbox, it downloads the base image once.
+This download happens before your Dockerfile instructions run and can dominate first-build time on a slow connection.
+Subsequent builds and rebuilds reuse the cached base image and skip the download unless the referenced base image changes.
+
+### How Base Image References Interact
+
+By default the base image is `ghcr.io/nvidia/nemoclaw/sandbox-base:latest`.
+NemoClaw resolves the reference at build time in this order, from most to least specific.
+
+| Source | Effect |
+|---|---|
+| `NEMOCLAW_SANDBOX_BASE_IMAGE_REF` | Pins the base image to an exact reference you provide. |
+| Release version tags (`NEMOCLAW_SANDBOX_BASE_VERSION_TAG`, `NEMOCLAW_INSTALL_REF`, `NEMOCLAW_INSTALL_TAG`, or the active release tag) | Pins the base to a release-matched tag for reproducible builds. |
+| Locally built base | Uses a base built on the host when base image inputs changed since the main branch. |
+| `latest` | Falls back to the published `latest` tag. |
+
+Pinning to a release tag or an exact reference keeps rebuilds reproducible and lets Docker reuse the same cached base across builds.
+Using `latest` is convenient but can trigger a fresh pull whenever the upstream `latest` changes, which turns a warm rebuild into a partial cold build.
+
+## Order Dockerfile Layers for Fast Rebuilds
+
+Docker caches layers in order and invalidates every layer at and after the first change.
+Order your Dockerfile so the parts that change least often come first.
+
+- Install system packages and dependencies before copying frequently edited source.
+- Copy dependency manifests such as `package.json` and run the install step before copying the rest of the source, so dependency layers stay cached when only source changes.
+- Group rarely changing setup near the top and put frequently changing `COPY` steps near the bottom.
+
+```dockerfile
+ARG SANDBOX_BASE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
+FROM ${SANDBOX_BASE}
+
+# Changes rarely, so keep it near the top to stay cached.
+COPY my-plugin/package.json my-plugin/package-lock.json /opt/my-plugin/
+WORKDIR /opt/my-plugin
+RUN npm ci --no-audit --no-fund
+
+# Changes often, so keep it near the bottom.
+COPY my-plugin/ /opt/my-plugin/
+RUN npm run build
+```
+
+With this ordering, editing source re-runs only the final `COPY` and build layers, while the dependency install layer stays cached.
+
+## Capture and Interpret Onboard Trace Artifacts
+
+When a build or rebuild is slow, capture an onboard trace to see which phase took the time.
+Set one of these environment variables before running onboard.
+
+| Variable | Effect |
+|---|---|
+| `NEMOCLAW_TRACE=1` | Writes a trace file to the default directory `.e2e/traces`. |
+| `NEMOCLAW_TRACE_DIR=<dir>` | Writes the trace file to a directory you choose. |
+| `NEMOCLAW_TRACE_FILE=<path>` | Writes the trace to an exact file path. |
+
+```bash
+NEMOCLAW_TRACE=1 nemoclaw onboard --from ./my-plugin-sandbox/Dockerfile
+```
+
+The trace is a JSON file with one span per onboard phase, each recording a duration in milliseconds, and a summary that lists the slowest spans.
+Secrets and credential-style values are redacted before the trace is written.
+
+Map the spans to where build time goes.
+
+| Trace span | Onboard step | What it covers |
+|---|---|---|
+| `nemoclaw.onboard.phase.preflight` | `[1/8] Preflight checks` | Environment and Docker readiness checks. |
+| `nemoclaw.onboard.phase.gateway` | `[2/8] Starting OpenShell gateway` | Gateway reuse or recreation. |
+| `nemoclaw.onboard.phase.inference` | `[4/8] Setting up inference provider` | Inference provider setup. |
+| `nemoclaw.onboard.phase.sandbox` | `[6/8] Creating sandbox` | Overall sandbox creation, including the custom build. |
+| `nemoclaw.sandbox.create_stream` | `[6/8] Creating sandbox` | Context staging, base image resolve and pull, Docker build, and image import. |
+| `nemoclaw.sandbox.readiness_wait` | `[6/8] Creating sandbox` | Waiting for the sandbox to become ready. |
+| `nemoclaw.dashboard.readiness_wait` | `[7/8] Setting up agent inside sandbox` | Waiting for the dashboard to become ready. |
+| `nemoclaw.policy.application` | `[8/8] Policy presets` | Applying network policy presets. |
+
+If `nemoclaw.sandbox.create_stream` dominates the trace, the time is going into the build itself, most often a cold base image pull or a large context.
+If a readiness span dominates, the build finished and onboard is waiting on the sandbox or dashboard to come up, which is not a build problem.
+
+## Fast and Slow Build Directory Examples
+
+A fast build directory is dedicated and minimal.
+
+```text
+fast-build/
+├── Dockerfile
+└── my-plugin/
+    ├── package.json
+    └── src/
+```
+
+Context staging is quick, the context stays well under the warning threshold, and warm rebuilds reuse cached dependency layers.
+
+A slow build directory points the Dockerfile at a broad parent directory.
+
+```text
+~/projects/            <- Dockerfile lives here
+├── Dockerfile
+├── app-a/
+│   └── node_modules/  <- skipped by built-in exclusions
+├── app-b/
+│   └── dist/          <- not excluded, staged and sent to Docker
+├── data/              <- large, not excluded
+└── .env               <- skipped by built-in exclusions
+```
+
+Even though NemoClaw skips `node_modules` and `.env`, it still stages `app-b/dist/` and `data/`, which inflates the context, slows staging, triggers the large-context warning, and risks baking unrelated files into the image.
+Move the Dockerfile into a dedicated directory to fix this.
+
+## Related Topics
+
+- [`onboard --from` in CLI Commands Reference](../reference/commands#nemoclaw-onboard-from) for the full flag reference.
+- [Install OpenClaw Plugins](install-openclaw-plugins) for a complete custom image workflow.
+- [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle) for how rebuilds preserve state and when to capture runtime changes as Dockerfile changes.
+- [Sandbox Hardening](sandbox-hardening) before adding custom code to a shared or long-lived sandbox.
+- [Troubleshooting](../reference/troubleshooting) for diagnosing onboard and sandbox issues.

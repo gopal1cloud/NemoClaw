@@ -24,6 +24,7 @@ The supported NemoClaw path for OpenClaw plugins is to bake the plugin into a cu
 
 Put the Dockerfile and everything it needs to `COPY` in one directory.
 `nemoclaw onboard --from <Dockerfile>` uses the Dockerfile's parent directory as the Docker build context.
+For keeping these builds fast and diagnosing slow ones, see [Docker Build Performance](docker-build-performance).
 
 ```text
 my-plugin-sandbox/

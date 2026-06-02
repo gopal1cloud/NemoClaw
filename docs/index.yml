@@ -88,6 +88,9 @@ navigation:
               - page: "Install OpenClaw Plugins"
                 path: deployment/install-openclaw-plugins.mdx
                 slug: install-openclaw-plugins
+              - page: "Docker Build Performance"
+                path: deployment/docker-build-performance.mdx
+                slug: docker-build-performance
               - page: "Sandbox Hardening"
                 path: deployment/sandbox-hardening.mdx
                 slug: sandbox-hardening
@@ -239,6 +242,9 @@ navigation:
               - page: "Install Hermes Plugins"
                 path: manage-sandboxes/install-plugins-hermes.mdx
                 slug: install-plugins-hermes
+              - page: "Docker Build Performance"
+                path: deployment/docker-build-performance.mdx
+                slug: docker-build-performance
           - section: "Network Policy"
             slug: network-policy
             collapsed: open-by-default
