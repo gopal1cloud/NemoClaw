@@ -7,11 +7,34 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { listScenarios } from "../scenarios/registry.ts";
 import { validateE2eScenariosWorkflowBoundary } from "../../../tools/e2e-scenarios/workflow-boundary.mts";
+
+const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
+const WORKFLOW_PATH = path.join(REPO_ROOT, ".github", "workflows", "e2e-scenarios.yaml");
+
+function routeIdsFromWorkflow(workflowPath = WORKFLOW_PATH): string[] {
+  const workflow = fs.readFileSync(workflowPath, "utf8");
+  const match = /declare -A ROUTES=\(\n(?<body>[\s\S]*?)\n\s*\)/.exec(workflow);
+  if (!match?.groups?.body) {
+    throw new Error("Could not find ROUTES table in e2e-scenarios.yaml");
+  }
+  return Array.from(match.groups.body.matchAll(/^\s*\[([^\]]+)\]=/gm), ([, id]) => id).sort();
+}
 
 describe("e2e-scenarios workflow boundary", () => {
   it("keeps scenario execution manual/reusable and artifact-safe", () => {
     expect(validateE2eScenariosWorkflowBoundary()).toEqual([]);
+  });
+
+  it("routes_every_typed_scenario_id", () => {
+    const typedIds = listScenarios().map((scenario) => scenario.id).sort();
+    const routeIds = routeIdsFromWorkflow();
+    const missing = typedIds.filter((id) => !routeIds.includes(id));
+    const extra = routeIds.filter((id) => !typedIds.includes(id));
+
+    expect(missing, `workflow ROUTES missing typed scenario IDs: ${missing.join(", ")}`).toEqual([]);
+    expect(extra, `workflow ROUTES has unknown scenario IDs: ${extra.join(", ")}`).toEqual([]);
   });
 
   it("flags unsafe trigger and contract regressions", () => {
