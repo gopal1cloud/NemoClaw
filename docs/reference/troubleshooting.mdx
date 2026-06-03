@@ -687,6 +687,50 @@ If all attempts fail, the error includes container reachability diagnostics such
 `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` only covers the inference-server validation probe.
 The post-create readiness wait has its own budget (`NEMOCLAW_SANDBOX_READY_TIMEOUT`); see [Sandbox onboard times out with "did not become ready within Ns"](#sandbox-onboard-times-out-with-did-not-become-ready-within-ns) for the readiness path.
 
+### Scheduled (cron) run is skipped with `inference.local` not reachable
+
+A scheduled cron job shows up correctly in the OpenClaw dashboard but is skipped at trigger time with a message like:
+
+```text
+Agent cron job uses inference/<model> but the local provider endpoint is not reachable at https://inference.local/v1.
+Skipping this cron run; OpenClaw will retry the provider preflight on a later scheduled run.
+Last error: Error: getaddrinfo EAI_AGAIN inference.local
+```
+
+All sandbox inference — including local Ollama and local vLLM — is routed through the gateway's internal `inference.local` virtual host.
+The sandbox resolves that name through the gateway DNS route NemoClaw installs during onboarding and repairs on `nemoclaw <name> connect`.
+`getaddrinfo EAI_AGAIN inference.local` means the scheduled run could not resolve that name: the sandbox DNS route to the gateway is stale or was not re-established.
+This is common after a host reboot, a Docker Desktop or WSL restart, or a gateway restart.
+Interactive turns can still succeed when you connected after the disruption — `connect` repairs the route — while autonomous scheduled runs do not trigger that repair.
+
+OpenClaw skips only that one run and retries the provider preflight on the next scheduled run, so a recurring job self-heals once the route is restored.
+A one-shot (`at`) job whose only window falls during the outage is lost and must be re-created.
+
+To restore scheduled runs:
+
+1. Reconnect to repair the `inference.local` DNS route:
+
+   ```bash
+   nemoclaw <name> connect
+   ```
+
+   `connect` reapplies the gateway DNS route that resolves `inference.local` and prints `inference.local route repaired.` on success.
+   (Automatic repair is skipped only when you set `NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR=1`.)
+
+1. Confirm the full inference chain resolves from inside the sandbox:
+
+   ```bash
+   nemoclaw <name> status
+   ```
+
+   You can also probe the route directly from inside the sandbox with `curl https://inference.local/v1/models`.
+   Any HTTP response (including `401`) means routing works; an empty response, `000`, or `EAI_AGAIN` means DNS, the gateway, or the auth proxy is still broken.
+
+1. For local Ollama or vLLM, also confirm the host backend and auth proxy are healthy — see [Inference requests time out](#inference-requests-time-out).
+
+1. Re-create or re-run the job after the route is healthy.
+   For a one-shot reminder, schedule it after reconnecting so the gateway route is warm when it fires.
+
 ### Sandbox onboard times out with "did not become ready within Ns"
 
 Onboarding ends with:
