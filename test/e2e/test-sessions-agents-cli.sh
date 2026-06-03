@@ -225,7 +225,26 @@ for d in pending:
 
 seed_main_session() {
   section "Seed main session by sending one prompt"
-  if ! nemoclaw "$SANDBOX_NAME" exec -- openclaw agent --agent main -m "ping" 2>&1; then
+  local out exit_code attempt=1 max_attempts=5 backoff=4
+  while [ "$attempt" -le "$max_attempts" ]; do
+    if out="$(nemoclaw "$SANDBOX_NAME" exec -- openclaw agent --agent main -m "ping" 2>&1)"; then
+      exit_code=0
+      break
+    else
+      exit_code=$?
+    fi
+    # Retry on scope-upgrade races and session-takeover conflicts that resolve
+    # once the gateway's auto-pair watcher catches up.
+    if ! grep -qE "scope upgrade pending|pairing required|session file changed|EmbeddedAttemptSessionTakeoverError" <<<"$out"; then
+      break
+    fi
+    info "seed: gateway scope/session conflict (attempt ${attempt}/${max_attempts}); approving and retrying"
+    approve_pending_pairing_requests >/dev/null 2>&1 || true
+    sleep "$backoff"
+    attempt=$((attempt + 1))
+  done
+  if [ "$exit_code" -ne 0 ]; then
+    echo "$out" >&2
     fail "seed: agent invocation failed; sessions store may not be populated"
     return 1
   fi
