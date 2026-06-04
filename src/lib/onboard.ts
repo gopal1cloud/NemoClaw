@@ -548,6 +548,7 @@ import {
 } from "./onboard/policy-selection";
 import {
   backupSandboxBeforeRecreate,
+  containerPresenceFromReuseState,
   shouldSkipPreRecreateBackup,
 } from "./onboard/sandbox-backup-on-recreate";
 import {
@@ -3238,7 +3239,13 @@ async function createSandbox(
 
     if (pendingStateRestore === null && !shouldSkipPreRecreateBackup(process.env)) {
       note("  Backing up workspace state before recreating sandbox...");
-      const result = backupSandboxBeforeRecreate({ sandboxName });
+      // #4757: if the sandbox is already gone (e.g. a non-atomic update
+      // destroyed the container before `onboard --resume` ran), there is
+      // nothing to back up — skip rather than abort so recovery can proceed.
+      const result = backupSandboxBeforeRecreate({
+        sandboxName,
+        containerPresence: containerPresenceFromReuseState(existingSandboxState),
+      });
       if (!result.ok) {
         console.error("  Set NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 to recreate without preserving state.");
         process.exit(1);
