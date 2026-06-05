@@ -1,0 +1,92 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Agent manifest for LangChain Deep Agents Code (`dcode`).
+# Declares the integration contract between NemoClaw and the sandboxed agent.
+#
+# Scope note: this manifest registers LangChain Deep Agents Code as a
+# selectable, persistable NemoClaw harness so `nemoclaw onboard
+# --agent langchain-deepagents-code` resolves, persists across resume/rebuild/
+# upgrade, and is surfaced by `nemoclaw status`. The sandbox image
+# (Dockerfile/Dockerfile.base), start script, network policy additions, and
+# build-time provider/model config generation are tracked follow-ups for the
+# epic (issue #4861); until the image lands, `createAgentSandbox` reports the
+# actionable "missing a sandbox Dockerfile" error rather than building a
+# half-configured sandbox.
+
+name: langchain-deepagents-code
+display_name: "LangChain Deep Agents Code"
+description: "Terminal coding agent built on the LangChain Deep Agents SDK (dcode)"
+version_constraint: ">=0.1.0"
+language: python
+license: MIT
+homepage: "https://docs.langchain.com/oss/python/deepagents/code/overview"
+
+# ── Binary & process ────────────────────────────────────────────
+# Upstream ships both `dcode` and `deepagents-code` entry points from the
+# `deepagents-code` package (installed via `uv tool install deepagents-code`).
+install_method: pip  # deepagents-code (uv tool install deepagents-code)
+binary_path: /usr/local/bin/dcode
+version_command: "dcode --version"
+# Deep Agents Code is an interactive TUI / non-interactive CLI, not a
+# long-running gateway server. The interactive entry point is `dcode`;
+# headless runs use `dcode -n "<prompt>"`. There is no HTTP gateway/health
+# endpoint to probe, so `health_probe`, `forward_ports`, and `dashboard`
+# are intentionally omitted (NemoClaw falls back to its generic defaults,
+# which are unused on the not-yet-buildable path).
+gateway_command: "dcode"
+
+# ── Configuration ───────────────────────────────────────────────
+# Deep Agents Code stores all configuration and state under ~/.deepagents:
+#   config.toml  model/provider defaults, themes, update settings
+#   .env         provider API keys and environment variables
+#   hooks.json   lifecycle hook subscriptions (e.g. permission.request)
+#   .mcp.json    global MCP server definitions
+#   .state/      per-machine state (managed automatically)
+config:
+  dir: /sandbox/.deepagents
+  config_file: config.toml
+  env_file: .env                  # relative to dir — provider keys
+  format: toml
+
+# ── State directories ──────────────────────────────────────────
+state_dirs:
+  - .state
+
+# ── Top-level durable state files ───────────────────────────────
+state_files:
+  - path: config.toml
+  - path: hooks.json
+  - path: .mcp.json
+
+# ── Authentication ──────────────────────────────────────────────
+# Deep Agents Code authenticates per provider via env vars or the in-app
+# `/auth` command; it has no OpenClaw-style browser device pairing.
+device_pairing: false
+
+# ── Inference ───────────────────────────────────────────────────
+# Provider/model selection is driven by environment variables and the
+# `--model <provider>:<model>` flag (e.g. `nvidia:meta/llama-3.1-405b-instruct`,
+# `anthropic:claude-opus-4-7`, `openai:gpt-5.5`). Keys resolve from
+# DEEPAGENTS_CODE_*-prefixed vars, app-stored keys, then plain provider vars
+# (NVIDIA_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY). NVIDIA
+# support ships via the `langchain-nvidia-ai-endpoints` extra + NVIDIA_API_KEY.
+# Build-time mapping of NemoClaw provider/model choices into these surfaces is
+# a tracked follow-up.
+inference:
+  provider_type: env_managed
+
+# ── Phone-home hosts ───────────────────────────────────────────
+# Agent-specific egress endpoints. Provider and web-search (Tavily) hosts are
+# handled by NemoClaw network policy presets in a follow-up; LangSmith tracing
+# is opt-in via LANGSMITH_API_KEY.
+phone_home_hosts:
+  - smith.langchain.com
+
+# ── Package registry ───────────────────────────────────────────
+# Deep Agents Code and its provider extras install from PyPI.
+package_registry:
+  hosts:
+    - pypi.org
+    - files.pythonhosted.org
+  binary: /usr/local/bin/pip3

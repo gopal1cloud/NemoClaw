@@ -94,10 +94,28 @@ describe("agent definitions", () => {
     ]);
   });
 
+  it("loads LangChain Deep Agents Code manifest properties without OpenClaw fallbacks", () => {
+    const dcode = loadAgent("langchain-deepagents-code");
+
+    expect(dcode.name).toBe("langchain-deepagents-code");
+    expect(dcode.displayName).toBe("LangChain Deep Agents Code");
+    expect(dcode.hasDevicePairing).toBe(false);
+    expect(dcode.configPaths).toEqual({
+      dir: "/sandbox/.deepagents",
+      configFile: "config.toml",
+      envFile: ".env",
+      format: "toml",
+    });
+    expect(dcode.stateDirs).toEqual([".state"]);
+    expect(dcode.messagingPlatforms).toEqual([]);
+    expect(dcode.phoneHomeHosts).toEqual(["smith.langchain.com"]);
+  });
+
   it("orders OpenClaw first in interactive choices", () => {
     const choices = getAgentChoices();
     expect(choices[0]?.name).toBe("openclaw");
     expect(choices.map((choice) => choice.name)).toContain("hermes");
+    expect(choices.map((choice) => choice.name)).toContain("langchain-deepagents-code");
   });
 
   it("falls back to openclaw when session references an unknown agent", () => {
