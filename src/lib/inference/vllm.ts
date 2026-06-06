@@ -330,7 +330,7 @@ function downloadModel(
   });
 }
 
-function startContainer(
+export function startContainer(
   profile: VllmProfile,
   model: VllmModelDef,
 ): { ok: boolean; reason?: string } {
@@ -351,8 +351,13 @@ function startContainer(
   // the value stays out of /proc/<pid>/cmdline.
   const hfTokenFlags = buildHfTokenDockerArgs().join(" ");
   const flags = [resolvedFlags.join(" "), hfTokenFlags].filter(Boolean).join(" ");
+  // `--restart unless-stopped` keeps the long-lived inference container alive
+  // across Docker daemon restarts and host reboots/updates, so users do not
+  // have to re-run `nemoclaw onboard --fresh` to get inference back after a
+  // DGX Spark/Station reboot. `unless-stopped` (rather than `always`) respects
+  // an explicit `docker stop` so a deliberately stopped container stays down.
   const cmd =
-    `docker run -d ${flags} -p ${String(VLLM_PORT)}:8000 ` +
+    `docker run -d --restart unless-stopped ${flags} -p ${String(VLLM_PORT)}:8000 ` +
     `--name ${profile.containerName} --entrypoint /bin/bash ${profile.image} -lc ${JSON.stringify(buildVllmServeCommand(model))}`;
   const result = runShell(cmd, {
     ignoreError: true,

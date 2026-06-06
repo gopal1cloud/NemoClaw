@@ -27,7 +27,7 @@ vi.mock("./nim", () => ({
   getGpuIndicesByName: mocks.getGpuIndicesByName,
 }));
 
-import { detectVllmProfile, pullImage } from "./vllm";
+import { detectVllmProfile, pullImage, startContainer } from "./vllm";
 
 describe("vLLM profile detection", () => {
   beforeEach(() => {
@@ -62,6 +62,30 @@ describe("vLLM profile detection", () => {
     expect(profile!.image).toBe("nvcr.io/nvidia/vllm:26.03.post1-py3");
     expect(profile!.defaultModel.id).toBe("nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8");
     expect(profile!.defaultModel.envValue).toBe("nemotron-3-nano-4b");
+  });
+});
+
+describe("vLLM container start", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.runShell.mockReturnValue({ status: 0, signal: null, output: "" });
+  });
+
+  it("launches the container with a reboot-surviving restart policy", () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
+    expect(profile).not.toBeNull();
+
+    const result = startContainer(profile!, profile!.defaultModel);
+    expect(result).toEqual({ ok: true });
+
+    const runCmd = mocks.runShell.mock.calls
+      .map((call) => String(call[0]))
+      .find((cmd) => cmd.startsWith("docker run"));
+    expect(runCmd).toBeDefined();
+    // Without a restart policy the inference container does not come back after
+    // a host reboot/update; `unless-stopped` survives reboots while honoring an
+    // explicit `docker stop`.
+    expect(runCmd).toContain("--restart unless-stopped");
   });
 });
 
