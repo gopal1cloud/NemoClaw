@@ -275,9 +275,18 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
         // MessagingHostStateApplier.readPlanStateFromEnv() and write it to the
         // registry. Without this, the plan is lost across process restarts and
         // the registry entry loses its messaging state on rebuild.
-        if (session?.messagingPlan) {
-          deps.writePlanToEnv(session.messagingPlan);
-          messagingPlan = session.messagingPlan;
+        // Guard: only restore if the plan's identity matches the current sandbox
+        // and agent. An agent change or renamed sandbox means the persisted plan
+        // is stale and must be recompiled through the normal setup path.
+        const storedPlan = session?.messagingPlan;
+        const agentName = (agent as { name?: string } | null)?.name;
+        const planMatchesCurrent =
+          storedPlan != null &&
+          storedPlan.sandboxName === sandboxName &&
+          (agentName == null || storedPlan.agent === agentName);
+        if (planMatchesCurrent && storedPlan != null) {
+          deps.writePlanToEnv(storedPlan);
+          messagingPlan = storedPlan;
         }
       }
     } else {

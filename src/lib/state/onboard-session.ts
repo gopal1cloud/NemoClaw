@@ -19,6 +19,7 @@ import {
   sanitizeMessagingChannelConfig,
 } from "../messaging-channel-config";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
+import { parseSandboxMessagingPlan } from "../onboard/messaging-plan-session";
 import {
   createOnboardMachineEvent,
   emitOnboardMachineEvent,
@@ -308,27 +309,6 @@ function parseWechatConfig(value: unknown): WechatConfig | null {
   if (baseUrl) result.baseUrl = baseUrl;
   if (userId) result.userId = userId;
   return Object.keys(result).length > 0 ? result : null;
-}
-
-function parseSandboxMessagingPlan(value: unknown): SandboxMessagingPlan | null {
-  if (
-    !isObject(value) ||
-    value.schemaVersion !== 1 ||
-    typeof value.sandboxName !== "string" ||
-    typeof value.agent !== "string" ||
-    typeof value.workflow !== "string" ||
-    !Array.isArray(value.channels) ||
-    !Array.isArray(value.disabledChannels) ||
-    !Array.isArray(value.credentialBindings) ||
-    !isObject(value.networkPolicy) ||
-    !Array.isArray(value.agentRender) ||
-    !Array.isArray(value.buildSteps) ||
-    !Array.isArray(value.stateUpdates) ||
-    !Array.isArray(value.healthChecks)
-  ) {
-    return null;
-  }
-  return value as unknown as SandboxMessagingPlan;
 }
 
 function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetadata | undefined {

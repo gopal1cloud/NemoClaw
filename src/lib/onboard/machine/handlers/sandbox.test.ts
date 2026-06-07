@@ -3,8 +3,26 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
 import { handleSandboxState, type SandboxStateOptions } from "./sandbox";
+
+function makeMinimalPlan(sandboxName: string, agent = "openclaw"): SandboxMessagingPlan {
+  return {
+    schemaVersion: 1,
+    sandboxName,
+    agent: agent as SandboxMessagingPlan["agent"],
+    workflow: "onboard",
+    channels: [],
+    disabledChannels: [],
+    credentialBindings: [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+  };
+}
 
 type Gpu = { type: string } | null;
 type Agent = { displayName?: string } | null;
@@ -317,5 +335,40 @@ describe("handleSandboxState", () => {
     );
     expect(calls.note).toHaveBeenCalledWith("  [non-interactive] Reusing messaging channel configuration: discord");
     expect(result.selectedMessagingChannels).toEqual(["discord"]);
+  });
+
+  it("persists plan from env into session after fresh messaging setup", async () => {
+    const mockPlan = makeMinimalPlan("my-assistant");
+    const { deps, getSession } = createDeps({
+      readMessagingPlanFromEnv: () => mockPlan,
+    });
+
+    await handleSandboxState({ ...baseOptions(deps) });
+
+    expect(getSession().messagingPlan).toEqual(mockPlan);
+  });
+
+  it("restores matching plan to env on non-interactive resume", async () => {
+    const mockPlan = makeMinimalPlan("my-assistant");
+    const session = createSession({ sandboxName: "my-assistant", messagingChannels: ["telegram"], messagingPlan: mockPlan });
+    const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
+    const writePlanToEnv = vi.fn();
+    const { deps } = createDeps({ getRecordedMessagingChannelsForResume, writePlanToEnv });
+
+    await handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "my-assistant" });
+
+    expect(writePlanToEnv).toHaveBeenCalledWith(mockPlan);
+  });
+
+  it("does not restore plan to env when sandbox name does not match", async () => {
+    const stalePlan = makeMinimalPlan("old-sandbox");
+    const session = createSession({ sandboxName: "my-assistant", messagingChannels: ["telegram"], messagingPlan: stalePlan });
+    const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
+    const writePlanToEnv = vi.fn();
+    const { deps } = createDeps({ getRecordedMessagingChannelsForResume, writePlanToEnv });
+
+    await handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "my-assistant" });
+
+    expect(writePlanToEnv).not.toHaveBeenCalled();
   });
 });
