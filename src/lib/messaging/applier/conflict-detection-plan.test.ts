@@ -106,7 +106,7 @@ describe("getActiveChannelIdsFromPlan", () => {
   });
 
   it("excludes channels where channel.disabled is true", () => {
-    const plan = makePlan("sb", { channels: [tgChannel(false, true)] });
+    const plan = makePlan("sb", { channels: [tgChannel(true, true)] });
     expect(getActiveChannelIdsFromPlan(plan)).toEqual([]);
   });
 

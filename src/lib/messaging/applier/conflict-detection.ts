@@ -165,17 +165,25 @@ export function resolveActiveChannelsFromEntry(
 
 /**
  * Return credential hashes scoped to `channelId` for a registry entry.
- * Only plan-backed entries are considered; entries without a plan return `{}`
- * which causes callers to fall through to "unknown-token" (conservative).
+ *
+ * For plan-backed entries the lookup is channel-scoped. When the plan exists
+ * but carries no hashes for the channel (e.g. a registry-only resume that did
+ * not re-run the compiler), falls back to the legacy `providerCredentialHashes`
+ * flat field so safety coverage is preserved.
+ *
+ * For legacy entries without a plan the entire `providerCredentialHashes`
+ * object is returned, which may include keys from other channels — callers
+ * that need channel-scoped comparison should prefer plan-backed entries.
  */
 function resolveChannelHashesFromEntry(
   entry: ConflictRegistryEntry,
   channelId: string,
 ): Record<string, string> {
   if (entry.messaging?.plan) {
-    return getCredentialHashesFromPlan(entry.messaging.plan, channelId);
+    const planHashes = getCredentialHashesFromPlan(entry.messaging.plan, channelId);
+    if (Object.keys(planHashes).length > 0) return planHashes;
   }
-  return {};
+  return (entry.providerCredentialHashes as Record<string, string>) ?? {};
 }
 
 // ---------------------------------------------------------------------------

@@ -123,7 +123,7 @@ describe("hasStoredChannelInEntry", () => {
   it("returns false when channel is in plan.disabledChannels", () => {
     const entry = planEntry(
       "sb",
-      makePlan("sb", { disabledChannels: ["telegram"], channels: [tgChannel(false, true)] }),
+      makePlan("sb", { disabledChannels: ["telegram"], channels: [tgChannel(true, true)] }),
     );
     expect(hasStoredChannelInEntry(entry, "telegram")).toBe(false);
   });
@@ -268,7 +268,7 @@ describe("findConflictsInEntries", () => {
       "alice",
       makePlan("alice", {
         disabledChannels: ["telegram"],
-        channels: [tgChannel(false, true)],
+        channels: [tgChannel(true, true)],
         credentialBindings: [tgBinding("hash-a")],
       }),
     );
@@ -306,7 +306,7 @@ describe("detectAllOverlapsInEntries", () => {
       "alice",
       makePlan("alice", {
         disabledChannels: ["telegram"],
-        channels: [tgChannel(false, true)],
+        channels: [tgChannel(true, true)],
         credentialBindings: [tgBinding("hash-a")],
       }),
     );
