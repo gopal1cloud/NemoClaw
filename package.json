@@ -1,4 +1,5 @@
 {
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
   "name": "nemoclaw",
   "version": "0.1.0",
   "description": "NemoClaw — run OpenClaw inside OpenShell with NVIDIA inference",
