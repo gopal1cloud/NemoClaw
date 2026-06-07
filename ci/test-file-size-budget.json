@@ -1,4 +1,5 @@
 {
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
   "defaultMaxLines": 1500,
   "legacyMaxLines": {
     "nemoclaw/src/commands/migration-state.test.ts": 1566,

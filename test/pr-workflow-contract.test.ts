@@ -116,6 +116,7 @@ describe("pull request workflow contract", () => {
       "test-cli",
       "test-plugin",
       "source-shape-test-budget",
+      "test-file-size-budget",
       "test-skills-yaml",
     ]) {
       expect(staticPrekRun).toContain(`--skip ${skippedHook}`);
@@ -134,6 +135,7 @@ describe("pull request workflow contract", () => {
     expect(pluginTestRun).toContain("npx vitest run --project plugin");
     expect(pluginTestRun).toContain("npx tsx scripts/check-coverage-ratchet.ts");
     expect(staticRuns).toContain("npm run source-shape:check");
+    expect(staticRuns).toContain("npm run test-size:check");
     expect(staticRuns).toContain("npx vitest run test/skills-frontmatter.test.ts");
   });
 
