@@ -101,6 +101,7 @@ TSX_BIN="${REPO_ROOT}/node_modules/.bin/tsx"
 if [[ ! -x "${TSX_BIN}" ]]; then
   TSX_BIN=""
 fi
+METADATA_DIR="${E2E_METADATA_DIR:-${E2E_ROOT}}"
 
 run_resolver() {
   if [[ -n "${TSX_BIN}" ]]; then
@@ -115,7 +116,7 @@ run_resolver() {
   fi
 }
 
-run_resolver plan "${SCENARIO_ID}" --context-dir "${E2E_CONTEXT_DIR}"
+run_resolver plan "${SCENARIO_ID}" --context-dir "${E2E_CONTEXT_DIR}" --metadata-dir "${METADATA_DIR}"
 
 if [[ "${PLAN_ONLY}" -eq 1 ]]; then
   exit 0
@@ -127,7 +128,7 @@ fi
 # probe results JSON report to stdout and writes it to
 # ${E2E_CONTEXT_DIR}/expected-state-report.json.
 if [[ "${VALIDATE_ONLY}" -eq 1 ]]; then
-  validate_args=("${SCENARIO_ID}" --context-dir "${E2E_CONTEXT_DIR}")
+  validate_args=("${SCENARIO_ID}" --context-dir "${E2E_CONTEXT_DIR}" --metadata-dir "${METADATA_DIR}")
   if ! run_resolver validate-state "${validate_args[@]}"; then
     echo "run-scenario: --validate-only: expected-state validation failed" >&2
     exit 3
@@ -241,23 +242,77 @@ read_plan_failure_field() {
 run_onboarding_assertions() {
   local rows
   if ! rows="$(
-    PLAN_JSON_PATH="${E2E_CONTEXT_DIR}/plan.json" SCENARIOS_YAML_PATH="${E2E_ROOT}/nemoclaw_scenarios/scenarios.yaml" node <<'NODE'
+    PLAN_JSON_PATH="${E2E_CONTEXT_DIR}/plan.json" \
+      E2E_ROOT="${E2E_ROOT}" \
+      node <<'NODE'
 const fs = require('fs');
-const yaml = require('js-yaml');
+const path = require('path');
 
 const planPath = process.env.PLAN_JSON_PATH;
-const scenariosPath = process.env.SCENARIOS_YAML_PATH;
+const e2eRoot = process.env.E2E_ROOT;
 const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
-const scenarios = yaml.load(fs.readFileSync(scenariosPath, 'utf8'));
-const assertionIds = Array.isArray(plan.onboarding_assertions) ? plan.onboarding_assertions : [];
-for (const id of assertionIds) {
-  const assertion = scenarios?.onboarding_assertions?.[id];
-  if (!assertion || typeof assertion.script !== 'string') {
-    process.stderr.write(`run-scenario: unknown onboarding assertion: ${id}\n`);
-    process.exit(1);
+const assertionRoot = path.resolve(e2eRoot, 'onboarding_assertions');
+const assertionRootReal = fs.realpathSync(assertionRoot);
+
+function fail(message) {
+  process.stderr.write(`run-scenario: ${message}\n`);
+  process.exit(1);
+}
+
+function isContained(parent, child) {
+  const relative = path.relative(parent, child);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+const assertionIds = Array.isArray(plan.onboarding_assertions)
+  ? plan.onboarding_assertions
+  : [];
+const assertionSteps = Array.isArray(plan.onboarding_assertion_steps)
+  ? plan.onboarding_assertion_steps
+  : [];
+if (assertionIds.length > 0 && assertionSteps.length === 0) {
+  fail('plan is missing resolved onboarding_assertion_steps');
+}
+if (assertionIds.length !== assertionSteps.length) {
+  fail('plan onboarding_assertion_steps must match onboarding_assertions');
+}
+for (const [index, assertion] of assertionSteps.entries()) {
+  const id = assertion?.id;
+  if (typeof id !== 'string' || !/^[A-Za-z0-9._-]+$/.test(id)) {
+    fail(`invalid onboarding assertion id: ${String(id)}`);
   }
-  const stableId = typeof assertion.assertion_id === 'string' ? assertion.assertion_id : `onboarding.${id}`;
-  process.stdout.write(`${id}\t${assertion.script}\t${stableId}\n`);
+  if (id !== assertionIds[index]) {
+    fail(
+      `plan onboarding assertion order mismatch at index ${index}: ${String(assertionIds[index])} != ${id}`,
+    );
+  }
+  const script = assertion.script;
+  if (typeof script !== 'string') {
+    fail(`onboarding assertion ${id} script must be a string`);
+  }
+  if (!script || path.isAbsolute(script)) {
+    fail(
+      `onboarding assertion ${id} script must be a relative path under onboarding_assertions/: ${script}`,
+    );
+  }
+  const resolved = path.resolve(e2eRoot, script);
+  if (!isContained(assertionRoot, resolved)) {
+    fail(`onboarding assertion ${id} script escapes onboarding_assertions/: ${script}`);
+  }
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+    fail(`onboarding assertion ${id} script not found: ${resolved}`);
+  }
+  const real = fs.realpathSync(resolved);
+  if (!isContained(assertionRootReal, real)) {
+    fail(
+      `onboarding assertion ${id} script resolves outside onboarding_assertions/: ${script}`,
+    );
+  }
+  const stableId =
+    typeof assertion.assertion_id === 'string'
+      ? assertion.assertion_id
+      : `onboarding.${id}`;
+  process.stdout.write(`${id}\t${real}\t${stableId}\n`);
 }
 NODE
   )"; then
@@ -269,14 +324,9 @@ NODE
   fi
 
   echo "== onboarding assertions =="
-  local assertion_id script stable_id full_path
-  while IFS=$'\t' read -r assertion_id script stable_id; do
+  local assertion_id full_path stable_id
+  while IFS=$'\t' read -r assertion_id full_path stable_id; do
     [[ -n "${assertion_id}" ]] || continue
-    full_path="${E2E_ROOT}/${script}"
-    if [[ ! -f "${full_path}" ]]; then
-      echo "run-scenario: onboarding assertion ${assertion_id} script not found: ${full_path}" >&2
-      return 1
-    fi
     if e2e_env_is_dry_run; then
       e2e_env_trace "onboarding-assertion:${assertion_id}"
       echo "PASS: ${stable_id} (dry-run skipped)"
@@ -361,6 +411,7 @@ if [[ -n "${EXPECTED_FAILURE_PHASE}" ]]; then
   match_args=(
     match-failure "${SCENARIO_ID}"
     --context-dir "${E2E_CONTEXT_DIR}"
+    --metadata-dir "${METADATA_DIR}"
     --log "${negative_log}"
     --observed-phase "${EXPECTED_FAILURE_PHASE}"
   )
@@ -483,7 +534,7 @@ fi
 # straight from setup checks to suites so migrated suite assertions can be
 # debugged against the real environment.
 if [[ "${E2E_VALIDATE_EXPECTED_STATE:-0}" == "1" || "${DRY_RUN}" -eq 1 ]]; then
-  validate_args=("${SCENARIO_ID}" --context-dir "${E2E_CONTEXT_DIR}")
+  validate_args=("${SCENARIO_ID}" --context-dir "${E2E_CONTEXT_DIR}" --metadata-dir "${METADATA_DIR}")
   if [[ "${DRY_RUN}" -eq 1 ]]; then
     # CodeRabbit review item #9: explicitly opt in to seeding probes from
     # the expected state in dry-run/test mode. Live runs go through real

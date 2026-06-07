@@ -103,6 +103,12 @@ export interface TestPlan extends AnyRecord {
   skipped_capabilities?: SkippedCapability[];
 }
 
+export interface OnboardingAssertionDefinition extends AnyRecord {
+  stage?: string;
+  script: string;
+  assertion_id?: string;
+}
+
 export interface SetupScenario {
   alias_for_plan?: string;
   dimensions?: {
@@ -140,7 +146,7 @@ export interface ScenariosFile {
   base_scenarios?: Record<string, BaseScenario>;
   onboarding_profiles?: Record<string, OnboardingProfile>;
   test_plans?: Record<string, TestPlan>;
-  onboarding_assertions?: Record<string, AnyRecord>;
+  onboarding_assertions?: Record<string, OnboardingAssertionDefinition>;
 }
 
 export type ExpectedStateConfig = AnyRecord;
@@ -179,6 +185,13 @@ export interface ResolvedExpectedState {
   config: ExpectedStateConfig;
 }
 
+export interface ResolvedOnboardingAssertion {
+  id: string;
+  script: string;
+  assertion_id: string;
+  stage?: string;
+}
+
 export interface ResolvedPlan {
   scenario_id: string;
   plan_id?: string;
@@ -186,6 +199,7 @@ export interface ResolvedPlan {
   base?: ResolvedDimension<BaseScenario>;
   onboarding?: ResolvedDimension<OnboardingProfile>;
   onboarding_assertions?: string[];
+  onboarding_assertion_steps?: ResolvedOnboardingAssertion[];
   dimensions: {
     platform: ResolvedDimension<PlatformProfile>;
     install: ResolvedDimension<InstallProfile>;

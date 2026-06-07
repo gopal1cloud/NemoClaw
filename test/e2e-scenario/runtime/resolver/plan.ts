@@ -20,6 +20,7 @@ import type { ResolverInput } from "./load.ts";
 import type {
   BaseScenario,
   ResolvedPlan,
+  ResolvedOnboardingAssertion,
   ResolvedSuite,
   SuiteDefinition,
   ExpectedFailure,
@@ -128,6 +129,36 @@ function validateSuiteAgainstState(
   }
 }
 
+function resolveOnboardingAssertions(
+  assertionIds: string[],
+  meta: ResolverInput,
+  scenarioId: string,
+): ResolvedOnboardingAssertion[] {
+  const registry = meta.scenarios.onboarding_assertions ?? {};
+  return assertionIds.map((assertionId) => {
+    const definition = lookupProfile(
+      registry,
+      "onboarding assertion",
+      assertionId,
+      scenarioId,
+    );
+    if (typeof definition.script !== "string" || definition.script.length === 0) {
+      throw new Error(
+        `scenario '${scenarioId}' references onboarding assertion '${assertionId}' with missing script`,
+      );
+    }
+    return {
+      id: assertionId,
+      script: definition.script,
+      assertion_id:
+        typeof definition.assertion_id === "string"
+          ? definition.assertion_id
+          : `onboarding.${assertionId}`,
+      ...(typeof definition.stage === "string" ? { stage: definition.stage } : {}),
+    };
+  });
+}
+
 export function resolveScenario(scenarioId: string, meta: ResolverInput): ResolvedPlan {
   const legacy = meta.scenarios.setup_scenarios[scenarioId];
   const directPlan = meta.scenarios.test_plans?.[scenarioId];
@@ -186,13 +217,20 @@ export function resolveScenario(scenarioId: string, meta: ResolverInput): Resolv
     { origin: `test_plan '${planId}'`, block: layeredPlan?.expected_failure, mode: "override" },
     { origin: `setup_scenario '${scenarioId}'`, block: legacy?.expected_failure, mode: "override" },
   ]);
+  const onboardingAssertionIds = layeredPlan?.onboarding_assertions ?? [];
+  const onboardingAssertionSteps = resolveOnboardingAssertions(
+    onboardingAssertionIds,
+    meta,
+    scenarioId,
+  );
   return {
     scenario_id: scenarioId,
     plan_id: layeredPlan ? planId : undefined,
     legacy_scenario_id: legacy?.alias_for_plan ? scenarioId : undefined,
     base: base && baseId ? { id: baseId, profile: base as BaseScenario } : undefined,
     onboarding: onboardingId ? { id: onboardingId, profile: onboarding } : undefined,
-    onboarding_assertions: layeredPlan?.onboarding_assertions ?? [],
+    onboarding_assertions: onboardingAssertionIds,
+    onboarding_assertion_steps: onboardingAssertionSteps,
     dimensions: {
       platform: { id: platformId, profile: platform },
       install: { id: installId, profile: install },
