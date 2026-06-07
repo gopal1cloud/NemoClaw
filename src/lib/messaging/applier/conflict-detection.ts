@@ -95,20 +95,33 @@ export function createMessagingConflictProbe(
 
 /**
  * Return the channel IDs that are active (not disabled) in a compiled plan.
+ * Aligns with `enabledPlanChannels()` in plan-filter.ts: a channel is active
+ * only when `channel.active && !channel.disabled` AND it is not in
+ * `plan.disabledChannels`.
  */
 export function getActiveChannelIdsFromPlan(plan: SandboxMessagingPlan): string[] {
   const disabled = new Set(plan.disabledChannels);
-  return plan.channels.filter((c) => !disabled.has(c.channelId)).map((c) => c.channelId);
+  return plan.channels
+    .filter((c) => c.active && !c.disabled && !disabled.has(c.channelId))
+    .map((c) => c.channelId);
 }
 
 /**
- * Return credential hashes keyed by providerEnvKey from a compiled plan.
- * Only bindings that have a `credentialHash` (i.e. the credential was present
- * when the plan was compiled) are included.
+ * Return credential hashes keyed by providerEnvKey from a compiled plan,
+ * optionally scoped to a single channel.
+ *
+ * Only bindings that carry a `credentialHash` are included. When `channelId`
+ * is provided only that channel's bindings are returned, which prevents
+ * hashes from other channels in the same sandbox from contaminating
+ * single-channel conflict comparisons.
  */
-export function getCredentialHashesFromPlan(plan: SandboxMessagingPlan): Record<string, string> {
+export function getCredentialHashesFromPlan(
+  plan: SandboxMessagingPlan,
+  channelId?: string,
+): Record<string, string> {
   const hashes: Record<string, string> = {};
   for (const b of plan.credentialBindings) {
+    if (channelId !== undefined && b.channelId !== channelId) continue;
     if (b.credentialHash) hashes[b.providerEnvKey] = b.credentialHash;
   }
   return hashes;
@@ -120,18 +133,23 @@ export function getCredentialHashesFromPlan(plan: SandboxMessagingPlan): Record<
  * Groups bindings by channelId (e.g. Slack has SLACK_BOT_TOKEN and
  * SLACK_APP_TOKEN) and excludes:
  *   - channels in `plan.disabledChannels` (bridge is paused, not in use)
- *   - bindings without a `credentialHash` (credential was not supplied)
+ *   - bindings where the credential is not available (`credentialAvailable`
+ *     false) — e.g. WhatsApp, which has no host-side token provider
  *
- * The result feeds directly into `findConflictsInEntries`.
+ * When a binding has no `credentialHash` yet (the compiler populates this
+ * field once the credential-binding engine is updated), the channel is still
+ * included with an empty `credentialHashes` map, which falls through to
+ * `"unknown-token"` conservative detection. This preserves the safety
+ * behaviour while the compiler migration is in flight.
  */
 export function planToConflictChannelRequests(plan: SandboxMessagingPlan): ConflictRequest[] {
   const disabledSet = new Set(plan.disabledChannels);
   const byChannel = new Map<string, Record<string, string>>();
 
   for (const binding of plan.credentialBindings) {
-    if (disabledSet.has(binding.channelId) || !binding.credentialHash) continue;
+    if (disabledSet.has(binding.channelId) || !binding.credentialAvailable) continue;
     const hashes = byChannel.get(binding.channelId) ?? {};
-    hashes[binding.providerEnvKey] = binding.credentialHash;
+    if (binding.credentialHash) hashes[binding.providerEnvKey] = binding.credentialHash;
     byChannel.set(binding.channelId, hashes);
   }
 
@@ -163,14 +181,27 @@ export function resolveActiveChannelsFromEntry(
 }
 
 /**
- * Return credential hashes keyed by providerEnvKey for a registry entry.
- * Prefers `entry.messaging.plan` credential bindings; falls back to the legacy
- * `providerCredentialHashes` flat field.
+ * Return credential hashes scoped to `channelId` for a registry entry.
+ *
+ * For plan-backed entries the lookup is channel-scoped: only bindings for the
+ * requested channel are considered. When the plan exists but carries no hashes
+ * for the channel (compiler migration in flight), the function falls back to
+ * the legacy `providerCredentialHashes` flat field so no safety coverage is
+ * lost during the transition.
+ *
+ * For legacy entries without a plan the entire `providerCredentialHashes`
+ * object is returned unchanged (same behavior as before this architecture).
  */
-export function resolveCredentialHashesFromEntry(
+function resolveChannelHashesFromEntry(
   entry: ConflictRegistryEntry,
+  channelId: string,
 ): Record<string, string> {
-  if (entry.messaging?.plan) return getCredentialHashesFromPlan(entry.messaging.plan);
+  if (entry.messaging?.plan) {
+    const planHashes = getCredentialHashesFromPlan(entry.messaging.plan, channelId);
+    if (Object.keys(planHashes).length > 0) return planHashes;
+    // Plan exists but no hashes yet for this channel — fall back to legacy
+    // field so matching-token detection is not silently downgraded.
+  }
   return (entry.providerCredentialHashes as Record<string, string>) ?? {};
 }
 
@@ -194,9 +225,10 @@ export function hasStoredChannelInEntry(
  * Determine the conflict reason between `entry`'s stored state and a new
  * channel request, or `null` if there is no conflict.
  *
- * Comparison keys are derived from stored hashes first (authoritative), then
- * from requested hashes if stored is empty (legacy entries with no hashes).
- * This removes the need for concrete channel-constant lookups.
+ * Hash comparison is scoped to the requested channel so that credentials
+ * from other channels on the same sandbox do not produce false positives.
+ * When no hashes are available the comparison falls back to "unknown-token"
+ * (conservative: warn even without definitive proof of sharing).
  */
 export function conflictReasonForRequest(
   entry: ConflictRegistryEntry,
@@ -204,7 +236,7 @@ export function conflictReasonForRequest(
 ): ConflictReason | null {
   if (!hasStoredChannelInEntry(entry, request.channel)) return null;
   const requestedHashes = request.credentialHashes ?? {};
-  const storedHashes = resolveCredentialHashesFromEntry(entry);
+  const storedHashes = resolveChannelHashesFromEntry(entry, request.channel);
   const keys =
     Object.keys(storedHashes).length > 0
       ? Object.keys(storedHashes)
@@ -228,6 +260,8 @@ export function conflictReasonForRequest(
  * Determine the conflict reason between two registry entries sharing `channel`,
  * or `null` if there is no conflict. Returns each pair at most once (the
  * caller is responsible for ordered iteration).
+ *
+ * Hash comparison is scoped to `channel` for plan-backed entries.
  */
 export function conflictReasonForPair(
   channel: string,
@@ -237,8 +271,8 @@ export function conflictReasonForPair(
   if (!hasStoredChannelInEntry(left, channel) || !hasStoredChannelInEntry(right, channel)) {
     return null;
   }
-  const lh = resolveCredentialHashesFromEntry(left);
-  const rh = resolveCredentialHashesFromEntry(right);
+  const lh = resolveChannelHashesFromEntry(left, channel);
+  const rh = resolveChannelHashesFromEntry(right, channel);
   const keys = [...new Set([...Object.keys(lh), ...Object.keys(rh)])];
   if (keys.length === 0) return "unknown-token";
 

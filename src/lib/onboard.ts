@@ -2800,7 +2800,11 @@ async function createSandbox(
   // of truth: credential hashes and active-channel membership are read from
   // plan.credentialBindings rather than from MESSAGING_CHANNELS constants.
   const currentPlan = readMessagingPlanFromEnv();
-  const hasPlanCredentials = currentPlan?.credentialBindings.some((b) => b.credentialHash) ?? false;
+  // Gate on credentialAvailable (set by the compiler) rather than credentialHash
+  // (populated later once the credential-binding engine is updated). Using the
+  // hash field alone would silently skip conflict detection for all current
+  // onboarding paths because the compiler does not yet emit it.
+  const hasPlanCredentials = currentPlan?.credentialBindings.some((b) => b.credentialAvailable) ?? false;
   if (hasPlanCredentials) {
     const { backfillMessagingChannels, findChannelConflictsFromPlan, createMessagingConflictProbe } =
       require("./messaging-conflict") as typeof import("./messaging-conflict");
