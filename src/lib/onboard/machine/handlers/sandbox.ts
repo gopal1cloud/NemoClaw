@@ -65,6 +65,7 @@ export interface SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChann
     readMessagingChannelConfigFromEnv(): MessagingChannelConfig | null;
     readMessagingPlanFromEnv(): SandboxMessagingPlan | null;
     writePlanToEnv(plan: SandboxMessagingPlan): void;
+    getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     selectResourceProfileForSandbox(): Promise<ResourceProfile | null>;
     stopStaleDashboardListenersForSandbox(sandboxes: unknown[], sandboxName: string): void;
@@ -282,15 +283,13 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
         if (envPlan) {
           messagingPlan = envPlan;
         } else {
-          const storedPlan = session?.messagingPlan;
-          const agentName = (agent as { name?: string } | null)?.name;
-          const planMatchesCurrent =
-            storedPlan != null &&
-            storedPlan.sandboxName === sandboxName &&
-            (agentName == null || storedPlan.agent === agentName);
-          if (planMatchesCurrent && storedPlan != null) {
-            deps.writePlanToEnv(storedPlan);
-            messagingPlan = storedPlan;
+          // Registry is always current — updated by stop/start/add/remove.
+          // Works for plain process-restart resumes and cancel-then-resume
+          // when sandbox step had previously completed.
+          const registryPlan = deps.getRegistrySandboxMessagingPlan(sandboxName);
+          if (registryPlan) {
+            deps.writePlanToEnv(registryPlan);
+            messagingPlan = registryPlan;
           }
         }
       }

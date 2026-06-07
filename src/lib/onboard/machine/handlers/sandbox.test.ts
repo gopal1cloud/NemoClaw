@@ -92,6 +92,7 @@ function createDeps(overrides: Partial<SandboxStateOptions<Gpu, Agent, WebSearch
       readMessagingChannelConfigFromEnv: () => null,
       readMessagingPlanFromEnv: () => null,
       writePlanToEnv: () => undefined,
+      getRegistrySandboxMessagingPlan: () => null,
       promptValidatedSandboxName: calls.promptName,
       selectResourceProfileForSandbox: calls.selectResourceProfile,
       stopStaleDashboardListenersForSandbox: calls.stopStale,
@@ -348,32 +349,34 @@ describe("handleSandboxState", () => {
     expect(getSession().messagingPlan).toEqual(mockPlan);
   });
 
-  it("restores matching session plan to env on non-interactive resume when env is empty", async () => {
-    const mockPlan = makeMinimalPlan("my-assistant");
-    const session = createSession({ sandboxName: "my-assistant", messagingChannels: ["telegram"], messagingPlan: mockPlan });
+  it("restores registry plan to env on non-interactive resume when env is empty", async () => {
+    const registryPlan = makeMinimalPlan("my-assistant");
+    const session = createSession({ sandboxName: "my-assistant", messagingChannels: ["telegram"] });
     const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
     const writePlanToEnv = vi.fn();
     const { deps } = createDeps({
       getRecordedMessagingChannelsForResume,
       writePlanToEnv,
       readMessagingPlanFromEnv: () => null,
+      getRegistrySandboxMessagingPlan: () => registryPlan,
     });
 
     await handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "my-assistant" });
 
-    expect(writePlanToEnv).toHaveBeenCalledWith(mockPlan);
+    expect(writePlanToEnv).toHaveBeenCalledWith(registryPlan);
   });
 
-  it("prefers env-staged plan over session plan on non-interactive resume (rebuild path)", async () => {
-    const sessionPlan = makeMinimalPlan("my-assistant");
+  it("prefers env-staged plan over registry plan on non-interactive resume (rebuild path)", async () => {
+    const registryPlan = makeMinimalPlan("my-assistant");
     const rebuiltPlan = makeMinimalPlan("my-assistant");
-    const session = createSession({ sandboxName: "my-assistant", messagingChannels: ["telegram"], messagingPlan: sessionPlan });
+    const session = createSession({ sandboxName: "my-assistant", messagingChannels: ["telegram"] });
     const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
     const writePlanToEnv = vi.fn();
     const { deps, getSession } = createDeps({
       getRecordedMessagingChannelsForResume,
       writePlanToEnv,
       readMessagingPlanFromEnv: () => rebuiltPlan,
+      getRegistrySandboxMessagingPlan: () => registryPlan,
     });
 
     await handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "my-assistant" });
@@ -382,15 +385,15 @@ describe("handleSandboxState", () => {
     expect(getSession().messagingPlan).toEqual(rebuiltPlan);
   });
 
-  it("does not restore plan to env when sandbox name does not match", async () => {
-    const stalePlan = makeMinimalPlan("old-sandbox");
-    const session = createSession({ sandboxName: "my-assistant", messagingChannels: ["telegram"], messagingPlan: stalePlan });
+  it("does not restore plan to env when registry has no entry", async () => {
+    const session = createSession({ sandboxName: "my-assistant", messagingChannels: ["telegram"] });
     const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
     const writePlanToEnv = vi.fn();
     const { deps } = createDeps({
       getRecordedMessagingChannelsForResume,
       writePlanToEnv,
       readMessagingPlanFromEnv: () => null,
+      getRegistrySandboxMessagingPlan: () => null,
     });
 
     await handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "my-assistant" });
