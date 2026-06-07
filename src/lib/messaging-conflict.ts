@@ -8,122 +8,38 @@
 // sandboxes sharing the same token silently break both bridges; see issue #1953.
 //
 // The registry persists which channels each sandbox uses plus a non-secret hash
-// of the provider credential when available. This module detects true same-token
-// overlaps and — because pre-existing sandboxes created before the field was
-// added have no record — can optionally backfill the channel field by probing
-// the live OpenShell gateway for known provider names.
+// of the provider credential when available. This module is a thin public
+// adapter over `src/lib/messaging/applier/conflict-detection.ts`, which holds
+// all core detection logic and the probe factory.
 
 import type { SandboxEntry } from "./state/registry";
-import { getChannelDef, getChannelTokenKeys } from "./sandbox/channels";
+import type { SandboxMessagingPlan } from "./messaging/manifest";
+import {
+  backfillLegacyEntryChannels,
+  createMessagingConflictProbe,
+  detectAllOverlapsInEntries,
+  findConflictsInEntries,
+  planToConflictChannelRequests,
+  type ConflictMatch,
+  type ConflictReason,
+  type MessagingConflictProbe,
+} from "./messaging/applier";
 
-type ProbeResult = "present" | "absent" | "error";
-type ConflictReason = "matching-token" | "unknown-token";
-
-interface ConflictProbe {
-  // Tri-state — "error" is distinct from "absent" so a transient gateway
-  // failure does not get collapsed into "provider not attached" and then
-  // persisted as a bogus empty messagingChannels.
-  providerExists: (name: string) => ProbeResult;
-}
+export { createMessagingConflictProbe } from "./messaging/applier";
 
 interface ConflictRegistry {
   listSandboxes: () => { sandboxes: SandboxEntry[]; defaultSandbox?: string | null };
   updateSandbox: (name: string, updates: Partial<SandboxEntry>) => boolean;
 }
 
-interface RequestedChannel {
-  channel: string;
-  credentialHashes?: Record<string, string | null | undefined>;
-}
+type ChannelRequest = string | { channel: string; credentialHashes?: Record<string, string | null | undefined> };
 
-type ChannelRequest = string | RequestedChannel;
-
-interface Conflict {
-  channel: string;
-  sandbox: string;
-  reason: ConflictReason;
-}
-
-// NemoClaw attaches one OpenShell provider per messaging channel per sandbox.
-// The provider name pattern is established in src/lib/onboard.ts at sandbox
-// creation time; when a sandbox predates the messagingChannels registry field,
-// the live provider is the only record of which channels it uses.
-const PROVIDER_SUFFIXES: Record<string, string> = {
-  telegram: "-telegram-bridge",
-  discord: "-discord-bridge",
-  slack: "-slack-bridge",
-  wechat: "-wechat-bridge",
-};
-
-const KNOWN_CHANNELS = Object.keys(PROVIDER_SUFFIXES);
-
-function normalizeRequest(request: ChannelRequest): RequestedChannel | null {
+function normalizeRequest(request: ChannelRequest) {
   if (typeof request === "string") {
     return request ? { channel: request, credentialHashes: {} } : null;
   }
   if (!request || typeof request.channel !== "string" || request.channel.length === 0) return null;
   return request;
-}
-
-function getTokenKeys(channel: string): string[] {
-  const def = getChannelDef(channel);
-  return def ? getChannelTokenKeys(def) : [];
-}
-
-function hasStoredChannel(entry: SandboxEntry, channel: string): boolean {
-  if (!Array.isArray(entry.messagingChannels) || !entry.messagingChannels.includes(channel)) {
-    return false;
-  }
-  // A `channels stop` sandbox keeps the channel in messagingChannels so a later
-  // `channels start` can recover, but its bridge is paused — the credential is
-  // not in use, so it must not block another sandbox from claiming the token.
-  return !(Array.isArray(entry.disabledChannels) && entry.disabledChannels.includes(channel));
-}
-
-function conflictReasonForRequest(
-  entry: SandboxEntry,
-  request: RequestedChannel,
-): ConflictReason | null {
-  if (!hasStoredChannel(entry, request.channel)) return null;
-  const requestedHashes = request.credentialHashes || {};
-  const storedHashes = entry.providerCredentialHashes || {};
-  const tokenKeys = getTokenKeys(request.channel);
-  const comparisonKeys = tokenKeys.length > 0 ? tokenKeys : Object.keys(requestedHashes);
-  if (comparisonKeys.length === 0) return "unknown-token";
-
-  let sawUnknown = false;
-  for (const key of comparisonKeys) {
-    const requestedHash = requestedHashes[key] || null;
-    const storedHash = storedHashes[key] || null;
-    if (requestedHash && storedHash) {
-      if (requestedHash === storedHash) return "matching-token";
-      continue;
-    }
-    sawUnknown = true;
-  }
-  return sawUnknown ? "unknown-token" : null;
-}
-
-function conflictReasonForPair(
-  channel: string,
-  left: SandboxEntry,
-  right: SandboxEntry,
-): ConflictReason | null {
-  if (!hasStoredChannel(left, channel) || !hasStoredChannel(right, channel)) return null;
-  const tokenKeys = getTokenKeys(channel);
-  if (tokenKeys.length === 0) return "unknown-token";
-
-  let sawUnknown = false;
-  for (const key of tokenKeys) {
-    const leftHash = left.providerCredentialHashes?.[key] || null;
-    const rightHash = right.providerCredentialHashes?.[key] || null;
-    if (leftHash && rightHash) {
-      if (leftHash === rightHash) return "matching-token";
-      continue;
-    }
-    sawUnknown = true;
-  }
-  return sawUnknown ? "unknown-token" : null;
 }
 
 /**
@@ -135,35 +51,12 @@ function conflictReasonForPair(
  */
 export function backfillMessagingChannels(
   registry: ConflictRegistry,
-  probe: ConflictProbe,
+  probe: MessagingConflictProbe,
 ): void {
   const { sandboxes } = registry.listSandboxes();
-  for (const entry of sandboxes) {
-    if (Array.isArray(entry.messagingChannels)) continue;
-    const discovered: string[] = [];
-    let probeFailed = false;
-    for (const channel of KNOWN_CHANNELS) {
-      const providerName = `${entry.name}${PROVIDER_SUFFIXES[channel]}`;
-      let state: ProbeResult;
-      try {
-        state = probe.providerExists(providerName);
-      } catch {
-        state = "error";
-      }
-      if (state === "present") {
-        discovered.push(channel);
-      } else if (state === "error") {
-        // Partial results can't be persisted: writing a partial/empty list
-        // sets messagingChannels, preventing future retries and permanently
-        // hiding real overlaps. Skip the write so we retry on next call.
-        probeFailed = true;
-        break;
-      }
-    }
-    if (!probeFailed) {
-      registry.updateSandbox(entry.name, { messagingChannels: discovered });
-    }
-  }
+  backfillLegacyEntryChannels(sandboxes, probe, (name, channels) => {
+    registry.updateSandbox(name, { messagingChannels: channels });
+  });
 }
 
 /**
@@ -175,20 +68,14 @@ export function findChannelConflicts(
   currentSandbox: string | null,
   enabledChannels: ChannelRequest[],
   registry: ConflictRegistry,
-): Conflict[] {
+): ConflictMatch[] {
   if (!Array.isArray(enabledChannels) || enabledChannels.length === 0) return [];
-  const requests = enabledChannels.map(normalizeRequest).filter((r): r is RequestedChannel => !!r);
+  const requests = enabledChannels.map(normalizeRequest).filter(
+    (r): r is NonNullable<ReturnType<typeof normalizeRequest>> => !!r,
+  );
   if (requests.length === 0) return [];
   const { sandboxes } = registry.listSandboxes();
-  const others = sandboxes.filter(
-    (s) => s.name !== currentSandbox && Array.isArray(s.messagingChannels),
-  );
-  return requests.flatMap((request) =>
-    others.flatMap((sandbox) => {
-      const reason = conflictReasonForRequest(sandbox, request);
-      return reason ? [{ channel: request.channel, sandbox: sandbox.name, reason }] : [];
-    }),
-  );
+  return findConflictsInEntries(currentSandbox, requests, sandboxes);
 }
 
 /**
@@ -202,31 +89,21 @@ export function findAllOverlaps(registry: ConflictRegistry): Array<{
   reason: ConflictReason;
 }> {
   const { sandboxes } = registry.listSandboxes();
-  const byChannel = new Map<string, SandboxEntry[]>();
-  for (const entry of sandboxes) {
-    if (!Array.isArray(entry.messagingChannels)) continue;
-    const disabled = new Set(
-      Array.isArray(entry.disabledChannels) ? entry.disabledChannels : [],
-    );
-    for (const channel of entry.messagingChannels) {
-      if (disabled.has(channel)) continue;
-      const list = byChannel.get(channel) || [];
-      list.push(entry);
-      byChannel.set(channel, list);
-    }
-  }
-  const overlaps: Array<{ channel: string; sandboxes: [string, string]; reason: ConflictReason }> =
-    [];
-  for (const [channel, entries] of byChannel) {
-    if (entries.length < 2) continue;
-    for (let i = 0; i < entries.length; i += 1) {
-      for (let j = i + 1; j < entries.length; j += 1) {
-        const reason = conflictReasonForPair(channel, entries[i], entries[j]);
-        if (reason) {
-          overlaps.push({ channel, sandboxes: [entries[i].name, entries[j].name], reason });
-        }
-      }
-    }
-  }
-  return overlaps;
+  return detectAllOverlapsInEntries(sandboxes);
+}
+
+/**
+ * Plan-driven variant of `findChannelConflicts`. Derives the channel request
+ * list from a compiled `SandboxMessagingPlan` instead of requiring the caller
+ * to build credential hashes from raw channel constants.
+ *
+ * Disabled channels and bindings without a credential hash are excluded
+ * automatically by `planToConflictChannelRequests`.
+ */
+export function findChannelConflictsFromPlan(
+  currentSandbox: string | null,
+  plan: SandboxMessagingPlan,
+  registry: ConflictRegistry,
+): ConflictMatch[] {
+  return findChannelConflicts(currentSandbox, planToConflictChannelRequests(plan), registry);
 }

@@ -915,30 +915,6 @@ function upsertMessagingProviders(
 }
 const providerExistsInGateway = (name: string) => onboardProviders.providerExistsInGateway(name, runOpenshell);
 
-// Tri-state probe factory for messaging-conflict backfill. An upfront liveness
-// check is necessary because `openshell provider get` exits non-zero for both
-// "provider not attached" and "gateway unreachable"; without the liveness
-// gate, a transient gateway failure would be recorded as "no providers" and
-// permanently suppress future backfill retries.
-function makeConflictProbe() {
-  let gatewayAlive: boolean | null = null;
-  const isGatewayAlive = () => {
-    if (gatewayAlive === null) {
-      const result = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-      // runCaptureOpenshell returns stdout/stderr as a single string; treat
-      // any non-empty output as a sign openshell answered. Empty output with
-      // ignoreError typically means the binary failed to produce anything.
-      gatewayAlive = typeof result === "string" && result.length > 0;
-    }
-    return gatewayAlive;
-  };
-  return {
-    providerExists: (name: string) => {
-      if (!isGatewayAlive()) return "error";
-      return providerExistsInGateway(name) ? "present" : "absent";
-    },
-  };
-}
 
 function verifyInferenceRoute(_provider: string, _model: string): void {
   const output = runCaptureOpenshell(["inference", "get"], { ignoreError: true });
@@ -2815,33 +2791,28 @@ async function createSandbox(
   // the sandbox reuse decision so we can detect stale sandboxes that were created
   // without provider attachments (security: prevents legacy raw-env-var leaks).
 
-  // The UI toggle list can include channels the user toggled on but then
-  // skipped the token prompt for. Only channels with a real token will have a
-  // provider attached, so the conflict check must filter out the skipped ones
-  // (otherwise we warn about phantom channels that will never poll).
-  const conflictCheckChannels = Array.isArray(enabledChannels)
-    ? enabledChannels.flatMap((name) => {
-        const def = MESSAGING_CHANNELS.find((c) => c.name === name);
-        if (!def || !def.envKey || !getValidatedMessagingToken(def, def.envKey)) return [];
-        const tokenEnvKeys = getChannelTokenKeys(def);
-        const credentialHashes: Record<string, string> = {};
-        for (const envKey of tokenEnvKeys) {
-          const hash = hashCredential(getValidatedMessagingToken(def, envKey));
-          if (hash) credentialHashes[envKey] = hash;
-        }
-        if (Object.keys(credentialHashes).length === 0) return [];
-        return [{ channel: name, credentialHashes }];
-      })
-    : [];
-
   // Messaging channels like Telegram (getUpdates), Discord (gateway), and Slack
   // (Socket Mode) enforce one consumer per channel credential. Two sandboxes
   // sharing a credential silently break both bridges (see #1953). Warn before
   // we commit.
-  if (conflictCheckChannels.length > 0) {
-    const { backfillMessagingChannels, findChannelConflicts } = require("./messaging-conflict");
-    backfillMessagingChannels(registry, makeConflictProbe());
-    const conflicts = findChannelConflicts(sandboxName, conflictCheckChannels, registry);
+  //
+  // The compiled plan (written to env by setupMessagingChannels) is the source
+  // of truth: credential hashes and active-channel membership are read from
+  // plan.credentialBindings rather than from MESSAGING_CHANNELS constants.
+  const currentPlan = readMessagingPlanFromEnv();
+  const hasPlanCredentials = currentPlan?.credentialBindings.some((b) => b.credentialHash) ?? false;
+  if (hasPlanCredentials) {
+    const { backfillMessagingChannels, findChannelConflictsFromPlan, createMessagingConflictProbe } =
+      require("./messaging-conflict") as typeof import("./messaging-conflict");
+    const probe = createMessagingConflictProbe({
+      checkGatewayLiveness: () => {
+        const result = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+        return typeof result === "string" && result.length > 0;
+      },
+      providerExists: (name) => providerExistsInGateway(name),
+    });
+    backfillMessagingChannels(registry, probe);
+    const conflicts = findChannelConflictsFromPlan(sandboxName, currentPlan!, registry);
     if (conflicts.length > 0) {
       for (const { channel, sandbox, reason } of conflicts) {
         const detail =
