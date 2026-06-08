@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Legacy-field (messagingChannels / disabledChannels) conflict tests.
-// Hash-precise (plan-backed) tests live in src/lib/messaging/applier/conflict-detection-entry.test.ts
+// Hash-precise plan-backed tests are split across conflict-detection-entry, conflict-detection-overlap, and conflict-detection-multi-credential tests
 
 import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxEntry } from "../../state/registry";
+import { makePlan } from "../../../../test/helpers/messaging-conflict-fixtures";
 import {
   backfillMessagingChannels,
   findAllOverlaps,
@@ -182,6 +183,21 @@ describe("backfillMessagingChannels", () => {
 
   it("leaves entries with existing messagingChannels alone", () => {
     const registry = makeRegistry([{ name: "alice", messagingChannels: ["telegram"] }]);
+    const probe: MessagingConflictProbe = {
+      providerExists: vi.fn<ProviderExists>(() => "present"),
+    };
+    backfillMessagingChannels(registry, probe);
+    expect(registry.updateSandbox).not.toHaveBeenCalled();
+    expect(probe.providerExists).not.toHaveBeenCalled();
+  });
+
+  it("skips plan-backed entries without legacy messagingChannels", () => {
+    const registry = makeRegistry([
+      {
+        name: "alice",
+        messaging: { schemaVersion: 1, plan: makePlan("alice") },
+      } as unknown as SandboxEntry,
+    ]);
     const probe: MessagingConflictProbe = {
       providerExists: vi.fn<ProviderExists>(() => "present"),
     };
