@@ -1,0 +1,18 @@
+{
+  "fix_description": "Issue #4973 reported that the NemoHermes onboarding menu shows only 10 inference options and collapses the 9 Hermes-only vendors (Moonshot, Z-AI, MiniMax, Qwen, Xiaomi, Tencent, StepFun, xAI, Arcee) into a single 'Hermes Provider' entry, with no 'Select your inference provider:' header. Root-cause investigation confirmed the 10-entry menu is intentional by design: the Hermes agent manifest (agents/hermes/manifest.yaml) declares exactly one inference provider_option (hermesProvider), which routes through a single host OpenShell provider registered against Nous Research. The 9 'providers' the reporter expected are not separate inference providers at all — they are model vendor families within HERMES_PROVIDER_MODEL_OPTIONS (src/lib/inference/config.ts), surfaced at the model-selection step that follows provider selection. This matches the issue's own suggested-fix path #2 (consolidation is intentional -> align documentation). Fix: (1) clarified docs/inference/inference-options.mdx to state the single 'Hermes Provider' menu entry is by design and to enumerate all supported vendor families surfaced at the model step; (2) added a focused guard test in src/lib/inference/config.test.ts asserting every Hermes-only vendor family remains represented in HERMES_PROVIDER_MODEL_OPTIONS. Deliberately did NOT fabricate 9 fake top-level providers (no real endpoints/credentials; contradicts the manifest-driven design) nor rename the shared 'Inference options:' header (a global UX string used by OpenClaw onboarding too, out of scope for a Hermes-specific issue).",
+  "verification_steps": [
+    "Built the CLI (npm run build:cli) so the test's dist/ import is current.",
+    "Ran the focused unit test: npx vitest run src/lib/inference/config.test.ts -> 34 passed (1 file), including the new 'surfaces every Hermes-supported vendor family' test.",
+    "Linted the changed test file: npx biome check src/lib/inference/config.test.ts -> no issues.",
+    "Confirmed via grep that 'Inference options:' is referenced in exactly one source location (src/lib/onboard.ts) with no test/doc coupling, and that 'Select your inference provider' does not exist anywhere — supporting the scope decision to leave the shared header unchanged."
+  ],
+  "commands_run": [
+    "grep -rinE 'moonshot|z-ai|minimax|qwen|xiaomi|tencent|stepfun|xai|arcee' src/ nemoclaw/src/ agents/",
+    "grep -rn 'DEFAULT_HERMES_PROVIDER_MODEL|hermes-provider|hermesProvider' src/lib/inference/",
+    "grep -rn 'Inference options' src/ test/ nemoclaw/ docs/",
+    "grep -rn 'Select your inference provider' .",
+    "npm run build:cli",
+    "npx vitest run src/lib/inference/config.test.ts",
+    "npx biome check src/lib/inference/config.test.ts"
+  ]
+}

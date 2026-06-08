@@ -54,6 +54,30 @@ describe("inference selection config", () => {
     expect(HERMES_PROVIDER_MODEL_OPTIONS.length).toBeGreaterThan(10);
   });
 
+  it("surfaces every Hermes-supported vendor family as a Hermes Provider model (GH #4973)", () => {
+    // The onboarding wizard lists "Hermes Provider" as a single inference-menu
+    // entry by design; the individual vendor families are surfaced at the
+    // model selection step, not as separate provider-menu items. Guard that
+    // each documented Hermes-only vendor remains represented in the catalog so
+    // the breadth advertised in docs/inference/inference-options.mdx holds.
+    const vendorPrefixes = HERMES_PROVIDER_MODEL_OPTIONS.map(
+      (model: string) => model.split("/", 1)[0],
+    );
+    for (const vendor of [
+      "moonshotai", // Moonshot
+      "z-ai", // Z-AI
+      "minimax", // MiniMax
+      "qwen", // Qwen
+      "xiaomi", // Xiaomi
+      "tencent", // Tencent
+      "stepfun", // StepFun
+      "x-ai", // xAI
+      "arcee-ai", // Arcee
+    ]) {
+      expect(vendorPrefixes).toContain(vendor);
+    }
+  });
+
   it("maps ollama-local to the sandbox inference route and default model", () => {
     // Local Ollama uses a dedicated credential env so the sandbox-side
     // config never points at OPENAI_API_KEY (GH #2519).
