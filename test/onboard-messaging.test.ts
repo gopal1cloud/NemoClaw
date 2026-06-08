@@ -112,7 +112,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox, setupMessagingChannels } = require(${onboardPath});
+const { createSandbox, setupMessagingChannels } = require(${onboardPath}); const readMessagingPlan = () => JSON.parse(Buffer.from(process.env.NEMOCLAW_MESSAGING_PLAN_B64, "base64").toString("utf8"));
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
@@ -124,7 +124,7 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
   process.env.KUBECONFIG = "/tmp/host-kubeconfig";
   process.env.SSH_AUTH_SOCK = "/tmp/host-ssh-agent.sock";
   await setupMessagingChannels(null, null, "my-assistant");
-  const sandboxName = await createSandbox(null, "gpt-5.4");
+  const sandboxName = await createSandbox(null, "gpt-5.4", undefined, null, null, null, null, null, null, null, null, null, [], readMessagingPlan());
   console.log(JSON.stringify({
     sandboxName,
     commands,
@@ -392,7 +392,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox, setupMessagingChannels } = require(${onboardPath});
+const { createSandbox, setupMessagingChannels } = require(${onboardPath}); const readMessagingPlan = () => JSON.parse(Buffer.from(process.env.NEMOCLAW_MESSAGING_PLAN_B64, "base64").toString("utf8"));
 (async () => {
   for (const key of nonSlackMessagingEnvKeys) delete process.env[key];
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
@@ -408,7 +408,7 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
     null,
     null,
     ${customDockerfileArg},
-    loadAgent("hermes"),
+    loadAgent("hermes"), null, null, null, [], readMessagingPlan(),
   );
   const createCommand = commands.find((entry) => entry.command.includes("sandbox create"));
   const parsed = YAML.parse(createCommand?.policyContent || "") || {};
@@ -569,7 +569,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox, setupMessagingChannels } = require(${onboardPath});
+const { createSandbox, setupMessagingChannels } = require(${onboardPath}); const readMessagingPlan = () => JSON.parse(Buffer.from(process.env.NEMOCLAW_MESSAGING_PLAN_B64, "base64").toString("utf8"));
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw"; process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1"; delete process.env.TELEGRAM_BOT_TOKEN;
   process.env.DISCORD_BOT_TOKEN = "test-discord-token-value"; process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token-value"; process.env.SLACK_APP_TOKEN = "xapp-test-slack-app-token-value"; await setupMessagingChannels(null, ["discord", "slack"], "my-assistant");
@@ -578,7 +578,7 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
   delete process.env.SLACK_APP_TOKEN;
   delete process.env.TELEGRAM_BOT_TOKEN;
   const sandboxName = await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["discord", "slack"],
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["discord", "slack"], null, null, null, null, null, [], readMessagingPlan(),
   );
   console.log(JSON.stringify({ sandboxName, commands, registerCalls }));
 })().catch((error) => {
@@ -891,7 +891,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox, setupMessagingChannels } = require(${onboardPath});
+const { createSandbox, setupMessagingChannels } = require(${onboardPath}); const readMessagingPlan = () => JSON.parse(Buffer.from(process.env.NEMOCLAW_MESSAGING_PLAN_B64, "base64").toString("utf8"));
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
@@ -901,7 +901,7 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
     }
   } await setupMessagingChannels(null, ["whatsapp"], "my-assistant");
   const sandboxName = await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["whatsapp"],
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["whatsapp"], null, null, null, null, null, [], readMessagingPlan(),
   );
   console.log(JSON.stringify({ sandboxName, commands, registerCalls }));
 })().catch((error) => {
@@ -1173,13 +1173,13 @@ registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
-const { createSandbox, setupMessagingChannels } = require(${onboardPath});
+const { createSandbox, setupMessagingChannels } = require(${onboardPath}); const readMessagingPlan = () => JSON.parse(Buffer.from(process.env.NEMOCLAW_MESSAGING_PLAN_B64, "base64").toString("utf8"));
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   delete process.env.SLACK_BOT_TOKEN; delete process.env.SLACK_APP_TOKEN; delete process.env.TELEGRAM_BOT_TOKEN;
   process.env.DISCORD_BOT_TOKEN = "test-discord-token-value"; await setupMessagingChannels(null, ["discord"], "my-assistant");
-  await createSandbox(null, "gpt-5.4");
+  await createSandbox(null, "gpt-5.4", undefined, null, null, null, null, null, null, null, null, null, [], readMessagingPlan());
   // Should not reach here
   console.log("ERROR_DID_NOT_EXIT");
 })().catch((error) => {
@@ -1245,14 +1245,14 @@ runner.runCapture = (command) => {
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
 
-const { createSandbox, setupMessagingChannels } = require(${onboardPath});
+const { createSandbox, setupMessagingChannels } = require(${onboardPath}); const readMessagingPlan = () => JSON.parse(Buffer.from(process.env.NEMOCLAW_MESSAGING_PLAN_B64, "base64").toString("utf8"));
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw"; process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1"; delete process.env.TELEGRAM_BOT_TOKEN;
   process.env.DISCORD_BOT_TOKEN = "test-discord-token";
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token";
   process.env.SLACK_APP_TOKEN = "xapp-test-slack-token"; await setupMessagingChannels(null, ["discord", "slack"], "my-assistant");
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, [], readMessagingPlan());
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
   console.error(error);
@@ -1379,7 +1379,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox, setupMessagingChannels } = require(${onboardPath});
+const { createSandbox, setupMessagingChannels } = require(${onboardPath}); const readMessagingPlan = () => JSON.parse(Buffer.from(process.env.NEMOCLAW_MESSAGING_PLAN_B64, "base64").toString("utf8"));
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw"; process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
@@ -1389,7 +1389,7 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token-value";
   // Only enable telegram — discord and slack should be filtered out
   const sandboxName = await createSandbox(
-    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["telegram"],
+    null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["telegram"], null, null, null, null, null, [], readMessagingPlan(),
   );
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {

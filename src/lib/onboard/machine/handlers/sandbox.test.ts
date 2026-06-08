@@ -3,25 +3,26 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { createBuiltInChannelManifestRegistry } from "../../../messaging/channels";
+import { MessagingWorkflowPlanner } from "../../../messaging/compiler";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
 import { handleSandboxState, type SandboxStateOptions } from "./sandbox";
 
-function makeMinimalPlan(sandboxName: string, agent = "openclaw"): SandboxMessagingPlan {
-  return {
-    schemaVersion: 1,
+async function makeMinimalPlan(
+  sandboxName: string,
+  agent: SandboxMessagingPlan["agent"] = "openclaw",
+): Promise<SandboxMessagingPlan> {
+  return new MessagingWorkflowPlanner(createBuiltInChannelManifestRegistry()).buildPlan({
     sandboxName,
-    agent: agent as SandboxMessagingPlan["agent"],
+    agent,
     workflow: "onboard",
-    channels: [],
+    isInteractive: false,
+    configuredChannels: ["telegram"],
     disabledChannels: [],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
+    credentialAvailability: { TELEGRAM_BOT_TOKEN: true },
+    credentialHashes: { TELEGRAM_BOT_TOKEN: "telegram-hash" },
+  });
 }
 
 type Gpu = { type: string } | null;
@@ -93,6 +94,7 @@ function createDeps(overrides: Partial<SandboxStateOptions<Gpu, Agent, WebSearch
       readMessagingPlanFromEnv: () => null,
       writePlanToEnv: () => undefined,
       getRegistrySandboxMessagingPlan: () => null,
+      getDisabledMessagingChannels: () => [],
       promptValidatedSandboxName: calls.promptName,
       selectResourceProfileForSandbox: calls.selectResourceProfile,
       stopStaleDashboardListenersForSandbox: calls.stopStale,
@@ -167,6 +169,7 @@ describe("handleSandboxState", () => {
       { sandboxGpuEnabled: false, mode: "0" },
       null,
       [],
+      null,
     );
     expect(calls.updateSandbox).toHaveBeenCalledWith("my-assistant", expect.objectContaining({ model: "model", provider: "provider" }));
     // Default-marking is deferred to finalization (#4614) — the sandbox step must not set it.
@@ -318,6 +321,7 @@ describe("handleSandboxState", () => {
       { sandboxGpuEnabled: false, mode: "0" },
       null,
       [],
+      null,
     );
     expect(result.webSearchConfig).toBeNull();
   });
@@ -339,8 +343,9 @@ describe("handleSandboxState", () => {
   });
 
   it("persists plan from env into session after fresh messaging setup", async () => {
-    const mockPlan = makeMinimalPlan("my-assistant");
+    const mockPlan = await makeMinimalPlan("my-assistant");
     const { deps, getSession } = createDeps({
+      setupMessagingChannels: vi.fn(async () => ["telegram"]),
       readMessagingPlanFromEnv: () => mockPlan,
     });
 
@@ -350,7 +355,7 @@ describe("handleSandboxState", () => {
   });
 
   it("restores registry plan to env on non-interactive resume when env is empty", async () => {
-    const registryPlan = makeMinimalPlan("my-assistant");
+    const registryPlan = await makeMinimalPlan("my-assistant");
     const session = createSession({ sandboxName: "my-assistant", messagingChannels: ["telegram"] });
     const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
     const writePlanToEnv = vi.fn();
@@ -367,8 +372,8 @@ describe("handleSandboxState", () => {
   });
 
   it("prefers env-staged plan over registry plan on non-interactive resume (rebuild path)", async () => {
-    const registryPlan = makeMinimalPlan("my-assistant");
-    const rebuiltPlan = makeMinimalPlan("my-assistant");
+    const registryPlan = await makeMinimalPlan("my-assistant");
+    const rebuiltPlan = await makeMinimalPlan("my-assistant");
     const session = createSession({ sandboxName: "my-assistant", messagingChannels: ["telegram"] });
     const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
     const writePlanToEnv = vi.fn();

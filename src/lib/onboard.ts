@@ -91,8 +91,6 @@ const {
   MessagingSetupApplier,
   enabledPlanChannels,
   filterEnabledPlanEntries,
-  toMessagingAgentId,
-  validateBuiltInSandboxMessagingPlan,
 }: typeof import("./messaging") = require("./messaging");
 const {
   clearAgentScopedResumeState,
@@ -884,42 +882,6 @@ function upsertCompatibilityProviders(
 
 function resolveMessagingProviderCredential(envKey: string): string | null {
   return normalizeCredentialValue(process.env[envKey]) || getCredential(envKey) || null;
-}
-
-function selectValidatedMessagingPlan(
-  sandboxName: string,
-  agent: AgentDefinition | null,
-  configuredChannels: readonly string[] | null,
-  disabledChannels: readonly string[],
-): SandboxMessagingPlan | null {
-  const expectedAgent = toMessagingAgentId(agent);
-  const validate = (plan: SandboxMessagingPlan, source: "environment" | "registry") => {
-    const result = validateBuiltInSandboxMessagingPlan(plan, {
-      sandboxName,
-      agent: expectedAgent,
-      configuredChannels,
-      disabledChannels,
-    });
-    if (result.ok) return plan;
-    note(
-      `  Ignoring ${source} messaging plan for '${sandboxName}': ${result.reason ?? "validation failed"}.`,
-    );
-    return null;
-  };
-
-  try {
-    const envPlan = readMessagingPlanFromEnv();
-    if (envPlan) {
-      const selected = validate(envPlan, "environment");
-      if (selected) return selected;
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    note(`  Ignoring environment messaging plan for '${sandboxName}': ${message}.`);
-  }
-
-  const registryPlan = getRegistrySandboxMessagingPlan(sandboxName);
-  return registryPlan ? validate(registryPlan, "registry") : null;
 }
 
 function applyMessagingPlanCredentials(
@@ -2753,6 +2715,7 @@ async function createSandbox(
   sandboxGpuConfig: SandboxGpuConfig | null = null,
   resourceProfile: import("./resources-cmd").ResourceProfile | null = null,
   hermesToolGateways: string[] = [],
+  messagingPlan: SandboxMessagingPlan | null = null,
 ) {
   step(6, 8, "Creating sandbox");
 
@@ -2822,10 +2785,6 @@ async function createSandbox(
     sandboxName,
   );
 
-  // Check whether messaging providers will be needed — this must happen before
-  // the sandbox reuse decision so we can detect stale sandboxes that were created
-  // without provider attachments (security: prevents legacy raw-env-var leaks).
-
   // Messaging channels like Telegram (getUpdates), Discord (gateway), and Slack
   // (Socket Mode) enforce one consumer per channel credential. Two sandboxes
   // sharing a credential silently break both bridges (see #1953). Warn before
@@ -2833,17 +2792,10 @@ async function createSandbox(
   //
   // The compiled plan is the source of truth: credential hashes and
   // active-channel membership are read from plan.credentialBindings rather than
-  // from MESSAGING_CHANNELS constants. Onboard stages the plan in env during
-  // setupMessagingChannels; rebuild/resume can also consume the persisted plan
-  // from the sandbox registry entry. Validate sandbox identity before trusting
-  // the env plan: a stale plan from a prior run of a different sandbox must not
-  // gate or bypass conflict detection for the current sandbox creation.
-  const currentPlan = selectValidatedMessagingPlan(
-    sandboxName,
-    agent,
-    enabledChannels,
-    disabledChannels,
-  );
+  // from MESSAGING_CHANNELS constants. The onboard state handler validates any
+  // env/registry plan before passing it here; createSandbox only consumes that
+  // validated plan.
+  const currentPlan = messagingPlan?.sandboxName === sandboxName ? messagingPlan : null;
   const activeMessagingChannels = currentPlan
     ? enabledPlanChannels(currentPlan).map((channel) => channel.channelId)
     : [];
@@ -3674,9 +3626,10 @@ async function createSandbox(
   const resolvedImageTag = resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
 
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
-  const plannedMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
   const messagingState =
-    plannedMessagingState?.plan.sandboxName === sandboxName ? plannedMessagingState : undefined;
+    currentPlan?.sandboxName === sandboxName
+      ? MessagingHostStateApplier.buildStateFromPlan(currentPlan)
+      : undefined;
   registry.registerSandbox({
     name: sandboxName,
     model: model || null,
@@ -6419,6 +6372,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         readMessagingPlanFromEnv,
         writePlanToEnv,
         getRegistrySandboxMessagingPlan,
+        getDisabledMessagingChannels: (name) =>
+          require("./onboard/channel-state").resolveDisabledChannels(name),
         promptValidatedSandboxName,
         selectResourceProfileForSandbox: () => selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
         stopStaleDashboardListenersForSandbox,

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
+import { selectValidatedMessagingPlanForSandbox } from "../../messaging-channel-setup";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
 import { withSandboxPhaseTrace } from "../../tracing";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
@@ -66,6 +67,7 @@ export interface SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChann
     readMessagingPlanFromEnv(): SandboxMessagingPlan | null;
     writePlanToEnv(plan: SandboxMessagingPlan): void;
     getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null;
+    getDisabledMessagingChannels(sandboxName: string): string[];
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     selectResourceProfileForSandbox(): Promise<ResourceProfile | null>;
     stopStaleDashboardListenersForSandbox(sandboxes: unknown[], sandboxName: string): void;
@@ -84,6 +86,7 @@ export interface SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChann
       sandboxGpuConfig: SandboxGpuConfig,
       resourceProfile: ResourceProfile | null,
       hermesToolGateways: string[],
+      messagingPlan: SandboxMessagingPlan | null,
     ): Promise<string>;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
     getSandboxAgentRegistryFields(agent: Agent, agentVersionKnown: boolean): Record<string, unknown>;
@@ -267,6 +270,7 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
     await deps.startRecordedStep("sandbox", { provider, model });
     if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
     const recordedMessagingChannels = deps.getRecordedMessagingChannelsForResume(resume, session, sandboxName);
+    const disabledMessagingChannels = deps.getDisabledMessagingChannels(sandboxName);
     let messagingPlan: SandboxMessagingPlan | null = null;
     if (recordedMessagingChannels) {
       selectedMessagingChannels = recordedMessagingChannels;
@@ -279,26 +283,27 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
         // disabled state and reactivate stopped channels after rebuild.
         // Only restore the session plan when the env is empty, i.e. for plain
         // process-restart resumes where no external caller staged a plan.
-        const envPlan = deps.readMessagingPlanFromEnv();
-        if (envPlan) {
-          messagingPlan = envPlan;
-        } else {
-          // Registry is always current — updated by stop/start/add/remove.
-          // Works for plain process-restart resumes and cancel-then-resume
-          // when sandbox step had previously completed.
-          const registryPlan = deps.getRegistrySandboxMessagingPlan(sandboxName);
-          if (registryPlan) {
-            deps.writePlanToEnv(registryPlan);
-            messagingPlan = registryPlan;
-          }
-        }
+        messagingPlan = selectValidatedMessagingPlanForSandbox(deps, {
+          sandboxName,
+          agent,
+          selectedMessagingChannels,
+          disabledMessagingChannels,
+        });
       }
     } else {
       const existing = sandboxName
         ? deps.getSandboxMessagingChannels(sandboxName) ?? session?.messagingChannels ?? null
         : session?.messagingChannels ?? null;
       selectedMessagingChannels = await deps.setupMessagingChannels(agent, existing, sandboxName);
-      messagingPlan = deps.readMessagingPlanFromEnv();
+      if (selectedMessagingChannels.length > 0) {
+        messagingPlan = selectValidatedMessagingPlanForSandbox(deps, {
+          sandboxName,
+          agent,
+          selectedMessagingChannels,
+          disabledMessagingChannels,
+          skipRegistryFallback: true,
+        });
+      }
     }
     const messagingChannelConfig = deps.readMessagingChannelConfigFromEnv();
     session = deps.updateSession((current) => {
@@ -331,6 +336,7 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
           sandboxGpuConfig,
           resourceProfile,
           hermesToolGateways,
+          messagingPlan,
         ),
     );
     webSearchConfig = nextWebSearchConfig;

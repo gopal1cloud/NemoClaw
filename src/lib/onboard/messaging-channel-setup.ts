@@ -17,6 +17,7 @@ import {
   resolveMessagingManifestSeed,
   type SandboxMessagingPlan,
   toMessagingAgentId,
+  validateBuiltInSandboxMessagingPlan,
 } from "../messaging";
 export { MessagingHostStateApplier };
 import { resolveMessagingChannelConfigEnvValue } from "../messaging-channel-config";
@@ -277,6 +278,71 @@ export function writePlanToEnv(plan: SandboxMessagingPlan): void {
 
 export function getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null {
   return registry.getSandbox(sandboxName)?.messaging?.plan ?? null;
+}
+
+export interface MessagingPlanSelectionDeps {
+  note(message: string): void;
+  readMessagingPlanFromEnv(): SandboxMessagingPlan | null;
+  writePlanToEnv(plan: SandboxMessagingPlan): void;
+  getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null;
+}
+
+export function selectValidatedMessagingPlanForSandbox<Agent>(
+  deps: MessagingPlanSelectionDeps,
+  options: {
+    readonly sandboxName: string;
+    readonly agent: Agent;
+    readonly selectedMessagingChannels: readonly string[];
+    readonly disabledMessagingChannels: readonly string[];
+    readonly skipRegistryFallback?: boolean;
+  },
+): SandboxMessagingPlan | null {
+  const context = {
+    sandboxName: options.sandboxName,
+    agent: toMessagingAgentId(options.agent as { readonly name?: string } | null | undefined),
+    configuredChannels: options.selectedMessagingChannels,
+    disabledChannels: options.disabledMessagingChannels,
+  };
+  const envPlan = readMessagingPlanFromEnvSafely(deps, options.sandboxName);
+  const validEnvPlan = envPlan
+    ? validateSelectedMessagingPlan(deps, envPlan, "environment", context)
+    : null;
+  if (validEnvPlan) return validEnvPlan;
+  if (options.skipRegistryFallback) return null;
+
+  const registryPlan = deps.getRegistrySandboxMessagingPlan(options.sandboxName);
+  const validRegistryPlan = registryPlan
+    ? validateSelectedMessagingPlan(deps, registryPlan, "registry", context)
+    : null;
+  if (validRegistryPlan) deps.writePlanToEnv(validRegistryPlan);
+  return validRegistryPlan;
+}
+
+function readMessagingPlanFromEnvSafely(
+  deps: MessagingPlanSelectionDeps,
+  sandboxName: string,
+): SandboxMessagingPlan | null {
+  try {
+    return deps.readMessagingPlanFromEnv();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    deps.note(`  Ignoring environment messaging plan for '${sandboxName}': ${message}.`);
+    return null;
+  }
+}
+
+function validateSelectedMessagingPlan(
+  deps: MessagingPlanSelectionDeps,
+  plan: SandboxMessagingPlan,
+  source: "environment" | "registry",
+  context: Parameters<typeof validateBuiltInSandboxMessagingPlan>[1],
+): SandboxMessagingPlan | null {
+  const result = validateBuiltInSandboxMessagingPlan(plan, context);
+  if (result.ok) return plan;
+  deps.note(
+    `  Ignoring ${source} messaging plan for '${context.sandboxName}': ${result.reason ?? "validation failed"}.`,
+  );
+  return null;
 }
 
 function resolveMessagingSetupSandboxName(options: SetupSelectedMessagingChannelsOptions): string {
