@@ -113,7 +113,6 @@ childProcess.spawn = (...args) => {
 };
 
 const { createSandbox, setupMessagingChannels } = require(${onboardPath});
-
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
@@ -393,14 +392,13 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath});
-
+const { createSandbox, setupMessagingChannels } = require(${onboardPath});
 (async () => {
   for (const key of nonSlackMessagingEnvKeys) delete process.env[key];
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  process.env.NEMOCLAW_AGENT = "hermes";
+  process.env.NEMOCLAW_AGENT = "hermes"; process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token-value";
-  process.env.SLACK_APP_TOKEN = "xapp-test-slack-app-token-value";
+  process.env.SLACK_APP_TOKEN = "xapp-test-slack-app-token-value"; await setupMessagingChannels(loadAgent("hermes"), ["slack"], "my-assistant");
   const sandboxName = await createSandbox(
     null,
     "gpt-5.4",
@@ -571,10 +569,10 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath});
-
+const { createSandbox, setupMessagingChannels } = require(${onboardPath});
 (async () => {
-  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.OPENSHELL_GATEWAY = "nemoclaw"; process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1"; delete process.env.TELEGRAM_BOT_TOKEN;
+  process.env.DISCORD_BOT_TOKEN = "test-discord-token-value"; process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token-value"; process.env.SLACK_APP_TOKEN = "xapp-test-slack-app-token-value"; await setupMessagingChannels(null, ["discord", "slack"], "my-assistant");
   delete process.env.DISCORD_BOT_TOKEN;
   delete process.env.SLACK_BOT_TOKEN;
   delete process.env.SLACK_APP_TOKEN;
@@ -893,7 +891,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath});
+const { createSandbox, setupMessagingChannels } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
@@ -901,7 +899,7 @@ const { createSandbox } = require(${onboardPath});
     if (key.startsWith("DISCORD_") || key.startsWith("SLACK_") || key.startsWith("TELEGRAM_")) {
       delete process.env[key];
     }
-  }
+  } await setupMessagingChannels(null, ["whatsapp"], "my-assistant");
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["whatsapp"],
   );
@@ -1175,11 +1173,12 @@ registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
-const { createSandbox } = require(${onboardPath});
+const { createSandbox, setupMessagingChannels } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  process.env.DISCORD_BOT_TOKEN = "test-discord-token-value";
+  delete process.env.SLACK_BOT_TOKEN; delete process.env.SLACK_APP_TOKEN; delete process.env.TELEGRAM_BOT_TOKEN;
+  process.env.DISCORD_BOT_TOKEN = "test-discord-token-value"; await setupMessagingChannels(null, ["discord"], "my-assistant");
   await createSandbox(null, "gpt-5.4");
   // Should not reach here
   console.log("ERROR_DID_NOT_EXIT");
@@ -1246,13 +1245,13 @@ runner.runCapture = (command) => {
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
 
-const { createSandbox } = require(${onboardPath});
+const { createSandbox, setupMessagingChannels } = require(${onboardPath});
 
 (async () => {
-  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.OPENSHELL_GATEWAY = "nemoclaw"; process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1"; delete process.env.TELEGRAM_BOT_TOKEN;
   process.env.DISCORD_BOT_TOKEN = "test-discord-token";
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token";
-  process.env.SLACK_APP_TOKEN = "xapp-test-slack-token";
+  process.env.SLACK_APP_TOKEN = "xapp-test-slack-token"; await setupMessagingChannels(null, ["discord", "slack"], "my-assistant");
   const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
@@ -1380,13 +1379,14 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath});
+const { createSandbox, setupMessagingChannels } = require(${onboardPath});
 
 (async () => {
-  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.OPENSHELL_GATEWAY = "nemoclaw"; process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
+  delete process.env.DISCORD_BOT_TOKEN; delete process.env.SLACK_BOT_TOKEN; delete process.env.SLACK_APP_TOKEN;
+  process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-telegram-token"; await setupMessagingChannels(null, ["telegram"], "my-assistant");
   process.env.DISCORD_BOT_TOKEN = "test-discord-token-value";
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token-value";
-  process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-telegram-token";
   // Only enable telegram — discord and slack should be filtered out
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["telegram"],
@@ -1520,7 +1520,7 @@ childProcess.spawn = (...args) => {
 const { createSandbox } = require(${onboardPath});
 
 (async () => {
-  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.OPENSHELL_GATEWAY = "nemoclaw"; delete process.env.NEMOCLAW_MESSAGING_PLAN_B64;
   process.env.DISCORD_BOT_TOKEN = "test-discord-token-value";
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token-value";
   process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-telegram-token";

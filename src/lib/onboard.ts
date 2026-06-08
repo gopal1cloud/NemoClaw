@@ -86,7 +86,7 @@ const {
   hasWechatConfigDrift,
   toSessionWechatConfig,
 } = require("./onboard/wechat-config") as typeof import("./onboard/wechat-config");
-const { setupMessagingChannels: setupMessagingChannelsImpl, readMessagingPlanFromEnv, writePlanToEnv, getRegistrySandboxMessagingPlan, buildMessagingPlanForSandbox, MessagingHostStateApplier } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
+const { setupMessagingChannels: setupMessagingChannelsImpl, readMessagingPlanFromEnv, writePlanToEnv, getRegistrySandboxMessagingPlan, MessagingHostStateApplier } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
 const {
   MessagingSetupApplier,
   enabledPlanChannels,
@@ -2793,24 +2793,16 @@ async function createSandbox(
   // sharing a credential silently break both bridges (see #1953). Warn before
   // we commit.
   //
-  // The compiled plan (written to env by setupMessagingChannels) is the source
-  // of truth: credential hashes and active-channel membership are read from
-  // plan.credentialBindings rather than from MESSAGING_CHANNELS constants.
-  // Validate sandbox identity before trusting the env plan: a stale plan from a
-  // prior run of a different sandbox must not gate or bypass conflict detection
-  // for the current sandbox creation.
+  // The compiled plan is the source of truth: credential hashes and
+  // active-channel membership are read from plan.credentialBindings rather than
+  // from MESSAGING_CHANNELS constants. Onboard stages the plan in env during
+  // setupMessagingChannels; rebuild/resume can also consume the persisted plan
+  // from the sandbox registry entry. Validate sandbox identity before trusting
+  // the env plan: a stale plan from a prior run of a different sandbox must not
+  // gate or bypass conflict detection for the current sandbox creation.
   const envPlan = readMessagingPlanFromEnv();
-  let currentPlan = envPlan?.sandboxName === sandboxName ? envPlan : null;
-  if (!currentPlan) {
-    currentPlan = await buildMessagingPlanForSandbox({
-      agent,
-      sandboxName,
-      configuredChannels: enabledChannels,
-      disabledChannels,
-      providerExists: providerExistsInGateway,
-    });
-    if (currentPlan) writePlanToEnv(currentPlan);
-  }
+  const currentPlan =
+    envPlan?.sandboxName === sandboxName ? envPlan : getRegistrySandboxMessagingPlan(sandboxName);
   const activeMessagingChannels = currentPlan
     ? enabledPlanChannels(currentPlan).map((channel) => channel.channelId)
     : [];
