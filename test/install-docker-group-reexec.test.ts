@@ -101,7 +101,9 @@ function runEnsureDocker(env: Record<string, string>, installerArgs: string[]): 
     # guidance text emitted by the legacy fallback path.
     info() { printf '%s\n' "$*"; }
     warn() { :; }
-    error() { return 1; }
+    # Mirror the real error(): print to stderr and exit non-zero. Tests rely
+    # on this to assert the #4942 non-interactive failure exit code.
+    error() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
     is_wsl_host() { return 1; }
     uname() { printf 'Linux\n'; }
     verify_downloaded_script() { :; }
@@ -162,9 +164,7 @@ describeLinux("install.sh ensure_docker — #4414 non-interactive self re-exec",
     // /var/run/docker.sock is still unreachable (daemon down, AppArmor,
     // unusual mount). Without the env-var guard, the re-entered installer
     // would loop into another `exec sg docker -c …`, swallow stderr, and
-    // burn CPU. The guard must demote the second pass to the legacy
-    // "newgrp docker / re-curl" path with a clean exit 0 so the user sees
-    // an actionable instruction instead of a hang.
+    // burn CPU. The guard must demote the second pass out of the sg(1) path.
     const outcome = runEnsureDocker(
       {
         NEMOCLAW_NON_INTERACTIVE: "1",
@@ -174,10 +174,45 @@ describeLinux("install.sh ensure_docker — #4414 non-interactive self re-exec",
       ["--non-interactive", "--yes-i-accept-third-party-software"],
     );
     expect(outcome.sgArgs.length).toBe(0);
+  });
+
+  it("exits non-zero in non-interactive mode when the loop guard blocks re-exec (#4942)", () => {
+    // #4942: when the automated sg(1) re-exec cannot restore docker access
+    // (loop guard already set, here standing in for any fall-through), a
+    // non-interactive install MUST NOT print "newgrp docker / re-curl"
+    // instructions and exit 0 — that strands CI/CD pipelines, which detect
+    // failure only via a non-zero exit code. It must fail loudly instead.
+    const outcome = runEnsureDocker(
+      {
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DOCKER_GROUP_REACTIVATED: "1",
+      },
+      ["--non-interactive", "--yes-i-accept-third-party-software"],
+    );
+    expect(outcome.sgArgs.length).toBe(0);
+    // Non-zero exit so CI/CD can detect the incomplete install.
+    expect(outcome.status).not.toBe(0);
+    // The actionable manual recovery steps still appear — on stderr, as an
+    // error — but not as interactive "do this then re-run" instructions.
+    expect(outcome.stderr).toContain("did not complete");
+    expect(outcome.stderr).toMatch(/newgrp docker/);
+    // The interactive exit-0 guidance must NOT be emitted in this mode.
+    expect(outcome.stdout).not.toContain(
+      "Re-run: curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash",
+    );
+  });
+
+  it("keeps the legacy exit-0 instructions for interactive users even when the loop guard is set", () => {
+    // In interactive mode the existing behavior is still correct: a human
+    // can run `newgrp docker` themselves, so print the instructions and exit
+    // 0. The #4942 hard-fail applies only to non-interactive mode.
+    const outcome = runEnsureDocker(
+      { NEMOCLAW_DOCKER_GROUP_REACTIVATED: "1" },
+      [],
+    );
+    expect(outcome.sgArgs.length).toBe(0);
     expect(outcome.status).toBe(0);
-    // The user-facing fallback instructions are the actionable signal a
-    // human gets when the automated re-exec didn't restore docker access.
-    // Pin them here so a future copy-edit can't silently drop them.
     expect(outcome.stdout).toContain("Run: newgrp docker");
     expect(outcome.stdout).toContain(
       "Re-run: curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash",

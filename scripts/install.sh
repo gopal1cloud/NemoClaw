@@ -2292,6 +2292,17 @@ ensure_docker() {
         exec sg docker -c "$cmd"
       fi
     fi
+    # #4942: reaching here in non-interactive mode means the sg(1) self
+    # re-exec above was skipped (no staged script file, sg unavailable) or
+    # already ran once without restoring docker access (loop guard set). The
+    # install genuinely did not complete, so we must NOT print interactive
+    # "newgrp docker / re-curl" instructions and exit 0 — that strands CI/CD
+    # pipelines, which can only detect the failure via a non-zero exit code.
+    # Fail loudly instead; the message still names the manual recovery steps.
+    if installer_non_interactive; then
+      printf "\n"
+      error "Docker group membership is not active in this shell and could not be activated automatically in non-interactive mode. The install did not complete. Re-run the installer from a fresh login shell (after 'newgrp docker', or after logging out and back in), or run it as root."
+    fi
     printf "\n"
     info "Docker group membership is not active in this shell yet. To finish:"
     info "  1) Run: newgrp docker   (or log out and log back in)"
