@@ -59,12 +59,24 @@ function buildPreamble({
   channelInRegistry = "whatsapp",
   sandboxExecResult = { status: 0, stdout: "NEMOCLAW_CHANNEL_CLEAR_OK", stderr: "" },
   sshFallbackResult = null as { status: number; stdout: string; stderr: string } | null,
+  openshellResponses = [] as Array<{
+    commandPrefix: string[];
+    status: number;
+    stdout?: string;
+    stderr?: string;
+  }>,
 }: {
   presetNamesApplied?: string[];
   sandboxAgent?: string;
   channelInRegistry?: string;
   sandboxExecResult?: { status: number; stdout: string; stderr: string } | null;
   sshFallbackResult?: { status: number; stdout: string; stderr: string } | null;
+  openshellResponses?: Array<{
+    commandPrefix: string[];
+    status: number;
+    stdout?: string;
+    stderr?: string;
+  }>;
 } = {}): string {
   const j = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
   return String.raw`
@@ -77,6 +89,7 @@ runner.runCapture = () => "";
 
 const adapterRuntime = require(${j("adapters/openshell/runtime.js")});
 const gatewayProviderCalls = [];
+const openshellResponses = ${JSON.stringify(openshellResponses)};
 adapterRuntime.runOpenshell = (args) => {
   if (
     Array.isArray(args) &&
@@ -84,6 +97,17 @@ adapterRuntime.runOpenshell = (args) => {
       (args[0] === "provider" && args[1] === "delete"))
   ) {
     gatewayProviderCalls.push(args);
+  }
+  const response = openshellResponses.find((candidate) =>
+    Array.isArray(args) &&
+    candidate.commandPrefix.every((part, index) => args[index] === part)
+  );
+  if (response) {
+    return {
+      status: response.status,
+      stdout: response.stdout || "",
+      stderr: response.stderr || "",
+    };
   }
   return { status: 0, stdout: "", stderr: "" };
 };
@@ -602,5 +626,109 @@ const ctx = module.exports;
       ["npm", "pypi", "brew"],
       "session.policyPresets must remove slack after provider cleanup",
     );
+  });
+
+  it("redacts OpenShell detach failure output before printing it", () => {
+    const rawSlackToken = `xoxb-${"1".repeat(12)}-${"e".repeat(24)}`;
+    const rawBearerToken = ["detach", "provider", "token", "1234567890"].join("-");
+    const script = `${buildPreamble({
+      presetNamesApplied: ["npm", "pypi", "telegram", "brew"],
+      sandboxAgent: "openclaw",
+      channelInRegistry: "telegram",
+      openshellResponses: [
+        {
+          commandPrefix: ["sandbox", "provider", "detach"],
+          status: 1,
+          stderr: `detach refused SLACK_BOT_TOKEN=${rawSlackToken}\nAuthorization: Bearer ${rawBearerToken}`,
+        },
+      ],
+    })}
+const ctx = module.exports;
+(async () => {
+  const dumpState = () => ({
+    registryUpdates: ctx.registryUpdates,
+    gatewayProviderCalls: ctx.gatewayProviderCalls,
+    exitCode: ctx.getExitCode(),
+  });
+  try {
+    await ctx.channelModule.removeSandboxChannel("test-sb", { channel: "telegram" });
+    process.stdout.write("\\n__RESULT__" + JSON.stringify(dumpState()) + "\\n");
+  } catch (err) {
+    if (typeof err.message === "string" && err.message.startsWith("__PROCESS_EXIT__")) {
+      process.stdout.write("\\n__RESULT__" + JSON.stringify(dumpState()) + "\\n");
+      return;
+    }
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+  }
+})();
+`;
+    const result = runScript(script, { TELEGRAM_BOT_TOKEN: "stub" });
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    assert.ok(marker >= 0, `no __RESULT__ marker:\n${result.stdout}`);
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    assert.equal(payload.exitCode, 1, "detach failure must abort before local cleanup");
+    assert.deepEqual(payload.registryUpdates, [], "registry must not be updated after detach failure");
+
+    const combinedOutput = `${result.stderr}\n${result.stdout}`;
+    assert.ok(
+      combinedOutput.includes("Failed to detach bridge provider"),
+      `expected detach failure diagnostic; got ${combinedOutput}`,
+    );
+    assert.ok(!combinedOutput.includes(rawSlackToken), "raw Slack token must be redacted");
+    assert.ok(!combinedOutput.includes(rawBearerToken), "raw Bearer token must be redacted");
+  });
+
+  it("redacts OpenShell delete failure output before printing it", () => {
+    const rawSlackToken = `xapp-${"2".repeat(12)}-${"f".repeat(24)}`;
+    const rawBearerToken = ["delete", "provider", "token", "1234567890"].join("-");
+    const script = `${buildPreamble({
+      presetNamesApplied: ["npm", "pypi", "telegram", "brew"],
+      sandboxAgent: "openclaw",
+      channelInRegistry: "telegram",
+      openshellResponses: [
+        {
+          commandPrefix: ["provider", "delete"],
+          status: 1,
+          stderr: `delete refused SLACK_APP_TOKEN=${rawSlackToken}\nAuthorization: Bearer ${rawBearerToken}`,
+        },
+      ],
+    })}
+const ctx = module.exports;
+(async () => {
+  const dumpState = () => ({
+    registryUpdates: ctx.registryUpdates,
+    gatewayProviderCalls: ctx.gatewayProviderCalls,
+    exitCode: ctx.getExitCode(),
+  });
+  try {
+    await ctx.channelModule.removeSandboxChannel("test-sb", { channel: "telegram" });
+    process.stdout.write("\\n__RESULT__" + JSON.stringify(dumpState()) + "\\n");
+  } catch (err) {
+    if (typeof err.message === "string" && err.message.startsWith("__PROCESS_EXIT__")) {
+      process.stdout.write("\\n__RESULT__" + JSON.stringify(dumpState()) + "\\n");
+      return;
+    }
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+  }
+})();
+`;
+    const result = runScript(script, { TELEGRAM_BOT_TOKEN: "stub" });
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    assert.ok(marker >= 0, `no __RESULT__ marker:\n${result.stdout}`);
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    assert.equal(payload.exitCode, 1, "delete failure must abort before local cleanup");
+    assert.deepEqual(payload.registryUpdates, [], "registry must not be updated after delete failure");
+
+    const combinedOutput = `${result.stderr}\n${result.stdout}`;
+    assert.ok(
+      combinedOutput.includes("Failed to delete bridge provider"),
+      `expected delete failure diagnostic; got ${combinedOutput}`,
+    );
+    assert.ok(!combinedOutput.includes(rawSlackToken), "raw Slack token must be redacted");
+    assert.ok(!combinedOutput.includes(rawBearerToken), "raw Bearer token must be redacted");
   });
 });

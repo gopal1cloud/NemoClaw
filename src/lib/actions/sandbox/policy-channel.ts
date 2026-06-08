@@ -31,6 +31,7 @@ import {
   sanitizeMessagingChannelConfig,
 } from "../../messaging-channel-config";
 import { hashCredential } from "../../security/credential-hash";
+import { redact } from "../../security/redact";
 
 const { isNonInteractive } = require("../../onboard") as { isNonInteractive: () => boolean };
 const onboardProviders = require("../../onboard/providers");
@@ -562,9 +563,9 @@ async function applyChannelRemoveToGatewayAndRegistry(
         stdio: ["ignore", "pipe", "pipe"],
       });
       if (result.status !== 0) {
-        const output = `${result.stdout || ""}${result.stderr || ""}`;
+        const output = compactOpenShellOutput(result);
         if (!/\bNotFound\b|not found|not attached/i.test(output)) {
-          detachFailures.push({ name, output: output.trim() });
+          detachFailures.push({ name, output });
         }
       }
     }
@@ -588,7 +589,8 @@ async function applyChannelRemoveToGatewayAndRegistry(
   // the channel as removed locally while the bridge is still live in
   // the gateway, which produces a half-configured sandbox the user
   // can't easily recover. Surface the underlying openshell output so the
-  // operator can see exactly why the delete was rejected.
+  // operator can see why the delete was rejected without leaking any
+  // credential-like values echoed by OpenShell.
   const deleteFailures: Array<{ name: string; output: string }> = [];
   if (gatewayReachable) {
     const detachFailedSet = new Set(detachFailures.map((f) => f.name));
@@ -599,9 +601,9 @@ async function applyChannelRemoveToGatewayAndRegistry(
         stdio: ["ignore", "pipe", "pipe"],
       });
       if (result.status !== 0) {
-        const output = `${result.stdout || ""}${result.stderr || ""}`;
+        const output = compactOpenShellOutput(result);
         if (!/\bNotFound\b|not found/i.test(output)) {
-          deleteFailures.push({ name, output: output.trim() });
+          deleteFailures.push({ name, output });
         }
       }
     }
@@ -627,6 +629,13 @@ async function applyChannelRemoveToGatewayAndRegistry(
   }
 
   return { ok: residual.length === 0, residual };
+}
+
+function compactOpenShellOutput(result: { readonly stdout?: unknown; readonly stderr?: unknown }): string {
+  const output = redact(`${String(result.stderr ?? "")}${String(result.stdout ?? "")}`)
+    .replace(/\r/g, "")
+    .trim();
+  return output || "OpenShell command failed.";
 }
 
 async function promptAndRebuild(sandboxName: string, actionDesc: string): Promise<boolean> {
