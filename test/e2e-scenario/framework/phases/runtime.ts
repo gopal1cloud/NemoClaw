@@ -84,7 +84,11 @@ export function inferenceRouteUrl(
 }
 
 function curlMaxTime(options: InferenceRuntimeRequestOptions): string {
-  return String(options.curlMaxTimeSeconds ?? DEFAULT_CURL_MAX_TIME_SECONDS);
+  const seconds = options.curlMaxTimeSeconds ?? DEFAULT_CURL_MAX_TIME_SECONDS;
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    throw new Error("inference request curlMaxTimeSeconds must be a finite positive number");
+  }
+  return String(seconds);
 }
 
 function shellOptions(
@@ -103,7 +107,17 @@ function shellOptions(
 }
 
 function headerArgs(headers: readonly string[] = []): string[] {
-  return headers.flatMap((header) => ["-H", header]);
+  return headers.flatMap((header) => ["-H", validatedCurlHeader(header)]);
+}
+
+function validatedCurlHeader(header: string): string {
+  if (/[\r\n]/.test(header)) {
+    throw new Error("inference request header must not contain CR or LF");
+  }
+  if (header.trimStart().startsWith("@")) {
+    throw new Error("inference request header must not use curl @file syntax");
+  }
+  return header;
 }
 
 function sensitiveHeaderRedactionValues(headers: readonly string[] = []): string[] {
@@ -273,7 +287,7 @@ export class RuntimePhaseFixture {
         "-H",
         "Content-Type: application/json",
         ...headerArgs(options.headers),
-        "-d",
+        "--data-raw",
         payload,
         endpoint,
       ],

@@ -129,6 +129,15 @@ describe("runtime phase fixture", () => {
     ]);
   });
 
+  it("accepts Ollama-style inference.local model lists", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, '{"models":[{"name":"llama3"}]}'));
+
+    await expect(fixture(runner).expectInferenceLocalModels(instance())).resolves.toMatchObject({
+      endpoint: "https://inference.local/v1/models",
+    });
+  });
+
   it("rejects inference.local model probes without compatible model data", async () => {
     const invalidJson = new FakeRunner();
     invalidJson.enqueue(shellResult(0, "not-json"));
@@ -169,7 +178,7 @@ describe("runtime phase fixture", () => {
       "20",
       "-H",
       "Content-Type: application/json",
-      "-d",
+      "--data-raw",
       expect.any(String),
       "https://inference.local/v1/chat/completions",
     ]);
@@ -248,7 +257,7 @@ describe("runtime phase fixture", () => {
         "Content-Type: application/json",
         "-H",
         "Authorization: Bearer provider-secret",
-        "-d",
+        "--data-raw",
         JSON.stringify({
           model: "nvidia/model",
           messages: [{ role: "user", content: "Reply with pong" }],
@@ -261,6 +270,18 @@ describe("runtime phase fixture", () => {
         redactionValues: ["provider-secret"],
         timeoutMs: 60_000,
       },
+    });
+  });
+
+  it("accepts Ollama-style compatible provider model lists", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, JSON.stringify({ models: ["llama3"] })));
+    const endpoint = trustedProviderEndpoint("https://api.example.test/v1/models", {
+      allowedHosts: ["api.example.test"],
+    });
+
+    await expect(fixture(runner).expectProviderModels(endpoint)).resolves.toMatchObject({
+      endpoint: "https://api.example.test/v1/models",
     });
   });
 
@@ -296,6 +317,17 @@ describe("runtime phase fixture", () => {
         timeoutMs: 60_000,
       },
     });
+  });
+
+  it("rejects invalid curl max time values before runtime probe execution", async () => {
+    for (const curlMaxTimeSeconds of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const runner = new FakeRunner();
+
+      await expect(
+        fixture(runner).expectInferenceLocalModels(instance(), { curlMaxTimeSeconds }),
+      ).rejects.toThrow("inference request curlMaxTimeSeconds must be a finite positive number");
+      expect(runner.calls).toEqual([]);
+    }
   });
 
   it("rejects provider model probes without compatible model data", async () => {

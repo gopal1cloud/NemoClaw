@@ -39,6 +39,30 @@ export interface ProviderJsonResponse<T = unknown> {
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 const BLOCKED_HOSTS = new Set(["169.254.169.254", "metadata.google.internal"]);
 
+function validateCurlMaxTimeSeconds(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error("provider request curlMaxTimeSeconds must be a finite positive number");
+  }
+  return String(value);
+}
+
+function validateCurlHeader(header: string): string {
+  if (/[\r\n]/.test(header)) {
+    throw new Error("provider request header must not contain CR or LF");
+  }
+  if (header.trimStart().startsWith("@")) {
+    throw new Error("provider request header must not use curl @file syntax");
+  }
+  return header;
+}
+
+function validateCurlBody(body: string): string {
+  if (body.trimStart().startsWith("@")) {
+    throw new Error("provider request body must not use curl @file syntax");
+  }
+  return body;
+}
+
 function queryRedactionValues(url: URL): string[] {
   const values = new Set<string>();
   if (url.search) {
@@ -193,13 +217,13 @@ export class ProviderClient {
     const { body, curlMaxTimeSeconds, headers, ...runOptions } = options;
     const args = ["-fsS"];
     if (curlMaxTimeSeconds !== undefined) {
-      args.push("--max-time", String(curlMaxTimeSeconds));
+      args.push("--max-time", validateCurlMaxTimeSeconds(curlMaxTimeSeconds));
     }
     for (const header of headers ?? []) {
-      args.push("-H", header);
+      args.push("-H", validateCurlHeader(header));
     }
     if (body !== undefined) {
-      args.push("-d", body);
+      args.push("--data-raw", validateCurlBody(body));
     }
     const result = await this.curl(endpoint, args, runOptions);
     assertExitZero(result, `curl ${endpoint.logLabel}`);
