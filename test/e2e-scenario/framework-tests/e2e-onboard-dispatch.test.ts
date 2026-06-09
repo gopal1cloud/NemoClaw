@@ -11,9 +11,20 @@ import { describe, expect, it } from "vitest";
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const ONBOARD_DIR = path.join(REPO_ROOT, "test/e2e-scenario/nemoclaw_scenarios/onboard");
 
-function runBash(script: string, env: Record<string, string> = {}): SpawnSyncReturns<string> {
+function runBash(
+  script: string,
+  env: Record<string, string | undefined> = {},
+): SpawnSyncReturns<string> {
+  const childEnv = { ...process.env };
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) {
+      delete childEnv[key];
+    } else {
+      childEnv[key] = value;
+    }
+  }
   return spawnSync("bash", ["--noprofile", "--norc"], {
-    env: { ...process.env, ...env },
+    env: childEnv,
     encoding: "utf8",
     input: script,
     timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
@@ -48,6 +59,69 @@ async function canBindPort(port: number): Promise<boolean> {
 }
 
 describe("E2E onboarding shell dispatcher", () => {
+  it("injects the fixture NVIDIA key for invalid-key negative onboarding", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-invalid-nvidia-key-"));
+    const fakeBin = path.join(tmp, "bin");
+    const capturedEnv = path.join(tmp, "captured-env");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "nemoclaw"),
+      `#!/usr/bin/env bash
+if [[ "\${1:-}" = "onboard" ]]; then
+  expected='onboard --non-interactive --yes'
+  if [[ "$*" != "\${expected}" ]]; then
+    echo "unexpected nemoclaw args: $*" >&2
+    exit 2
+  fi
+  {
+    printf 'NVIDIA_API_KEY=%s\\n' "\${NVIDIA_API_KEY:-unset}"
+    printf 'NEMOCLAW_POLICY_MODE=%s\\n' "\${NEMOCLAW_POLICY_MODE:-unset}"
+  } >"${capturedEnv}"
+  if [[ "\${NVIDIA_API_KEY:-}" != "not-a-nvidia-key" ]]; then
+    echo "unexpected NVIDIA_API_KEY: \${NVIDIA_API_KEY:-unset}" >&2
+    exit 2
+  fi
+  if [[ "\${NEMOCLAW_POLICY_MODE:-}" != "skip" ]]; then
+    echo "unexpected NEMOCLAW_POLICY_MODE: \${NEMOCLAW_POLICY_MODE:-unset}" >&2
+    exit 2
+  fi
+  echo "Invalid NVIDIA API key. Must start with nvapi-" >&2
+  exit 1
+fi
+echo "unexpected nemoclaw invocation: $*" >&2
+exit 2
+`,
+      { mode: 0o755 },
+    );
+    try {
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SCENARIO=ubuntu-invalid-nvidia-key-negative\nE2E_SANDBOX_NAME=e2e-invalid-key\n",
+      );
+      const result = runBash(
+        `
+        set -euo pipefail
+        test/e2e-scenario/nemoclaw_scenarios/dispatch-action.sh e2e_onboard cloud-openclaw-invalid-nvidia-key "${ONBOARD_DIR}/dispatch.sh"
+      `,
+        {
+          E2E_ACTION_ID: "onboarding.profile.cloud-openclaw-invalid-nvidia-key",
+          E2E_CONTEXT_DIR: tmp,
+          E2E_PHASE: "onboarding",
+          NVIDIA_API_KEY: undefined,
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          TMPDIR: tmp,
+        },
+      );
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("Invalid NVIDIA API key");
+      expect(fs.readFileSync(capturedEnv, "utf8")).toBe(
+        "NVIDIA_API_KEY=not-a-nvidia-key\nNEMOCLAW_POLICY_MODE=skip\n",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("rejects malformed gateway conflict ports before invoking onboarding", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-gateway-conflict-bad-port-"));
     const fakeBin = path.join(tmp, "bin");

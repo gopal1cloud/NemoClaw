@@ -99,6 +99,10 @@ e2e_onboard_cloud_openclaw_gateway_port_conflict() {
   return "${status}"
 }
 
+e2e_onboard_cloud_openclaw_invalid_nvidia_key() {
+  NVIDIA_API_KEY=not-a-nvidia-key NEMOCLAW_POLICY_MODE=skip e2e_onboard_cloud_openclaw
+}
+
 e2e_onboard() {
   local profile="${1:-}"
   if [[ -z "${profile}" ]]; then
@@ -122,7 +126,7 @@ e2e_onboard() {
       NEMOCLAW_MODEL="${E2E_ONBOARDING_MODEL}" NEMOCLAW_POLICY_MODE=custom NEMOCLAW_POLICY_PRESETS="${E2E_ONBOARDING_POLICY_PRESETS}" e2e_onboard_cloud_openclaw
       ;;
     cloud-openclaw-invalid-nvidia-key)
-      e2e_onboard_cloud_openclaw
+      e2e_onboard_cloud_openclaw_invalid_nvidia_key
       ;;
     cloud-openclaw-gateway-port-conflict)
       e2e_onboard_cloud_openclaw_gateway_port_conflict
