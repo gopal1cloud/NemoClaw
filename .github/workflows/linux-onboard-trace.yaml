@@ -17,7 +17,6 @@ jobs:
     timeout-minutes: 60
     env:
       NEMOCLAW_TRACE: "1"
-      NEMOCLAW_TRACE_DIR: ${{ runner.temp }}/nemoclaw-traces
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_RECREATE_SANDBOX: "1"
@@ -36,6 +35,8 @@ jobs:
           node-version: "22"
           cache: npm
       - name: Run Linux onboard E2E with tracing
+        env:
+          NEMOCLAW_TRACE_DIR: /tmp/nemoclaw-traces
         run: |
           set -euo pipefail
           mkdir -p "$NEMOCLAW_TRACE_DIR"
@@ -45,6 +46,6 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: linux-onboard-traces-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/nemoclaw-traces/
+          path: /tmp/nemoclaw-traces/
           if-no-files-found: warn
           retention-days: 14
