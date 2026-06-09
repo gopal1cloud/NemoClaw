@@ -1007,25 +1007,6 @@ describe("framework-owned secret hygiene at the spawn boundary", () => {
     expect(cloudOnboard?.secretEnv).toEqual(["NVIDIA_API_KEY"]);
     expect(localOnboard?.secretEnv).toEqual([]);
   });
-
-  it("should not require a live NVIDIA API key for the invalid-key negative fixture", async () => {
-    const { compileRunPlans } = await import("../scenarios/compiler.ts");
-    const [invalidKeyPlan, portConflictPlan] = compileRunPlans([
-      "ubuntu-invalid-nvidia-key-negative",
-      "ubuntu-gateway-port-conflict-negative",
-    ]);
-    const invalidKeyOnboard = invalidKeyPlan.phases
-      .find((p) => p.name === "onboarding")
-      ?.actions.find((a) => a.id.startsWith("onboarding.profile."));
-    const portConflictOnboard = portConflictPlan.phases
-      .find((p) => p.name === "onboarding")
-      ?.actions.find((a) => a.id.startsWith("onboarding.profile."));
-
-    expect(invalidKeyPlan.requiredSecrets).toEqual([]);
-    expect(invalidKeyOnboard?.secretEnv).toEqual([]);
-    expect(portConflictPlan.requiredSecrets).toEqual(["NVIDIA_API_KEY"]);
-    expect(portConflictOnboard?.secretEnv).toEqual(["NVIDIA_API_KEY"]);
-  });
 });
 
 describe("clients are pass/fail/policy free", () => {

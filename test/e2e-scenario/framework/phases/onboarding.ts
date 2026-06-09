@@ -406,6 +406,12 @@ export class OnboardingPhaseFixture {
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
     const apiKey = this.secrets.required("NVIDIA_API_KEY");
     const initial = await this.interruptAtPolicyStep(environment, sandboxName, apiKey, options);
+    // Permanent scenario semantics for the repair-existing-config profile:
+    // the fixture creates an interrupted onboarding session, then removes the
+    // live OpenShell artifacts that a user may have already cleaned up. The
+    // product behavior under test is `nemoclaw onboard --resume` repairing
+    // that stale recorded state; remove this cleanup only if the scenario is
+    // replaced by a lower-level product fixture that creates the same state.
     const repairDelete = await this.host.command("openshell", ["sandbox", "delete", sandboxName], {
       artifactName: "onboard-cloud-nvidia-openclaw-repair-delete-sandbox",
       env: buildAvailabilityProbeEnv(),

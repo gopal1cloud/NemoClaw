@@ -299,6 +299,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     expectedStateId: "onboarding-failure-invalid-nvidia-key",
     onboardingAssertionIds: ["base-installed"],
     suiteIds: [],
+    requiredSecrets: ["NVIDIA_API_KEY"],
     expectedFailure: {
       phase: "onboarding",
       errorClass: "invalid-nvidia-api-key",
