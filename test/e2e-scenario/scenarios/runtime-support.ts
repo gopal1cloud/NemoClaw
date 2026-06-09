@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { resolveExecutableOnboardingProfile } from "./onboarding-profiles.ts";
 import type { ScenarioDefinition } from "./types.ts";
 
 const SUPPORTED_PLATFORMS = new Set(["ubuntu-local"]);
@@ -11,6 +12,7 @@ const SUPPORTED_ONBOARDING = new Set([
   "cloud-openclaw-custom-policies",
   "cloud-openclaw-invalid-nvidia-key",
   "cloud-openclaw-gateway-port-conflict",
+  "cloud-openclaw-no-docker",
   "cloud-nvidia-openclaw-resume-after-interrupt",
   "cloud-nvidia-openclaw-repair-existing-config",
   "cloud-nvidia-openclaw-double-same-provider",
@@ -54,8 +56,9 @@ export function liveScenarioSupport(scenario: ScenarioDefinition): LiveScenarioS
     if (!SUPPORTED_RUNTIMES.has(environment.runtime)) {
       reasons.push(`runtime '${environment.runtime}' is not wired for live Vitest fixtures`);
     }
-    if (!SUPPORTED_ONBOARDING.has(environment.onboarding)) {
-      reasons.push(`onboarding '${environment.onboarding}' is not wired for live Vitest fixtures`);
+    const onboarding = resolveExecutableOnboardingProfile(environment);
+    if (!SUPPORTED_ONBOARDING.has(onboarding)) {
+      reasons.push(`onboarding '${onboarding}' is not wired for live Vitest fixtures`);
     }
     if (environment.lifecycle && !SUPPORTED_LIFECYCLES.has(environment.lifecycle)) {
       reasons.push(`lifecycle '${environment.lifecycle}' is not wired for live Vitest fixtures`);

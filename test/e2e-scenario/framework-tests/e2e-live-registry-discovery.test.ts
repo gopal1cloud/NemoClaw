@@ -75,6 +75,26 @@ describe("live Vitest registry discovery support", () => {
     });
   });
 
+  it("keeps docker-missing scenarios skipped unless the executable onboarding profile is wired", () => {
+    const base = listScenarios().find((entry) => entry.id === "ubuntu-repo-cloud-hermes");
+    expect(base).toBeTruthy();
+    const scenario = {
+      ...base!,
+      id: "synthetic-docker-missing-hermes",
+      environment: {
+        ...base!.environment!,
+        runtime: "docker-missing",
+        onboarding: "cloud-hermes",
+      },
+      expectedStateId: "preflight-failure-no-sandbox",
+    };
+
+    expect(liveScenarioSupport(scenario)).toMatchObject({
+      supported: false,
+      reasons: ["onboarding 'cloud-hermes-no-docker' is not wired for live Vitest fixtures"],
+    });
+  });
+
   it("keeps unwhitelisted lifecycle profiles skipped with the lifecycle reason", () => {
     const scenario = listScenarios().find((entry) => entry.id === "ubuntu-rebuild-openclaw");
 
