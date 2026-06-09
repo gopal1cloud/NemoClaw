@@ -129,7 +129,9 @@ const ONBOARD_PROFILE_SECRET_ENV: Readonly<Record<string, readonly string[]>> = 
   // NVIDIA cloud provider via NVIDIA_API_KEY.
   "cloud-openclaw": ["NVIDIA_API_KEY"],
   "cloud-openclaw-custom-policies": ["NVIDIA_API_KEY"],
-  "cloud-openclaw-invalid-nvidia-key": ["NVIDIA_API_KEY"],
+  // Negative scenario: the fixture injects its own known-bad key and must not
+  // pass a live NVIDIA_API_KEY through from the parent environment.
+  "cloud-openclaw-invalid-nvidia-key": [],
   "cloud-openclaw-gateway-port-conflict": ["NVIDIA_API_KEY"],
   // Negative scenario: nemoclaw onboard runs against a docker shim that
   // exits non-zero. Onboard never reaches the cloud auth step, but the

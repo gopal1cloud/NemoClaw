@@ -995,17 +995,24 @@ describe("framework-owned secret hygiene at the spawn boundary", () => {
     ).toThrow(/secret-key shape/);
   });
 
-  it("should declare NVIDIA API key only for cloud onboarding actions", async () => {
+  it("should declare NVIDIA API key only for onboarding actions that use a live cloud secret", async () => {
     const { compileRunPlans } = await import("../scenarios/compiler.ts");
-    const plans = compileRunPlans(["ubuntu-repo-cloud-openclaw", "gpu-repo-local-ollama-openclaw"]);
-    const cloudOnboard = plans[0].phases
-      .find((p) => p.name === "onboarding")
-      ?.actions.find((a) => a.id.startsWith("onboarding.profile."));
-    const localOnboard = plans[1].phases
-      .find((p) => p.name === "onboarding")
-      ?.actions.find((a) => a.id.startsWith("onboarding.profile."));
-    expect(cloudOnboard?.secretEnv).toEqual(["NVIDIA_API_KEY"]);
-    expect(localOnboard?.secretEnv).toEqual([]);
+    const plans = compileRunPlans([
+      "ubuntu-repo-cloud-openclaw",
+      "ubuntu-invalid-nvidia-key-negative",
+      "ubuntu-gateway-port-conflict-negative",
+      "gpu-repo-local-ollama-openclaw",
+    ]);
+    const secretEnvFor = (scenarioId: string) =>
+      plans
+        .find((plan) => plan.scenarioId === scenarioId)
+        ?.phases.find((p) => p.name === "onboarding")
+        ?.actions.find((a) => a.id.startsWith("onboarding.profile."))?.secretEnv;
+
+    expect(secretEnvFor("ubuntu-repo-cloud-openclaw")).toEqual(["NVIDIA_API_KEY"]);
+    expect(secretEnvFor("ubuntu-invalid-nvidia-key-negative")).toEqual([]);
+    expect(secretEnvFor("ubuntu-gateway-port-conflict-negative")).toEqual(["NVIDIA_API_KEY"]);
+    expect(secretEnvFor("gpu-repo-local-ollama-openclaw")).toEqual([]);
   });
 });
 

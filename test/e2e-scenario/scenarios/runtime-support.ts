@@ -5,8 +5,16 @@ import type { ScenarioDefinition } from "./types.ts";
 
 const SUPPORTED_PLATFORMS = new Set(["ubuntu-local"]);
 const SUPPORTED_INSTALLS = new Set(["repo-current"]);
-const SUPPORTED_RUNTIMES = new Set(["docker-running"]);
-const SUPPORTED_ONBOARDING = new Set(["cloud-openclaw"]);
+const SUPPORTED_RUNTIMES = new Set(["docker-running", "docker-missing"]);
+const SUPPORTED_ONBOARDING = new Set([
+  "cloud-openclaw",
+  "cloud-openclaw-custom-policies",
+  "cloud-openclaw-invalid-nvidia-key",
+  "cloud-openclaw-gateway-port-conflict",
+  "cloud-nvidia-openclaw-resume-after-interrupt",
+  "cloud-nvidia-openclaw-repair-existing-config",
+  "cloud-nvidia-openclaw-double-same-provider",
+]);
 // Lifecycle profiles wired into the live Vitest driver. A profile is
 // supported only after both (a) `LifecyclePhaseFixture.simulate(profile)`
 // dispatches it, and (b) at least one expected-state declares the post-
