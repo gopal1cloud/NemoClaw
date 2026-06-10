@@ -73,4 +73,32 @@ describe("live Vitest registry discovery support", () => {
       reasons: [],
     });
   });
+
+  it("wires the OpenAI-compatible scenario through the mock endpoint fixture", () => {
+    const scenario = listScenarios().find(
+      (entry) => entry.id === "ubuntu-repo-openai-compatible-openclaw",
+    );
+
+    expect(scenario).toBeTruthy();
+    expect(liveScenarioSupport(scenario!)).toMatchObject({
+      supported: true,
+      reasons: [],
+      runtimeSuites: ["openai-compatible-inference"],
+      pendingRuntimeSuites: ["smoke"],
+    });
+  });
+
+  it("keeps provider-switch blocked on a real lifecycle while wiring its runtime suite", () => {
+    const scenario = listScenarios().find(
+      (entry) => entry.id === "ubuntu-repo-cloud-openclaw-double-provider-switch",
+    );
+
+    expect(scenario).toBeTruthy();
+    expect(liveScenarioSupport(scenario!)).toMatchObject({
+      supported: false,
+      reasons: ["lifecycle 'double-provider-switch' is not wired for live Vitest fixtures"],
+      runtimeSuites: ["inference-switch"],
+      pendingRuntimeSuites: ["smoke"],
+    });
+  });
 });

@@ -132,6 +132,7 @@ describe("typed scenario matrix", () => {
     expect(buildLiveScenarioMatrix().map((entry) => entry.id)).toEqual([
       "ubuntu-repo-cloud-openclaw",
       "ubuntu-repo-docker-post-reboot-recovery",
+      "ubuntu-repo-openai-compatible-openclaw",
     ]);
     expect(buildLiveScenarioMatrix()[0]).toMatchObject({
       id: "ubuntu-repo-cloud-openclaw",
@@ -163,6 +164,20 @@ describe("typed scenario matrix", () => {
       supported: true,
       supportReasons: [],
     });
+    expect(buildLiveScenarioMatrix()[2]).toMatchObject({
+      id: "ubuntu-repo-openai-compatible-openclaw",
+      runner: "ubuntu-latest",
+      platform: "ubuntu-local",
+      install: "repo-current",
+      runtime: "docker-running",
+      onboarding: "openai-compatible-openclaw",
+      expectedStateId: "cloud-openclaw-ready",
+      requiredSecrets: [],
+      supported: true,
+      supportReasons: [],
+      runtimeSuites: ["openai-compatible-inference"],
+      pendingRuntimeSuites: ["smoke"],
+    });
   });
 
   it("keeps explicitly selected unsupported live scenarios in the matrix with skip reasons", () => {
@@ -184,6 +199,7 @@ describe("typed scenario matrix", () => {
     expect(parsed.map((entry: { id: string }) => entry.id)).toEqual([
       "ubuntu-repo-cloud-openclaw",
       "ubuntu-repo-docker-post-reboot-recovery",
+      "ubuntu-repo-openai-compatible-openclaw",
     ]);
   });
 

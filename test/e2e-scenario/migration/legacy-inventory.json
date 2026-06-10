@@ -44,18 +44,18 @@
       "bridgeProbes": ["test/e2e-scenario/live/registry-scenarios.test.ts"],
       "retiredReason": "",
       "deletionReady": false,
-      "notes": "Partially represented by the ubuntu-repo-cloud-openclaw live Vitest scenario via RuntimePhaseFixture suite 'inference-routing'. Keep the legacy script until credential isolation, negative classification, cleanup, provider-route, and compatible-endpoint coverage migrate."
+      "notes": "Partially represented by the ubuntu-repo-cloud-openclaw live Vitest scenario via RuntimePhaseFixture suite 'inference-routing' and the ubuntu-repo-openai-compatible-openclaw live scenario via suite 'openai-compatible-inference'. Keep the legacy script until credential isolation, negative classification, cleanup, provider-route, and all compatible-endpoint cases migrate."
     },
     {
       "legacyScript": "test/e2e/test-openclaw-inference-switch.sh",
       "domain": "inference",
       "ownerIssue": "#4349",
-      "status": "not-migrated",
+      "status": "bridge-probe",
       "targetVitestScenarios": [],
-      "bridgeProbes": [],
+      "bridgeProbes": ["test/e2e-scenario/live/registry-scenarios.test.ts"],
       "retiredReason": "",
       "deletionReady": false,
-      "notes": "Provider switch behavior should migrate with the inference fixture family."
+      "notes": "The typed registry now declares the provider-switch scenario and RuntimePhaseFixture can run the post-switch route-health/chat assertions, but the real compatible provider registration, inference set operation, route/config/state checks, and OpenClaw agent turn still live in this legacy script. Do not delete until those actions migrate into a lifecycle/runtime fixture."
     },
     {
       "legacyScript": "test/e2e/test-messaging-providers.sh",

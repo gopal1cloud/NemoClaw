@@ -23,6 +23,8 @@ export const SUPPORTED_RUNTIME_SUITE_IDS = [
   "inference",
   "cloud-inference",
   "inference-routing",
+  "openai-compatible-inference",
+  "inference-switch",
 ] as const;
 
 export type RuntimeSuiteId = (typeof SUPPORTED_RUNTIME_SUITE_IDS)[number];
@@ -73,6 +75,8 @@ const DEFAULT_CHAT_MAX_TOKENS = 8;
 const CLOUD_INFERENCE_CHAT_MODEL = "nvidia/nemotron-3-super-120b-a12b";
 const CLOUD_INFERENCE_CHAT_PROMPT = "Reply with exactly one word: PONG";
 const CLOUD_INFERENCE_CHAT_MAX_TOKENS = 100;
+const COMPATIBLE_INFERENCE_CHAT_PROMPT = "Reply with exactly one word: PONG";
+const COMPATIBLE_INFERENCE_CHAT_MAX_TOKENS = 32;
 const MODELS_PATH = "/v1/models";
 const CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
 const SENSITIVE_HEADER_NAME = /(authorization|api[-_]?key|token|secret|credential|password)/i;
@@ -288,6 +292,10 @@ export class RuntimePhaseFixture {
         return await this.runCloudInferenceSuite(suiteId, instance);
       case "inference-routing":
         return await this.runInferenceRoutingSuite(instance);
+      case "openai-compatible-inference":
+        return await this.runOpenAiCompatibleInferenceSuite(instance);
+      case "inference-switch":
+        return await this.runInferenceSwitchSuite(instance);
       default:
         throw new Error(`runtime suite '${suiteId}' is not wired for RuntimePhaseFixture`);
     }
@@ -358,6 +366,71 @@ export class RuntimePhaseFixture {
           maxTokens: CLOUD_INFERENCE_CHAT_MAX_TOKENS,
           model: CLOUD_INFERENCE_CHAT_MODEL,
           prompt: CLOUD_INFERENCE_CHAT_PROMPT,
+          route: "inference-local",
+          timeoutMs: 50_000,
+        }),
+      ),
+    );
+    return { suiteId, assertions };
+  }
+
+  private async runOpenAiCompatibleInferenceSuite(
+    instance: NemoClawInstance,
+  ): Promise<RuntimeSuiteResult> {
+    const suiteId = "openai-compatible-inference";
+    const model = instance.model ?? DEFAULT_CHAT_MODEL;
+    const assertions: RuntimeSuiteAssertionResult[] = [];
+    assertions.push(
+      assertionResult(
+        "runtime.openai-compatible.models-health",
+        await this.expectInferenceLocalModels(instance, {
+          artifactName: suiteArtifactName(suiteId, "models-health"),
+          curlMaxTimeSeconds: 20,
+          route: "inference-local",
+          timeoutMs: 30_000,
+        }),
+      ),
+    );
+    assertions.push(
+      assertionResult(
+        "runtime.openai-compatible.chat-completion",
+        await this.expectInferenceLocalChatCompletion(instance, {
+          artifactName: suiteArtifactName(suiteId, "chat-completion"),
+          curlMaxTimeSeconds: 40,
+          maxTokens: COMPATIBLE_INFERENCE_CHAT_MAX_TOKENS,
+          model,
+          prompt: COMPATIBLE_INFERENCE_CHAT_PROMPT,
+          route: "inference-local",
+          timeoutMs: 50_000,
+        }),
+      ),
+    );
+    return { suiteId, assertions };
+  }
+
+  private async runInferenceSwitchSuite(instance: NemoClawInstance): Promise<RuntimeSuiteResult> {
+    const suiteId = "inference-switch";
+    const assertions: RuntimeSuiteAssertionResult[] = [];
+    assertions.push(
+      assertionResult(
+        "runtime.inference-switch.route-state-updated",
+        await this.expectInferenceLocalStatus(instance, {
+          artifactName: suiteArtifactName(suiteId, "route-state-updated"),
+          curlMaxTimeSeconds: 20,
+          route: "inference-local",
+          timeoutMs: 30_000,
+        }),
+      ),
+    );
+    assertions.push(
+      assertionResult(
+        "runtime.inference-switch.switched-inference-local-chat",
+        await this.expectInferenceLocalChatCompletion(instance, {
+          artifactName: suiteArtifactName(suiteId, "switched-inference-local-chat"),
+          curlMaxTimeSeconds: 40,
+          maxTokens: COMPATIBLE_INFERENCE_CHAT_MAX_TOKENS,
+          model: instance.model ?? DEFAULT_CHAT_MODEL,
+          prompt: COMPATIBLE_INFERENCE_CHAT_PROMPT,
           route: "inference-local",
           timeoutMs: 50_000,
         }),

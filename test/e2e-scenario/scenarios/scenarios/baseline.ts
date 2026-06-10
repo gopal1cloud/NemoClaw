@@ -185,8 +185,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     manifestName: "openclaw-openai-compatible",
     environment: ubuntuRepoDocker("openai-compatible-openclaw"),
     expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke"],
-    requiredSecrets: ["OPENAI_COMPATIBLE_API_KEY"],
+    suiteIds: ["smoke", "openai-compatible-inference"],
   },
   {
     id: "ubuntu-repo-cloud-openclaw-brave",
@@ -263,9 +262,9 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
   {
     id: "ubuntu-repo-cloud-openclaw-double-provider-switch",
     manifestName: "openclaw-nvidia-double-provider-switch",
-    environment: ubuntuRepoDocker("cloud-nvidia-openclaw-double-provider-switch"),
+    environment: ubuntuRepoDockerLifecycle("cloud-openclaw", "double-provider-switch"),
     expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke"],
+    suiteIds: ["smoke", "inference-switch"],
     requiredSecrets: ["NVIDIA_API_KEY"],
   },
   {

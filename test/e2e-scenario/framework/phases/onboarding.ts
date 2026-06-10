@@ -2,15 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-
+import { redactString } from "../../scenarios/orchestrators/redaction.ts";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import { artifactLabel, assertExitZero } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
 import { validateSandboxName } from "../clients/sandbox.ts";
 import type { ShellProbeResult } from "../shell-probe.ts";
-import { redactString } from "../../scenarios/orchestrators/redaction.ts";
 import type { EnvironmentReady } from "./environment.ts";
 
 const ONBOARD_ARGS = [
@@ -21,6 +22,9 @@ const ONBOARD_ARGS = [
 ];
 const DEFAULT_TIMEOUT_MS = 15 * 60_000;
 const OPENCLAW_GATEWAY_URL = "http://127.0.0.1:18789";
+const COMPATIBLE_ENDPOINT_API_KEY = "test-compatible-endpoint-key";
+const COMPATIBLE_ENDPOINT_MODEL = "mock-compatible-model";
+const HOST_SANDBOX_ALIAS = "host.openshell.internal";
 const NEGATIVE_PREFLIGHT_LOG = "negative-preflight.log";
 const DOCKER_MISSING_PATTERNS = [
   /Cannot connect to the Docker daemon/i,
@@ -64,8 +68,9 @@ export interface NemoClawInstance {
   onboarding: string;
   sandboxName: string;
   agent: "openclaw" | "hermes";
-  provider: "nvidia" | "ollama";
-  providerEnv: "cloud" | "local";
+  provider: "nvidia" | "ollama" | "compatible-endpoint";
+  providerEnv: "cloud" | "local" | "compatible";
+  model?: string;
   platformOs?: "ubuntu" | "macos" | "windows";
   gatewayUrl: string;
   result: ShellProbeResult;
@@ -85,10 +90,102 @@ function sandboxNameFromOptions(onboarding: string, options: OnboardingOptions):
 function commandEnv(sandboxName: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
     ...buildAvailabilityProbeEnv(),
-    ...extra,
     NEMOCLAW_AGENT: "openclaw",
     NEMOCLAW_PROVIDER: "cloud",
     NEMOCLAW_SANDBOX_NAME: sandboxName,
+    ...extra,
+  };
+}
+
+interface CompatibleEndpointMock {
+  endpointUrl: string;
+  apiKey: string;
+  model: string;
+  close(): Promise<void>;
+}
+
+async function closeServer(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+async function startCompatibleEndpointMock(): Promise<CompatibleEndpointMock> {
+  const server = createServer((req, res) => {
+    const path = req.url?.split("?", 1)[0] ?? "/";
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      if (req.method === "GET" && path === "/health") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      if (req.method === "GET" && path === "/v1/models") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            object: "list",
+            data: [{ id: COMPATIBLE_ENDPOINT_MODEL, object: "model" }],
+          }),
+        );
+        return;
+      }
+      if (req.method === "POST" && path === "/v1/chat/completions") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            id: "chatcmpl-nemoclaw-e2e",
+            object: "chat.completion",
+            model: COMPATIBLE_ENDPOINT_MODEL,
+            choices: [
+              {
+                index: 0,
+                message: { role: "assistant", content: "PONG" },
+                finish_reason: "stop",
+              },
+            ],
+            usage: { prompt_tokens: Math.max(1, body.length), completion_tokens: 1 },
+          }),
+        );
+        return;
+      }
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "not found", path }));
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "0.0.0.0", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    await closeServer(server);
+    throw new Error("compatible endpoint mock did not bind to a TCP port");
+  }
+  let closed = false;
+  return {
+    endpointUrl: `http://${HOST_SANDBOX_ALIAS}:${(address as AddressInfo).port}/v1`,
+    apiKey: COMPATIBLE_ENDPOINT_API_KEY,
+    model: COMPATIBLE_ENDPOINT_MODEL,
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      await closeServer(server);
+    },
   };
 }
 
@@ -150,6 +247,8 @@ export class OnboardingPhaseFixture {
         return await this.cloudOpenClaw(environment, options);
       case "cloud-openclaw-no-docker":
         return await this.cloudOpenClawNoDocker(environment, options);
+      case "openai-compatible-openclaw":
+        return await this.openAiCompatibleOpenClaw(environment, options);
       default:
         throw new Error(`Unsupported onboarding profile '${environment.onboarding}'.`);
     }
@@ -233,6 +332,47 @@ export class OnboardingPhaseFixture {
     } finally {
       await rm(shimDir, { force: true, recursive: true });
     }
+  }
+
+  async openAiCompatibleOpenClaw(
+    environment: EnvironmentReady,
+    options: OnboardingOptions = {},
+  ): Promise<NemoClawInstance> {
+    if (!environment.docker.available) {
+      throw new Error(
+        "openai-compatible-openclaw onboarding requires an available Docker runtime.",
+      );
+    }
+    if (!this.cleanup) {
+      throw new Error("openai-compatible-openclaw onboarding requires cleanup registration.");
+    }
+    const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
+    const mock = await startCompatibleEndpointMock();
+    this.cleanup.add("stop OpenAI-compatible endpoint mock", mock.close);
+    this.registerSandboxCleanup(sandboxName);
+    const result = await this.host.nemoclaw(ONBOARD_ARGS, {
+      artifactName: "onboard-openai-compatible-openclaw",
+      env: commandEnv(sandboxName, {
+        COMPATIBLE_API_KEY: mock.apiKey,
+        NEMOCLAW_ENDPOINT_URL: mock.endpointUrl,
+        NEMOCLAW_MODEL: mock.model,
+        NEMOCLAW_POLICY_TIER: "open",
+        NEMOCLAW_PROVIDER: "custom",
+      }),
+      redactionValues: [mock.apiKey],
+      timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    });
+    assertExitZero(result, "openai-compatible-openclaw onboarding");
+    return {
+      onboarding: environment.onboarding,
+      sandboxName,
+      agent: "openclaw",
+      provider: "compatible-endpoint",
+      providerEnv: "compatible",
+      model: mock.model,
+      gatewayUrl: OPENCLAW_GATEWAY_URL,
+      result,
+    };
   }
 
   private registerSandboxCleanup(sandboxName: string): void {

@@ -4,16 +4,16 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
+  type CommandRunner,
   ProviderClient,
   SandboxClient,
   trustedProviderEndpoint,
-  type CommandRunner,
 } from "../framework/clients/index.ts";
 import type { E2EScenarioFixtures } from "../framework/e2e-test.ts";
 import {
   inferenceRouteUrl,
-  RuntimePhaseFixture,
   type NemoClawInstance,
+  RuntimePhaseFixture,
 } from "../framework/phases/index.ts";
 import type {
   ShellProbeResult,
@@ -111,6 +111,7 @@ describe("runtime phase fixture", () => {
         args: [
           "sandbox",
           "exec",
+          "--name",
           "e2e-ubuntu-repo-cloud-openclaw",
           "--",
           "curl",
@@ -170,6 +171,7 @@ describe("runtime phase fixture", () => {
     expect(call?.args).toEqual([
       "sandbox",
       "exec",
+      "--name",
       "e2e-ubuntu-repo-cloud-openclaw",
       "--",
       "curl",
@@ -183,7 +185,8 @@ describe("runtime phase fixture", () => {
       "https://inference.local/v1/chat/completions",
     ]);
     expect(call?.args).not.toContain("sh");
-    const payload = JSON.parse(call?.args[11] ?? "{}");
+    const payloadIndex = call?.args.indexOf("--data-raw") ?? -1;
+    const payload = JSON.parse(call?.args[payloadIndex + 1] ?? "{}");
     expect(payload).toEqual({
       model: "default",
       messages: [{ role: "user", content: "Reply with ok" }],
@@ -207,6 +210,7 @@ describe("runtime phase fixture", () => {
       args: [
         "sandbox",
         "exec",
+        "--name",
         "e2e-ubuntu-repo-cloud-openclaw",
         "--",
         "curl",
@@ -269,6 +273,53 @@ describe("runtime phase fixture", () => {
     expect(runner.calls.map((call) => call.options?.artifactName)).toEqual([
       "runtime-inference-routing-provider-route-health",
       "runtime-inference-routing-inference-local-chat-completion",
+    ]);
+  });
+
+  it("runs the OpenAI-compatible inference suite with the onboarded model", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, JSON.stringify({ data: [{ id: "mock-compatible-model" }] })));
+    runner.enqueue(shellResult(0, JSON.stringify({ choices: [{ message: { content: "PONG" } }] })));
+
+    const result = await fixture(runner).runSuite(
+      "openai-compatible-inference",
+      instance({
+        provider: "compatible-endpoint",
+        providerEnv: "compatible",
+        model: "mock-compatible-model",
+      }),
+    );
+
+    expect(result.suiteId).toBe("openai-compatible-inference");
+    expect(result.assertions.map((assertion) => assertion.id)).toEqual([
+      "runtime.openai-compatible.models-health",
+      "runtime.openai-compatible.chat-completion",
+    ]);
+    expect(runner.calls.map((call) => call.options?.artifactName)).toEqual([
+      "runtime-openai-compatible-inference-models-health",
+      "runtime-openai-compatible-inference-chat-completion",
+    ]);
+    const payload = JSON.parse(
+      runner.calls[1]?.args[runner.calls[1].args.indexOf("--data-raw") + 1] ?? "{}",
+    );
+    expect(payload.model).toBe("mock-compatible-model");
+  });
+
+  it("runs the inference-switch suite with post-switch route assertions", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "200"));
+    runner.enqueue(shellResult(0, JSON.stringify({ choices: [{ message: { content: "PONG" } }] })));
+
+    const result = await fixture(runner).runSuite("inference-switch", instance());
+
+    expect(result.suiteId).toBe("inference-switch");
+    expect(result.assertions.map((assertion) => assertion.id)).toEqual([
+      "runtime.inference-switch.route-state-updated",
+      "runtime.inference-switch.switched-inference-local-chat",
+    ]);
+    expect(runner.calls.map((call) => call.options?.artifactName)).toEqual([
+      "runtime-inference-switch-route-state-updated",
+      "runtime-inference-switch-switched-inference-local-chat",
     ]);
   });
 

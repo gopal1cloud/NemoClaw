@@ -4,13 +4,13 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
+  type CommandRunner,
   GatewayClient,
   HostCliClient,
   SandboxClient,
-  type CommandRunner,
 } from "../framework/clients/index.ts";
 import type { E2EScenarioFixtures } from "../framework/e2e-test.ts";
-import { StateValidationPhaseFixture, type NemoClawInstance } from "../framework/phases/index.ts";
+import { type NemoClawInstance, StateValidationPhaseFixture } from "../framework/phases/index.ts";
 import type {
   ShellProbeResult,
   ShellProbeRunOptions,
@@ -211,6 +211,7 @@ describe("state-validation phase fixture", () => {
       args: [
         "sandbox",
         "exec",
+        "--name",
         "e2e-ubuntu-repo-cloud-openclaw",
         "--",
         "curl",

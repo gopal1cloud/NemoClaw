@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ScenarioDefinition } from "./types.ts";
 import { isRuntimeSuiteSupported, type RuntimeSuiteId } from "../framework/phases/index.ts";
+import type { ScenarioDefinition } from "./types.ts";
 
 const SUPPORTED_PLATFORMS = new Set(["ubuntu-local"]);
 const SUPPORTED_INSTALLS = new Set(["repo-current"]);
 const SUPPORTED_RUNTIMES = new Set(["docker-running"]);
-const SUPPORTED_ONBOARDING = new Set(["cloud-openclaw"]);
+const SUPPORTED_ONBOARDING = new Set(["cloud-openclaw", "openai-compatible-openclaw"]);
 // Lifecycle profiles wired into the live Vitest driver. A profile is
 // supported only after both (a) `LifecyclePhaseFixture.simulate(profile)`
 // dispatches it, and (b) at least one expected-state declares the post-

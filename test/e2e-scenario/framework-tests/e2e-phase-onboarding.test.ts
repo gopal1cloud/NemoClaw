@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, expectTypeOf, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
-import { HostCliClient, type CommandRunner } from "../framework/clients/index.ts";
+import { type CommandRunner, HostCliClient } from "../framework/clients/index.ts";
 import type { E2EScenarioFixtures } from "../framework/e2e-test.ts";
-import { OnboardingPhaseFixture, type OnboardingSecrets } from "../framework/phases/index.ts";
 import type { EnvironmentReady } from "../framework/phases/index.ts";
+import { OnboardingPhaseFixture, type OnboardingSecrets } from "../framework/phases/index.ts";
 import type {
   ShellProbeResult,
   ShellProbeRunOptions,
@@ -228,6 +228,90 @@ describe("onboarding phase fixture", () => {
     expect(secrets.requiredCalls).toEqual([]);
     expect(runner.calls).toEqual([]);
     expect(cleanup.calls).toEqual([]);
+  });
+
+  it("runs OpenAI-compatible onboarding against a fixture-owned mock endpoint", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "onboarded compatible endpoint\n"));
+    const cleanup = new FakeCleanup();
+    const secrets = new FakeSecrets();
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets, cleanup);
+
+    try {
+      const instance = await onboard.from(ready({ onboarding: "openai-compatible-openclaw" }), {
+        sandboxName: "e2e-openai-compatible",
+      });
+
+      expect(instance).toMatchObject({
+        onboarding: "openai-compatible-openclaw",
+        sandboxName: "e2e-openai-compatible",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        providerEnv: "compatible",
+        model: "mock-compatible-model",
+        gatewayUrl: "http://127.0.0.1:18789",
+      });
+      expect(secrets.requiredCalls).toEqual([]);
+      expect(runner.calls).toEqual([
+        {
+          command: "nemoclaw",
+          args: ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
+          options: {
+            artifactName: "onboard-openai-compatible-openclaw",
+            env: expect.objectContaining({
+              COMPATIBLE_API_KEY: "test-compatible-endpoint-key",
+              NEMOCLAW_AGENT: "openclaw",
+              NEMOCLAW_ENDPOINT_URL: expect.stringMatching(
+                /^http:\/\/host\.openshell\.internal:\d+\/v1$/,
+              ),
+              NEMOCLAW_MODEL: "mock-compatible-model",
+              NEMOCLAW_POLICY_TIER: "open",
+              NEMOCLAW_PROVIDER: "custom",
+              NEMOCLAW_SANDBOX_NAME: "e2e-openai-compatible",
+              PATH: expect.any(String),
+            }),
+            redactionValues: ["test-compatible-endpoint-key"],
+            timeoutMs: 900_000,
+          },
+        },
+      ]);
+      expect(cleanup.calls.map((call) => call.name)).toEqual([
+        "stop OpenAI-compatible endpoint mock",
+        "destroy NemoClaw sandbox e2e-openai-compatible",
+      ]);
+    } finally {
+      await cleanup.calls
+        .find((call) => call.name === "stop OpenAI-compatible endpoint mock")
+        ?.run();
+    }
+  });
+
+  it("requires Docker for OpenAI-compatible onboarding", async () => {
+    const onboard = new OnboardingPhaseFixture(
+      new HostCliClient(new FakeRunner()),
+      new FakeSecrets(),
+      new FakeCleanup(),
+    );
+
+    await expect(
+      onboard.from(
+        ready({
+          onboarding: "openai-compatible-openclaw",
+          docker: { id: "docker-running", expectation: "required", available: false },
+        }),
+      ),
+    ).rejects.toThrow(/requires an available Docker runtime/);
+  });
+
+  it("requires cleanup registration for OpenAI-compatible endpoint mocks", async () => {
+    const onboard = new OnboardingPhaseFixture(
+      new HostCliClient(new FakeRunner()),
+      new FakeSecrets(),
+    );
+
+    await expect(onboard.from(ready({ onboarding: "openai-compatible-openclaw" }))).rejects.toThrow(
+      /requires cleanup registration/,
+    );
   });
 
   it("registers sandbox cleanup after successful cloud OpenClaw onboarding", async () => {

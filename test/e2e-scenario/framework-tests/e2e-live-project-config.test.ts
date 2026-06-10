@@ -2,19 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-
+import config from "../../../vitest.config.ts";
+import { readYaml, type WorkflowStep } from "../../helpers/e2e-workflow-contract.ts";
 import {
   shouldRunBranchValidationE2E,
   shouldRunInstallerIntegration,
   shouldRunLiveE2EScenarios,
 } from "../framework/live-project-gate.ts";
-import config from "../../../vitest.config.ts";
-import { readYaml, type WorkflowStep } from "../../helpers/e2e-workflow-contract.ts";
 
 interface ProjectConfig {
   test?: {
     name?: string;
     include?: string[];
+    exclude?: string[];
   };
 }
 
@@ -59,6 +59,10 @@ describe("gated E2E Vitest projects", () => {
     expect(projectConfig("e2e-branch-validation").test?.include).toEqual(
       shouldRunBranchValidationE2E() ? BRANCH_VALIDATION_E2E_TESTS : [],
     );
+  });
+
+  it("keeps live scenario tests out of the default CLI project", () => {
+    expect(projectConfig("cli").test?.exclude).toContain("test/e2e-scenario/live/**");
   });
 
   it("enables installer integration only in CI or with the installer opt-in env var", () => {
