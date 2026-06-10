@@ -6,8 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { type ArtifactSink } from "../framework/artifacts.ts";
-import { expect, test } from "../framework/e2e-test.ts";
+import { type ArtifactSink } from "../fixtures/artifacts.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
 
 // Migrated from test/e2e/test-runtime-overrides.sh. This remains a real
 // Docker-image boundary test: it builds the NemoClaw sandbox image, runs the
