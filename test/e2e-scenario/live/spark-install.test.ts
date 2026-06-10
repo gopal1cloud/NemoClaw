@@ -3,7 +3,7 @@
 
 import path from "node:path";
 
-import { expect, test } from "../framework/e2e-test.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
 
 // Manual DGX Spark install smoke. The legacy bash entry point performed a real
 // host install, so this Vitest replacement stays behind an explicit opt-in even
