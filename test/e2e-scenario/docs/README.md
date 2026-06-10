@@ -123,7 +123,8 @@ assertion inventories are removed because they duplicated live GitHub state and
 drifted quickly. A PR that deletes a legacy E2E script must show the replacement
 Vitest coverage or explain the retirement rationale in a per-script PR-body
 `Legacy E2E deletion evidence` block, with the legacy contract, intentionally
-retired behavior, and fidelity verification kept next to the deletion.
+retired behavior, and fidelity verification kept next to the deletion. The
+replacement coverage path must point at an existing `.test.ts` file.
 
 Prefer new E2E coverage in Vitest fixtures. When shell, installer, process,
 platform, or full user-flow behavior is the contract, invoke that real boundary

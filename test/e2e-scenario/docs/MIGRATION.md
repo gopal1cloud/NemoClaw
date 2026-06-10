@@ -64,13 +64,14 @@ The useful deletion invariant is smaller:
 > A PR that deletes a legacy E2E script must show the replacement Vitest
 > coverage or explain the retirement rationale.
 
-Record that evidence in the PR body and linked issue. For each deleted script,
-include a `Legacy E2E deletion evidence` block with:
+Record that evidence in the PR body, which is the machine-checkable boundary for
+the deletion. Link or summarize that PR evidence from the issue when useful. For
+each deleted script, include a `Legacy E2E deletion evidence` block with:
 
 - `Script:` the deleted `test/e2e/test-*.sh` path.
 - `Legacy contract:` the observable behavior the shell script protected.
-- `Replacement Vitest coverage:` a `.test.ts` path, or `Retirement rationale:`
-  when the behavior is intentionally retired instead of replaced.
+- `Replacement Vitest coverage:` an existing `.test.ts` path, or `Retirement
+  rationale:` when the behavior is intentionally retired instead of replaced.
 - `Intentionally retired behavior:` any assertions, probes, or workflow hooks
   that are deliberately not preserved.
 - `Fidelity verification:` the command, CI check, or review evidence proving the

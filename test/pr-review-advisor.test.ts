@@ -226,7 +226,7 @@ describe("PR review advisor", () => {
       "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding",
     );
     expect(prompt).toContain("Legacy E2E deletion governance");
-    expect(prompt).toContain("replacement Vitest coverage path or retirement rationale");
+    expect(prompt).toContain("existing replacement Vitest coverage path or retirement rationale");
     expect(prompt).toContain("multi-turn conversation");
     expect(prompt).toContain(
       "In the final synthesis turn, return JSON only matching the schema provided in that turn",
@@ -369,9 +369,9 @@ index 1234567..0000000
 
 - Script: \`test/e2e/test-example.sh\`
   - Legacy contract: validates the example CLI path against a real shell.
-  - Replacement Vitest coverage: \`test/e2e-scenario/live/example.test.ts\`
+  - Replacement Vitest coverage: \`test/e2e-scenario/live/openshell-version-pin.test.ts\`
   - Intentionally retired behavior: none.
-  - Fidelity verification: \`npx vitest run --project e2e-scenarios-live test/e2e-scenario/live/example.test.ts\`
+  - Fidelity verification: \`npx vitest run --project e2e-scenarios-live test/e2e-scenario/live/openshell-version-pin.test.ts\`
 `;
 
     expect(findDeletedLegacyE2eShellScripts(diff)).toEqual(["test/e2e/test-example.sh"]);
@@ -381,6 +381,7 @@ index 1234567..0000000
         hasScriptEvidenceBlock: true,
         hasLegacyContract: true,
         hasReplacementVitestCoverage: true,
+        replacementVitestCoveragePath: "test/e2e-scenario/live/openshell-version-pin.test.ts",
         hasRetirementRationale: false,
         hasIntentionallyRetiredBehavior: true,
         hasFidelityVerification: true,
@@ -412,7 +413,7 @@ deleted file mode 100755
     );
 
     expect(deletionEvidence[0]?.missing).toEqual([
-      "replacement Vitest coverage path or retirement rationale",
+      "existing replacement Vitest coverage path or retirement rationale",
       "intentionally retired behavior",
       "fidelity verification",
     ]);
@@ -422,7 +423,33 @@ deleted file mode 100755
       file: "test/e2e/test-example.sh",
       title: "Legacy E2E deletion evidence is missing",
     });
-    expect(result.findings[0]?.evidence).toContain("replacement Vitest coverage path");
+    expect(result.findings[0]?.evidence).toContain("existing replacement Vitest coverage path");
+  });
+
+  it("rejects replacement Vitest paths that do not exist in the checkout", () => {
+    const diff = `diff --git a/test/e2e/test-example.sh b/test/e2e/test-example.sh
+deleted file mode 100755
+--- a/test/e2e/test-example.sh
++++ /dev/null
+@@ -1 +0,0 @@
+-echo ok
+`;
+    const [evidence] = assessLegacyE2eShellDeletionEvidence(
+      diff,
+      `
+- Script: \`test/e2e/test-example.sh\`
+  - Legacy contract: validates the example CLI path.
+  - Replacement Vitest coverage: \`test/e2e-scenario/live/does-not-exist.test.ts\`
+  - Intentionally retired behavior: none.
+  - Fidelity verification: focused Vitest run.
+`,
+    );
+
+    expect(evidence).toMatchObject({
+      replacementVitestCoveragePath: "test/e2e-scenario/live/does-not-exist.test.ts",
+      hasReplacementVitestCoverage: false,
+      missing: ["existing replacement Vitest coverage path or retirement rationale"],
+    });
   });
 
   it("adds a finding when source-of-truth review is missing follow-up", () => {

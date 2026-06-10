@@ -39,6 +39,8 @@ describe("E2E migration tracking policy", () => {
     expect(docs).toContain("retirement rationale");
     expect(docs).toContain("Legacy E2E deletion evidence");
     expect(docs).toContain("Fidelity verification");
+    expect(docs).toContain("machine-checkable boundary");
+    expect(docs).toContain("existing `.test.ts` file");
     expect(docs).toContain("generated legacy assertion inventories");
     expect(docs).toContain("not a separate E2E framework or runner");
   });

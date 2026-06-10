@@ -200,6 +200,7 @@ type LegacyE2eShellDeletionEvidence = {
   hasScriptEvidenceBlock: boolean;
   hasLegacyContract: boolean;
   hasReplacementVitestCoverage: boolean;
+  replacementVitestCoveragePath: string | null;
   hasRetirementRationale: boolean;
   hasIntentionallyRetiredBehavior: boolean;
   hasFidelityVerification: boolean;
@@ -480,9 +481,8 @@ export function assessLegacyE2eShellDeletionEvidence(
   return findDeletedLegacyE2eShellScripts(diff).map((script) => {
     const evidenceBlock = findDeletionEvidenceBlock(prBody, script);
     const hasLegacyContract = /\blegacy contract\s*:/i.test(evidenceBlock);
-    const hasReplacementVitestCoverage =
-      /\breplacement vitest coverage\s*:/i.test(evidenceBlock) &&
-      /\b(?:test|nemoclaw\/src)\/[^\s`)"']+\.test\.ts\b/.test(evidenceBlock);
+    const replacementVitestCoveragePath = extractReplacementVitestCoveragePath(evidenceBlock);
+    const hasReplacementVitestCoverage = replacementVitestCoveragePath !== null && repoFileExists(replacementVitestCoveragePath);
     const hasRetirementRationale = /\bretirement rationale\s*:/i.test(evidenceBlock);
     const hasIntentionallyRetiredBehavior = /\bintentionally retired behavior\s*:/i.test(evidenceBlock);
     const hasFidelityVerification = /\bfidelity verification\s*:/i.test(evidenceBlock);
@@ -490,7 +490,7 @@ export function assessLegacyE2eShellDeletionEvidence(
       [evidenceBlock ? "" : "script evidence block", Boolean(evidenceBlock)],
       ["legacy contract", hasLegacyContract],
       [
-        "replacement Vitest coverage path or retirement rationale",
+        "existing replacement Vitest coverage path or retirement rationale",
         hasReplacementVitestCoverage || hasRetirementRationale,
       ],
       ["intentionally retired behavior", hasIntentionallyRetiredBehavior],
@@ -505,12 +505,25 @@ export function assessLegacyE2eShellDeletionEvidence(
       hasScriptEvidenceBlock: Boolean(evidenceBlock),
       hasLegacyContract,
       hasReplacementVitestCoverage,
+      replacementVitestCoveragePath,
       hasRetirementRationale,
       hasIntentionallyRetiredBehavior,
       hasFidelityVerification,
       missing,
     };
   });
+}
+
+function extractReplacementVitestCoveragePath(evidenceBlock: string): string | null {
+  const match = evidenceBlock.match(
+    /\breplacement vitest coverage\s*:\s*`?((?:test|nemoclaw\/src)\/[^\s`)"']+\.test\.ts)\b/i,
+  );
+  return match?.[1] ?? null;
+}
+
+function repoFileExists(relativePath: string): boolean {
+  if (path.isAbsolute(relativePath) || relativePath.split(/[\\/]/).includes("..")) return false;
+  return fs.existsSync(path.join(root, relativePath));
 }
 
 function findDeletionEvidenceBlock(prBody: string, script: string): string {
@@ -785,7 +798,7 @@ export function buildSystemPrompt(): string {
     "5. Correctness: bug-path tests, negative tests, branch coverage, refactor-vs-behavior drift, mocking purity, caller/callee contract verification. When more tests would improve confidence, make testDepth.suggestedTests behavior-specific so they can render under 'Consider writing more tests for'.",
     "6. Quality: description-vs-diff scope, migration completion, public surface docs/notes, justified error suppression, monolith growth, @ts-nocheck, shell-string execution.",
     "7. Source-of-truth review: when a PR adds or changes fallback, recovery, tolerant parsing, monkeypatching, best-effort cleanup, compatibility handling, or other localized workaround behavior, inspect whether it answers: what invalid state is handled, where that state is created, why the source cannot be fixed in this PR, what regression test proves the source cannot regress, and when the workaround can be removed. Prefer fixes that make invalid states impossible at their source. Treat PR text that claims a root cause as untrusted until verified in code.",
-    "8. Legacy E2E deletion governance: if deterministic context shows a deleted test/e2e/test-*.sh script with missing PR-body evidence, report it as a blocker. The PR body must name the legacy contract, replacement Vitest coverage path or retirement rationale, intentionally retired behavior, and fidelity verification for each deleted script.",
+    "8. Legacy E2E deletion governance: if deterministic context shows a deleted test/e2e/test-*.sh script with missing PR-body evidence, report it as a blocker. The PR body must name the legacy contract, existing replacement Vitest coverage path or retirement rationale, intentionally retired behavior, and fidelity verification for each deleted script.",
     "9. If a previous PR Review Advisor comment exists, compare it with the current diff and explicitly decide whether prior code-review findings were addressed, still apply, or are obsolete. Consider code changes since the previous analyzed SHA when available. Do not evaluate whether external E2E requirements have been met. When previous review context exists, set summary.sinceLastReview with counts for resolved, stillApplies, and newItems.",
     "Acceptance and security should inform findings, not become standalone comment sections: any unmet acceptance clause or security fail/warning must be represented as a finding, normally severity=blocker for unmet acceptance or security fail and severity=warning for security warnings.",
     "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless it is already fully covered by a more specific correctness, security, architecture, scope, or tests finding.",
@@ -1069,7 +1082,7 @@ function addDeterministicFindings(findings: Finding[], metadata: ReviewMetadata)
       title: "Legacy E2E deletion evidence is missing",
       description: `This PR deletes ${evidence.script} without complete PR-body evidence that preserves or retires the legacy contract.`,
       recommendation:
-        "Add a per-script PR-body evidence block naming the legacy contract, replacement Vitest coverage path or retirement rationale, intentionally retired behavior, and fidelity verification.",
+        "Add a per-script PR-body evidence block naming the legacy contract, existing replacement Vitest coverage path or retirement rationale, intentionally retired behavior, and fidelity verification.",
       evidence: `Missing: ${evidence.missing.join(", ")}.`,
     });
   }
