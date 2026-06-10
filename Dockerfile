@@ -1072,10 +1072,15 @@ RUN set -eu; \
 #           host-side delivery-chain monitoring (verify-deployment.ts, host
 #           port forward, sandbox status).
 #
-# The process pattern matches both `openclaw gateway run` (the launcher
-# command nemoclaw-start runs) and `openclaw-gateway` (the re-execed
-# binary form OpenClaw switches into after startup). This is the same
-# variant set the host-side gateway-stop script in services.ts matches.
+# The process pattern matches `openclaw gateway run` (the launcher
+# command nemoclaw-start runs), `openclaw-gateway` (the re-execed
+# binary form OpenClaw switches into after startup), and a cmdline of
+# exactly `openclaw` (some OpenClaw builds truncate the rewritten
+# process title to the bare binary name — observed in #4710). The bare
+# form is anchored (^openclaw$) so an agent running ordinary `openclaw
+# <subcommand>` CLI invocations can never satisfy the liveness probe.
+# This is the same variant set the host-side recovery script in
+# src/lib/agent/runtime.ts kills before relaunching.
 #
 # pgrep uses --ignore-ancestors so it cannot self-match the healthcheck
 # shell that Docker spawns to run this CMD — that shell's argv contains
@@ -1093,7 +1098,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
         if [ "$rc" = 0 ]; then exit 0; fi; \
         if [ "$rc" != 7 ]; then exit 1; fi; \
         [ -f /tmp/nemoclaw-gateway-local ] || exit 0; \
-        pgrep --ignore-ancestors -f 'openclaw[ -]gateway' > /dev/null 2>&1 || exit 1; \
+        pgrep --ignore-ancestors -f '^openclaw$|openclaw[ -]gateway' > /dev/null 2>&1 || exit 1; \
         [ -s /tmp/gateway.log ]
 
 # Entrypoint runs as root to start the gateway as the gateway user,

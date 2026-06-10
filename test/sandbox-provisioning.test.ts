@@ -432,8 +432,31 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
       // --ignore-ancestors prevents pgrep from self-matching the
       // healthcheck shell whose argv contains the gateway pattern.
       // The [ -] class matches both `openclaw gateway` (launcher) and
-      // `openclaw-gateway` (re-execed binary).
-      expect(probe.calls).toContain("pgrep --ignore-ancestors -f openclaw[ -]gateway");
+      // `openclaw-gateway` (re-execed binary); the anchored ^openclaw$
+      // alternative matches builds that truncate the rewritten process
+      // title to the bare binary name (#4710).
+      expect(probe.calls).toContain("pgrep --ignore-ancestors -f ^openclaw$|openclaw[ -]gateway");
+    });
+
+    it("uses a liveness pattern that matches gateway argv and rewritten titles but not ordinary openclaw CLI use (#4710)", () => {
+      const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+      const match = dockerfile.match(/pgrep --ignore-ancestors -f '([^']+)'/);
+      if (!match) {
+        throw new Error("HEALTHCHECK pgrep liveness pattern not found in Dockerfile");
+      }
+      const pattern = match[1];
+      const matches = (cmdline: string) =>
+        spawnSync("grep", ["-qE", pattern], { input: cmdline, encoding: "utf-8" }).status === 0;
+
+      // The launcher argv and both rewritten-title forms must match.
+      expect(matches("node /usr/local/bin/openclaw gateway run --port 18789")).toBe(true);
+      expect(matches("openclaw-gateway")).toBe(true);
+      expect(matches("openclaw")).toBe(true);
+
+      // Ordinary agent CLI invocations must not satisfy the liveness probe.
+      expect(matches("openclaw plugins registry --refresh")).toBe(false);
+      expect(matches("node /usr/local/bin/openclaw devices list")).toBe(false);
+      expect(matches("vim openclaw-notes.txt")).toBe(false);
     });
 
     it("reports unhealthy when curl times out (wedged HTTP server, not namespace mismatch)", () => {
