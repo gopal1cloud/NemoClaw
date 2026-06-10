@@ -115,10 +115,11 @@ GitHub issues and PRs own changing migration status. The key issues are:
 - #4990: phase fixtures and registry-driven live discovery
 - #5098: direct legacy bash-suite migration epic
 
-The former repo-local `legacy-inventory.json` ledger is removed because it
-duplicated live GitHub state and drifted quickly. A PR that deletes a legacy E2E
-script must show the replacement Vitest coverage or explain the retirement
-rationale in the PR body and linked issue.
+The former repo-local `legacy-inventory.json` ledger and generated legacy
+assertion inventories are removed because they duplicated live GitHub state and
+drifted quickly. A PR that deletes a legacy E2E script must show the replacement
+Vitest coverage or explain the retirement rationale in the PR body and linked
+issue.
 
 Prefer new E2E coverage in Vitest fixtures. When shell, installer, process,
 platform, or full user-flow behavior is the contract, invoke that real boundary

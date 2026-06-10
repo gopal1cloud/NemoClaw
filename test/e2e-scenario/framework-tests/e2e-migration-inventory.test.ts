@@ -12,6 +12,13 @@ const MIGRATION_DOC = path.join(SCENARIO_SUITE_DIR, "docs", "MIGRATION.md");
 const README_DOC = path.join(SCENARIO_SUITE_DIR, "docs", "README.md");
 const RETIREMENT_DOC = path.join(SCENARIO_SUITE_DIR, "docs", "RETIREMENT.md");
 const LEGACY_INVENTORY = path.join(SCENARIO_SUITE_DIR, "migration", "legacy-inventory.json");
+const LEGACY_ASSERTION_INVENTORY = path.join(
+  REPO_ROOT,
+  "test",
+  "e2e",
+  "docs",
+  "parity-inventory.generated.json",
+);
 
 function read(filePath: string): string {
   return fs.readFileSync(filePath, "utf8");
@@ -20,6 +27,7 @@ function read(filePath: string): string {
 describe("E2E migration tracking policy", () => {
   it("does not use a repo-local JSON ledger as durable migration state", () => {
     expect(fs.existsSync(LEGACY_INVENTORY)).toBe(false);
+    expect(fs.existsSync(LEGACY_ASSERTION_INVENTORY)).toBe(false);
   });
 
   it("documents GitHub issues and PRs as the migration source of truth", () => {
@@ -29,6 +37,7 @@ describe("E2E migration tracking policy", () => {
     expect(docs).toContain("source of truth");
     expect(docs).toContain("replacement Vitest coverage");
     expect(docs).toContain("retirement rationale");
+    expect(docs).toContain("generated legacy assertion inventories");
   });
 
   it("keeps durable taxonomy out of the repo-local migration docs", () => {

@@ -53,9 +53,9 @@ The durable E2E system has one execution path:
 
 ## Migration Governance
 
-The former `test/e2e-scenario/migration/legacy-inventory.json` ledger is removed
-because it duplicated live GitHub issues and pull requests and quickly became a
-stale source of truth.
+The former `test/e2e-scenario/migration/legacy-inventory.json` ledger and
+generated legacy assertion inventories are removed because they duplicated live
+GitHub issues and pull requests and quickly became stale sources of truth.
 
 The useful deletion invariant is smaller:
 
