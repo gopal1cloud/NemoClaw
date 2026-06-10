@@ -5,8 +5,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { expect, test } from "../framework/e2e-test.ts";
-import { shouldRunLiveE2EScenarios } from "../framework/live-project-gate.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
+import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 
 // Migrated from test/e2e/test-whatsapp-qr-compact-e2e.sh. This hermetic
 // reporter-workflow coverage guard for #4522 installs the exact OpenClaw /
