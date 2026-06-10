@@ -23,6 +23,7 @@ const ONBOARD_ARGS = [
 const DEFAULT_TIMEOUT_MS = 15 * 60_000;
 const OPENCLAW_GATEWAY_URL = "http://127.0.0.1:18789";
 const COMPATIBLE_ENDPOINT_API_KEY = "test-compatible-endpoint-key";
+const COMPATIBLE_ENDPOINT_MAX_BODY_BYTES = 64 * 1024;
 const COMPATIBLE_ENDPOINT_MODEL = "mock-compatible-model";
 const HOST_SANDBOX_ALIAS = "host.openshell.internal";
 const NEGATIVE_PREFLIGHT_LOG = "negative-preflight.log";
@@ -119,48 +120,64 @@ async function closeServer(server: Server): Promise<void> {
 async function startCompatibleEndpointMock(): Promise<CompatibleEndpointMock> {
   const server = createServer((req, res) => {
     const path = req.url?.split("?", 1)[0] ?? "/";
+    const protectedRoute =
+      (req.method === "GET" && path === "/v1/models") ||
+      (req.method === "POST" && path === "/v1/chat/completions");
+    const writeJson = (status: number, payload: Record<string, unknown>) => {
+      if (res.writableEnded) return;
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(payload));
+    };
+    if (protectedRoute && req.headers.authorization !== `Bearer ${COMPATIBLE_ENDPOINT_API_KEY}`) {
+      req.resume();
+      writeJson(401, { error: "unauthorized" });
+      return;
+    }
+
     let body = "";
+    let bodyTooLarge = false;
+    let bodyBytes = 0;
     req.setEncoding("utf8");
     req.on("data", (chunk) => {
+      if (bodyTooLarge) return;
+      bodyBytes += Buffer.byteLength(chunk, "utf8");
+      if (bodyBytes > COMPATIBLE_ENDPOINT_MAX_BODY_BYTES) {
+        bodyTooLarge = true;
+        writeJson(413, { error: "request body too large" });
+        return;
+      }
       body += chunk;
     });
     req.on("end", () => {
+      if (bodyTooLarge || res.writableEnded) return;
       if (req.method === "GET" && path === "/health") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: true }));
+        writeJson(200, { ok: true });
         return;
       }
       if (req.method === "GET" && path === "/v1/models") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(
-          JSON.stringify({
-            object: "list",
-            data: [{ id: COMPATIBLE_ENDPOINT_MODEL, object: "model" }],
-          }),
-        );
+        writeJson(200, {
+          object: "list",
+          data: [{ id: COMPATIBLE_ENDPOINT_MODEL, object: "model" }],
+        });
         return;
       }
       if (req.method === "POST" && path === "/v1/chat/completions") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(
-          JSON.stringify({
-            id: "chatcmpl-nemoclaw-e2e",
-            object: "chat.completion",
-            model: COMPATIBLE_ENDPOINT_MODEL,
-            choices: [
-              {
-                index: 0,
-                message: { role: "assistant", content: "PONG" },
-                finish_reason: "stop",
-              },
-            ],
-            usage: { prompt_tokens: Math.max(1, body.length), completion_tokens: 1 },
-          }),
-        );
+        writeJson(200, {
+          id: "chatcmpl-nemoclaw-e2e",
+          object: "chat.completion",
+          model: COMPATIBLE_ENDPOINT_MODEL,
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: "PONG" },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: Math.max(1, body.length), completion_tokens: 1 },
+        });
         return;
       }
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "not found", path }));
+      writeJson(404, { error: "not found", path });
     });
   });
 

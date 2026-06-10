@@ -279,6 +279,30 @@ describe("onboarding phase fixture", () => {
         "stop OpenAI-compatible endpoint mock",
         "destroy NemoClaw sandbox e2e-openai-compatible",
       ]);
+
+      const endpointUrl = runner.calls[0]?.options?.env?.NEMOCLAW_ENDPOINT_URL;
+      expect(endpointUrl).toEqual(
+        expect.stringMatching(/^http:\/\/host\.openshell\.internal:\d+\/v1$/),
+      );
+      const localEndpointUrl = new URL(String(endpointUrl));
+      localEndpointUrl.hostname = "127.0.0.1";
+      const localEndpoint = localEndpointUrl.toString().replace(/\/$/, "");
+      await expect(fetch(`${localEndpoint}/models`)).resolves.toMatchObject({ status: 401 });
+      await expect(
+        fetch(`${localEndpoint}/models`, { headers: { Authorization: "Bearer wrong" } }),
+      ).resolves.toMatchObject({ status: 401 });
+      await expect(
+        fetch(`${localEndpoint}/models`, {
+          headers: { Authorization: "Bearer test-compatible-endpoint-key" },
+        }),
+      ).resolves.toMatchObject({ status: 200 });
+      await expect(
+        fetch(`${localEndpoint}/chat/completions`, {
+          body: "x".repeat(70 * 1024),
+          headers: { Authorization: "Bearer test-compatible-endpoint-key" },
+          method: "POST",
+        }),
+      ).resolves.toMatchObject({ status: 413 });
     } finally {
       await cleanup.calls
         .find((call) => call.name === "stop OpenAI-compatible endpoint mock")
