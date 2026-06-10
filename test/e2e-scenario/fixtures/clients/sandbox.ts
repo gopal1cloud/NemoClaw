@@ -9,6 +9,19 @@ export interface SandboxClientOptions {
   openshellPath?: string;
 }
 
+declare const trustedSandboxShellScriptBrand: unique symbol;
+
+export type TrustedSandboxShellScript = string & {
+  readonly [trustedSandboxShellScriptBrand]: true;
+};
+
+export function trustedSandboxShellScript(script: string): TrustedSandboxShellScript {
+  if (script.length === 0) {
+    throw new Error("sandbox shell script must not be empty");
+  }
+  return script as TrustedSandboxShellScript;
+}
+
 export class SandboxClient {
   private readonly runner: CommandRunner;
   private readonly openshellPath: string;
@@ -58,7 +71,7 @@ export class SandboxClient {
 
   execShell(
     name: string,
-    script: string,
+    script: TrustedSandboxShellScript,
     options: ShellProbeRunOptions = {},
   ): Promise<ShellProbeResult> {
     validateSandboxName(name);
@@ -75,6 +88,8 @@ export class SandboxClient {
     options: ShellProbeRunOptions = {},
   ): Promise<ShellProbeResult> {
     validateSandboxName(name);
+    validateUploadPath("local", localPath);
+    validateUploadPath("remote", remotePath);
     return this.openshell(["sandbox", "upload", name, localPath, remotePath], {
       artifactName: `sandbox-upload-${name}`,
       ...options,
@@ -91,5 +106,11 @@ export class SandboxClient {
 export function validateSandboxName(name: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name)) {
     throw new Error(`sandbox name is invalid for fixture client: ${name}`);
+  }
+}
+
+function validateUploadPath(label: string, filePath: string): void {
+  if (filePath.length === 0 || filePath.startsWith("-") || filePath.includes("\0")) {
+    throw new Error(`sandbox upload ${label} path is invalid for fixture client: ${filePath}`);
   }
 }

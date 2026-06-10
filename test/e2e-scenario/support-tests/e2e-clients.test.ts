@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { assertExitZero, type CommandRunner } from "../fixtures/clients/index.ts";
 import {
@@ -14,7 +14,9 @@ import {
   ProviderClient,
   SandboxClient,
   StateClient,
+  trustedSandboxShellScript,
   trustedProviderEndpoint,
+  type TrustedSandboxShellScript,
 } from "../fixtures/clients/index.ts";
 import type {
   ShellProbeResult,
@@ -204,8 +206,13 @@ describe("E2E fixture clients", () => {
   it("sandbox client wraps shell scripts with the named sandbox exec form", async () => {
     const runner = new FakeRunner();
     const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+    const script = trustedSandboxShellScript("echo ready");
 
-    await sandbox.execShell("assistant", "echo ready", {
+    expectTypeOf<
+      Parameters<SandboxClient["execShell"]>[1]
+    >().toEqualTypeOf<TrustedSandboxShellScript>();
+
+    await sandbox.execShell("assistant", script, {
       artifactName: "custom-exec-shell",
       timeoutMs: 123,
     });
@@ -218,6 +225,11 @@ describe("E2E fixture clients", () => {
         timeoutMs: 123,
       },
     });
+  });
+
+  it("sandbox client requires trusted non-empty shell scripts", () => {
+    expect(() => trustedSandboxShellScript("")).toThrow(/must not be empty/);
+    expectTypeOf<Parameters<SandboxClient["execShell"]>[1]>().not.toEqualTypeOf<string>();
   });
 
   it("sandbox client uploads host files into a sandbox", async () => {
@@ -236,6 +248,19 @@ describe("E2E fixture clients", () => {
         timeoutMs: 123,
       },
     });
+  });
+
+  it("sandbox client rejects flag-shaped upload paths before command construction", async () => {
+    const runner = new FakeRunner();
+    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+
+    expect(() => sandbox.upload("assistant", "--local", "/tmp/remote.js")).toThrow(
+      /sandbox upload local path is invalid/,
+    );
+    expect(() => sandbox.upload("assistant", "/tmp/local.js", "--remote")).toThrow(
+      /sandbox upload remote path is invalid/,
+    );
+    expect(runner.calls).toEqual([]);
   });
 
   it("provider client parses JSON from curl output", async () => {
