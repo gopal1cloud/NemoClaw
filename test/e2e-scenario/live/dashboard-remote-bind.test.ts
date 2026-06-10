@@ -3,7 +3,7 @@
 
 import os from "node:os";
 
-import { expect, test } from "../framework/e2e-test.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
 
 // Branch-validation-only remote dashboard bind guard. The Brev suite wires this
 // test with NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND=1 after provisioning a real
