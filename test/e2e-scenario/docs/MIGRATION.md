@@ -92,8 +92,8 @@ npx tsx test/e2e-scenario/scenarios/run.ts --list
 npx tsx test/e2e-scenario/scenarios/run.ts --emit-live-matrix
 npx tsx test/e2e-scenario/scenarios/run.ts --emit-live-matrix --scenarios ubuntu-repo-cloud-openclaw
 
-# Framework tests
-npx vitest run --project e2e-scenario-framework --silent=false --reporter=default
+# Fixture/support tests
+npx vitest run --project e2e-vitest-support --silent=false --reporter=default
 
 # Opt-in live Vitest scenarios
 npm run build:cli

@@ -70,8 +70,8 @@ npx tsx test/e2e-scenario/scenarios/run.ts --emit-live-matrix
 # Emit the matrix for selected scenario ids
 npx tsx test/e2e-scenario/scenarios/run.ts --emit-live-matrix --scenarios ubuntu-repo-cloud-openclaw
 
-# Framework tests
-npx vitest run --project e2e-scenario-framework --silent=false --reporter=default
+# Fixture/support tests
+npx vitest run --project e2e-vitest-support --silent=false --reporter=default
 
 # Opt-in live Vitest scenarios
 npm run build:cli
@@ -85,9 +85,9 @@ paths must not be reintroduced.
 
 ```text
 test/e2e-scenario/
-  docs/                  # Framework guide, migration notes, retirement record
+  docs/                  # Fixture guide, migration notes, retirement record
   framework/             # Vitest fixtures, clients, redaction, artifacts, cleanup
-  framework-tests/       # Fast framework and metadata tests
+  framework-tests/       # Fast fixture/support and metadata tests
   live/                  # Opt-in live Vitest scenario tests
   manifests/             # Product-facing NemoClawInstance desired state
   scenarios/             # Typed registry, matrix helpers, expected states
@@ -102,7 +102,7 @@ test/e2e-scenario/
 - Existing workflows such as `nightly-e2e.yaml`, `e2e-branch-validation.yaml`,
   `macos-e2e.yaml`, `wsl-e2e.yaml`, `ollama-proxy-e2e.yaml`, and
   `regression-e2e.yaml` still run direct legacy E2E scripts during migration.
-- `vitest.config.ts` contains `e2e-scenario-framework` for fast fixture/support
+- `vitest.config.ts` contains `e2e-vitest-support` for fast fixture/support
   tests and `e2e-scenarios-live` for opt-in live scenario execution.
 
 ## Migration Tracking

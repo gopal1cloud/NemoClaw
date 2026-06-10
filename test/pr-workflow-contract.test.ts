@@ -456,7 +456,7 @@ describe("pull request and main workflow contracts", () => {
     // they live under test/e2e-scenario, while the CLI project only excludes
     // the legacy test/e2e tree and installer-integration tests.
     expect(cliShardRuns).toContain("npx vitest run --project cli");
-    expect(vitestConfig).toContain('name: "e2e-scenario-framework"');
+    expect(vitestConfig).toContain('name: "e2e-vitest-support"');
     expect(vitestConfig).toContain('include: ["test/**/*.test.{js,ts}", "src/**/*.test.ts"]');
     expect(vitestConfig).toContain('"test/e2e/**"');
     expect(vitestConfig).toContain('"test/install-preflight.test.ts"');
