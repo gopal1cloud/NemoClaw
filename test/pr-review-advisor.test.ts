@@ -5,21 +5,22 @@ import fs from "node:fs";
 import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-import { buildComment } from "../tools/pr-review-advisor/comment.mts";
+import { githubGraphql } from "../tools/advisors/github.mts";
 import {
+  assessLegacyE2eShellDeletionEvidence,
   buildPromptTurns,
   buildSystemPrompt,
   classifyMonolithDelta,
   classifyTestDepth,
   detectLocalizedPatchSignals,
+  findDeletedLegacyE2eShellScripts,
   normalizeReviewResult,
   readTrustedSecurityReviewSkill,
   renderDetailedReview,
   renderSummary,
   writePromptArtifacts,
 } from "../tools/pr-review-advisor/analyze.mts";
-import { githubGraphql } from "../tools/advisors/github.mts";
+import { buildComment } from "../tools/pr-review-advisor/comment.mts";
 import { validatePrReviewAdvisorWorkflowBoundary } from "../tools/pr-review-advisor/workflow-boundary.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -39,6 +40,7 @@ function metadata(overrides: Partial<ReviewMetadata> = {}): ReviewMetadata {
     previousAdvisorReview: null,
     workflowSignals: [],
     localizedPatchSignals: [],
+    legacyE2eShellDeletionEvidence: [],
     monolithDeltas: [],
     driftEvidence: [],
     github: null,
@@ -223,6 +225,8 @@ describe("PR review advisor", () => {
     expect(prompt).toContain(
       "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding",
     );
+    expect(prompt).toContain("Legacy E2E deletion governance");
+    expect(prompt).toContain("replacement Vitest coverage path or retirement rationale");
     expect(prompt).toContain("multi-turn conversation");
     expect(prompt).toContain(
       "In the final synthesis turn, return JSON only matching the schema provided in that turn",
@@ -348,6 +352,77 @@ describe("PR review advisor", () => {
       }),
     ]);
     expect(signals[0]?.reviewRule).toContain("invalid state");
+  });
+
+  it("detects deleted legacy E2E shell scripts and complete PR-body evidence", () => {
+    const diff = `diff --git a/test/e2e/test-example.sh b/test/e2e/test-example.sh
+deleted file mode 100755
+index 1234567..0000000
+--- a/test/e2e/test-example.sh
++++ /dev/null
+@@ -1,2 +0,0 @@
+-#!/usr/bin/env bash
+-echo ok
+`;
+    const prBody = `
+## Legacy E2E deletion evidence
+
+- Script: \`test/e2e/test-example.sh\`
+  - Legacy contract: validates the example CLI path against a real shell.
+  - Replacement Vitest coverage: \`test/e2e-scenario/live/example.test.ts\`
+  - Intentionally retired behavior: none.
+  - Fidelity verification: \`npx vitest run --project e2e-scenarios-live test/e2e-scenario/live/example.test.ts\`
+`;
+
+    expect(findDeletedLegacyE2eShellScripts(diff)).toEqual(["test/e2e/test-example.sh"]);
+    expect(assessLegacyE2eShellDeletionEvidence(diff, prBody)).toEqual([
+      expect.objectContaining({
+        script: "test/e2e/test-example.sh",
+        hasScriptEvidenceBlock: true,
+        hasLegacyContract: true,
+        hasReplacementVitestCoverage: true,
+        hasRetirementRationale: false,
+        hasIntentionallyRetiredBehavior: true,
+        hasFidelityVerification: true,
+        missing: [],
+      }),
+    ]);
+  });
+
+  it("adds a blocker finding when a legacy E2E deletion lacks PR-body evidence", () => {
+    const diff = `diff --git a/test/e2e/test-example.sh b/test/e2e/test-example.sh
+deleted file mode 100755
+--- a/test/e2e/test-example.sh
++++ /dev/null
+@@ -1 +0,0 @@
+-echo ok
+`;
+    const deletionEvidence = assessLegacyE2eShellDeletionEvidence(
+      diff,
+      "- Script: `test/e2e/test-example.sh`\n  - Legacy contract: validates the example CLI path.\n",
+    );
+    const result = normalizeReviewResult(
+      validResult({ findings: [], sourceOfTruthReview: [] }),
+      metadata({
+        deterministic: {
+          ...metadata().deterministic,
+          legacyE2eShellDeletionEvidence: deletionEvidence,
+        },
+      }),
+    );
+
+    expect(deletionEvidence[0]?.missing).toEqual([
+      "replacement Vitest coverage path or retirement rationale",
+      "intentionally retired behavior",
+      "fidelity verification",
+    ]);
+    expect(result.findings[0]).toMatchObject({
+      severity: "blocker",
+      category: "tests",
+      file: "test/e2e/test-example.sh",
+      title: "Legacy E2E deletion evidence is missing",
+    });
+    expect(result.findings[0]?.evidence).toContain("replacement Vitest coverage path");
   });
 
   it("adds a finding when source-of-truth review is missing follow-up", () => {

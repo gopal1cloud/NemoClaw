@@ -121,8 +121,9 @@ GitHub issues and PRs own changing migration status. The key issues are:
 The former repo-local `legacy-inventory.json` ledger and generated legacy
 assertion inventories are removed because they duplicated live GitHub state and
 drifted quickly. A PR that deletes a legacy E2E script must show the replacement
-Vitest coverage or explain the retirement rationale in the PR body and linked
-issue.
+Vitest coverage or explain the retirement rationale in a per-script PR-body
+`Legacy E2E deletion evidence` block, with the legacy contract, intentionally
+retired behavior, and fidelity verification kept next to the deletion.
 
 Prefer new E2E coverage in Vitest fixtures. When shell, installer, process,
 platform, or full user-flow behavior is the contract, invoke that real boundary

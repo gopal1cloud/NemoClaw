@@ -37,6 +37,8 @@ describe("E2E migration tracking policy", () => {
     expect(docs).toContain("source of truth");
     expect(docs).toContain("replacement Vitest coverage");
     expect(docs).toContain("retirement rationale");
+    expect(docs).toContain("Legacy E2E deletion evidence");
+    expect(docs).toContain("Fidelity verification");
     expect(docs).toContain("generated legacy assertion inventories");
     expect(docs).toContain("not a separate E2E framework or runner");
   });

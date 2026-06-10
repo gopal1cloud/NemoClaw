@@ -163,6 +163,7 @@ type DeterministicReviewContext = {
   testDepth: ReviewAdvisorResult["testDepth"];
   workflowSignals: string[];
   localizedPatchSignals: LocalizedPatchSignal[];
+  legacyE2eShellDeletionEvidence: LegacyE2eShellDeletionEvidence[];
   monolithDeltas: MonolithDelta[];
   driftEvidence: DriftEvidence[];
   previousAdvisorReview: PreviousAdvisorReview | null;
@@ -192,6 +193,17 @@ type DriftEvidence = {
   file: string;
   recentHistory: string[];
   renameHints: string[];
+};
+
+type LegacyE2eShellDeletionEvidence = {
+  script: string;
+  hasScriptEvidenceBlock: boolean;
+  hasLegacyContract: boolean;
+  hasReplacementVitestCoverage: boolean;
+  hasRetirementRationale: boolean;
+  hasIntentionallyRetiredBehavior: boolean;
+  hasFidelityVerification: boolean;
+  missing: string[];
 };
 
 type OpenPrOverlap = {
@@ -349,6 +361,10 @@ async function collectDeterministicContext(options: {
   const github = await collectGitHubContext();
   const riskyAreas = detectRiskyAreas(options.changedFiles);
   const testDepth = classifyTestDepth(options.changedFiles, options.diff);
+  const legacyE2eShellDeletionEvidence = assessLegacyE2eShellDeletionEvidence(
+    options.diff,
+    pullRequestBodyText(github?.pullRequest),
+  );
   return {
     diffStat: getDiffStat(options.baseRef, options.headRef),
     commits: getCommits(options.baseRef, options.headRef),
@@ -357,6 +373,7 @@ async function collectDeterministicContext(options: {
     previousAdvisorReview: github?.previousAdvisorReview || null,
     workflowSignals: detectWorkflowSignals(options.changedFiles, options.diff),
     localizedPatchSignals: detectLocalizedPatchSignals(options.diff),
+    legacyE2eShellDeletionEvidence,
     monolithDeltas: computeMonolithDeltas(options.baseRef, options.changedFiles),
     driftEvidence: collectDriftEvidence(options.baseRef, options.changedFiles),
     github,
@@ -441,6 +458,74 @@ function detectWorkflowSignals(changedFiles: string[], diff: string): string[] {
   if (/npm install|pip install|curl .*\|.*sh|uv tool install/.test(diff)) signals.push("Workflow installs runtime dependencies; verify exact pins and disabled lifecycle hooks.");
   if (/github\.event\.pull_request\.(title|body|head\.ref)/.test(diff)) signals.push("PR-controlled text may be interpolated into workflow expressions; verify shell safety.");
   return signals;
+}
+
+export function findDeletedLegacyE2eShellScripts(diff: string): string[] {
+  const scripts = new Set<string>();
+  for (const block of diff.split(/\ndiff --git /)) {
+    const header = block.startsWith("diff --git ") ? block : `diff --git ${block}`;
+    const match = header.match(/^diff --git a\/(test\/e2e\/test-[^\s]+\.sh) b\/\1/m);
+    if (!match?.[1]) continue;
+    if (/^deleted file mode\b/m.test(header) || /^\+\+\+ \/dev\/null$/m.test(header)) {
+      scripts.add(match[1]);
+    }
+  }
+  return [...scripts].sort();
+}
+
+export function assessLegacyE2eShellDeletionEvidence(
+  diff: string,
+  prBody: string,
+): LegacyE2eShellDeletionEvidence[] {
+  return findDeletedLegacyE2eShellScripts(diff).map((script) => {
+    const evidenceBlock = findDeletionEvidenceBlock(prBody, script);
+    const hasLegacyContract = /\blegacy contract\s*:/i.test(evidenceBlock);
+    const hasReplacementVitestCoverage =
+      /\breplacement vitest coverage\s*:/i.test(evidenceBlock) &&
+      /\b(?:test|nemoclaw\/src)\/[^\s`)"']+\.test\.ts\b/.test(evidenceBlock);
+    const hasRetirementRationale = /\bretirement rationale\s*:/i.test(evidenceBlock);
+    const hasIntentionallyRetiredBehavior = /\bintentionally retired behavior\s*:/i.test(evidenceBlock);
+    const hasFidelityVerification = /\bfidelity verification\s*:/i.test(evidenceBlock);
+    const missing = [
+      [evidenceBlock ? "" : "script evidence block", Boolean(evidenceBlock)],
+      ["legacy contract", hasLegacyContract],
+      [
+        "replacement Vitest coverage path or retirement rationale",
+        hasReplacementVitestCoverage || hasRetirementRationale,
+      ],
+      ["intentionally retired behavior", hasIntentionallyRetiredBehavior],
+      ["fidelity verification", hasFidelityVerification],
+    ]
+      .filter(([, present]) => !present)
+      .map(([label]) => label)
+      .filter(Boolean) as string[];
+
+    return {
+      script,
+      hasScriptEvidenceBlock: Boolean(evidenceBlock),
+      hasLegacyContract,
+      hasReplacementVitestCoverage,
+      hasRetirementRationale,
+      hasIntentionallyRetiredBehavior,
+      hasFidelityVerification,
+      missing,
+    };
+  });
+}
+
+function findDeletionEvidenceBlock(prBody: string, script: string): string {
+  const normalized = prBody.replace(/\r\n/g, "\n");
+  const start = normalized.indexOf(script);
+  if (start < 0) return "";
+  const after = normalized.slice(start);
+  const nextScriptOffset = after.slice(script.length).search(/\btest\/e2e\/test-[^\s`)"']+\.sh\b/);
+  const maxEnd = Math.min(after.length, 3000);
+  const end = nextScriptOffset >= 0 ? Math.min(script.length + nextScriptOffset, maxEnd) : maxEnd;
+  return after.slice(0, end);
+}
+
+function pullRequestBodyText(pullRequest: unknown): string {
+  return stringOrDefault(getPath<unknown>(pullRequest, ["body"]), "");
 }
 
 export function detectLocalizedPatchSignals(diff: string): LocalizedPatchSignal[] {
@@ -700,7 +785,8 @@ export function buildSystemPrompt(): string {
     "5. Correctness: bug-path tests, negative tests, branch coverage, refactor-vs-behavior drift, mocking purity, caller/callee contract verification. When more tests would improve confidence, make testDepth.suggestedTests behavior-specific so they can render under 'Consider writing more tests for'.",
     "6. Quality: description-vs-diff scope, migration completion, public surface docs/notes, justified error suppression, monolith growth, @ts-nocheck, shell-string execution.",
     "7. Source-of-truth review: when a PR adds or changes fallback, recovery, tolerant parsing, monkeypatching, best-effort cleanup, compatibility handling, or other localized workaround behavior, inspect whether it answers: what invalid state is handled, where that state is created, why the source cannot be fixed in this PR, what regression test proves the source cannot regress, and when the workaround can be removed. Prefer fixes that make invalid states impossible at their source. Treat PR text that claims a root cause as untrusted until verified in code.",
-    "8. If a previous PR Review Advisor comment exists, compare it with the current diff and explicitly decide whether prior code-review findings were addressed, still apply, or are obsolete. Consider code changes since the previous analyzed SHA when available. Do not evaluate whether external E2E requirements have been met. When previous review context exists, set summary.sinceLastReview with counts for resolved, stillApplies, and newItems.",
+    "8. Legacy E2E deletion governance: if deterministic context shows a deleted test/e2e/test-*.sh script with missing PR-body evidence, report it as a blocker. The PR body must name the legacy contract, replacement Vitest coverage path or retirement rationale, intentionally retired behavior, and fidelity verification for each deleted script.",
+    "9. If a previous PR Review Advisor comment exists, compare it with the current diff and explicitly decide whether prior code-review findings were addressed, still apply, or are obsolete. Consider code changes since the previous analyzed SHA when available. Do not evaluate whether external E2E requirements have been met. When previous review context exists, set summary.sinceLastReview with counts for resolved, stillApplies, and newItems.",
     "Acceptance and security should inform findings, not become standalone comment sections: any unmet acceptance clause or security fail/warning must be represented as a finding, normally severity=blocker for unmet acceptance or security fail and severity=warning for security warnings.",
     "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless it is already fully covered by a more specific correctness, security, architecture, scope, or tests finding.",
     "Set summary.topItem to the most important actionable finding title or short description for first-review comments. Keep it concise and code-focused.",
@@ -806,6 +892,7 @@ function buildValidationTurnContext(context: DeterministicReviewContext): Record
   return {
     testDepth: context.testDepth,
     localizedPatchSignals: context.localizedPatchSignals,
+    legacyE2eShellDeletionEvidence: context.legacyE2eShellDeletionEvidence,
     previousAdvisorReview: context.previousAdvisorReview,
     pullRequest: context.github?.pullRequest ?? null,
     linkedIssues: context.github?.linkedIssues ?? [],
@@ -853,6 +940,10 @@ export function normalizeReviewResult(result: unknown, metadata: ReviewMetadata)
   if (!isRecord(result)) throw new Error("PR review advisor returned a non-object result");
   const object = result as Record<string, unknown>;
   const sourceOfTruthReview = sanitizeSourceOfTruthReview(object.sourceOfTruthReview);
+  const findings = addDeterministicFindings(
+    addSourceOfTruthFindings(sanitizeFindings(object.findings), sourceOfTruthReview),
+    metadata,
+  );
   return {
     version: 1,
     baseRef: metadata.baseRef,
@@ -860,7 +951,7 @@ export function normalizeReviewResult(result: unknown, metadata: ReviewMetadata)
     headSha: metadata.headSha,
     changedFiles: metadata.changedFiles,
     summary: sanitizeSummary(object.summary),
-    findings: addSourceOfTruthFindings(sanitizeFindings(object.findings), sourceOfTruthReview),
+    findings,
     acceptanceCoverage: sanitizeAcceptanceCoverage(object.acceptanceCoverage),
     securityCategories: sanitizeSecurityCategories(object.securityCategories),
     sourceOfTruthReview,
@@ -959,6 +1050,27 @@ function addSourceOfTruthFindings(findings: Finding[], sourceOfTruthReview: Sour
       description: `The advisor marked localized patch analysis as ${review.status}.`,
       recommendation: "Identify the invalid state, source boundary, source-fix constraint, regression test, and removal condition before merging the localized behavior.",
       evidence: review.evidence,
+    });
+  }
+  const originalSlots = Math.max(0, 50 - injected.length);
+  return [...injected, ...findings.slice(0, originalSlots)];
+}
+
+function addDeterministicFindings(findings: Finding[], metadata: ReviewMetadata): Finding[] {
+  const deletionEvidence = metadata.deterministic.legacyE2eShellDeletionEvidence ?? [];
+  const injected: Finding[] = [];
+  for (const evidence of deletionEvidence) {
+    if (evidence.missing.length === 0) continue;
+    injected.push({
+      severity: "blocker",
+      category: "tests",
+      file: evidence.script,
+      line: null,
+      title: "Legacy E2E deletion evidence is missing",
+      description: `This PR deletes ${evidence.script} without complete PR-body evidence that preserves or retires the legacy contract.`,
+      recommendation:
+        "Add a per-script PR-body evidence block naming the legacy contract, replacement Vitest coverage path or retirement rationale, intentionally retired behavior, and fidelity verification.",
+      evidence: `Missing: ${evidence.missing.join(", ")}.`,
     });
   }
   const originalSlots = Math.max(0, 50 - injected.length);
