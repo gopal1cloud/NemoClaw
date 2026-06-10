@@ -302,6 +302,20 @@ describe("onboarding phase fixture", () => {
       ).resolves.toMatchObject({ status: 200 });
       await expect(
         fetch(`${localEndpoint}/chat/completions`, {
+          body: JSON.stringify({ model: "wrong-model" }),
+          headers: { Authorization: `Bearer ${compatibleApiKey}` },
+          method: "POST",
+        }),
+      ).resolves.toMatchObject({ status: 400 });
+      await expect(
+        fetch(`${localEndpoint}/chat/completions`, {
+          body: JSON.stringify({ model: "mock-compatible-model" }),
+          headers: { Authorization: `Bearer ${compatibleApiKey}` },
+          method: "POST",
+        }),
+      ).resolves.toMatchObject({ status: 200 });
+      await expect(
+        fetch(`${localEndpoint}/chat/completions`, {
           body: "x".repeat(70 * 1024),
           headers: { Authorization: `Bearer ${compatibleApiKey}` },
           method: "POST",

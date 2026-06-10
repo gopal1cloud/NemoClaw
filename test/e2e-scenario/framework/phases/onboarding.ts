@@ -163,6 +163,23 @@ async function startCompatibleEndpointMock(): Promise<CompatibleEndpointMock> {
         return;
       }
       if (req.method === "POST" && path === "/v1/chat/completions") {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(body || "{}");
+        } catch {
+          writeJson(400, { error: "invalid JSON request body" });
+          return;
+        }
+        const requestedModel =
+          parsed && typeof parsed === "object" ? (parsed as { model?: unknown }).model : undefined;
+        if (requestedModel !== COMPATIBLE_ENDPOINT_MODEL) {
+          writeJson(400, {
+            error: "unsupported model",
+            expected: COMPATIBLE_ENDPOINT_MODEL,
+            received: typeof requestedModel === "string" ? requestedModel : null,
+          });
+          return;
+        }
         writeJson(200, {
           id: "chatcmpl-nemoclaw-e2e",
           object: "chat.completion",

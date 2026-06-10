@@ -63,6 +63,10 @@ export interface InferenceRuntimeRouteOptions extends InferenceRuntimeRequestOpt
   readonly route?: InferenceRoute;
 }
 
+export interface InferenceRuntimeModelsOptions extends InferenceRuntimeRouteOptions {
+  readonly expectedModel?: string;
+}
+
 export interface ProviderRuntimeRequestOptions extends InferenceRuntimeRequestOptions {
   readonly apiKey?: string;
 }
@@ -217,24 +221,36 @@ function assertChatCompletionShape(json: unknown, label: string): void {
   }
 }
 
-function hasModelIdentifier(entry: unknown): boolean {
-  if (typeof entry === "string") return entry.trim().length > 0;
-  if (!entry || typeof entry !== "object") return false;
+function modelIdentifiers(entry: unknown): string[] {
+  if (typeof entry === "string") {
+    const value = entry.trim();
+    return value ? [value] : [];
+  }
+  if (!entry || typeof entry !== "object") return [];
+  const identifiers: string[] = [];
   for (const key of ["id", "model", "name"]) {
     const value = (entry as Record<string, unknown>)[key];
-    if (typeof value === "string" && value.trim().length > 0) return true;
+    if (typeof value === "string" && value.trim().length > 0) {
+      identifiers.push(value.trim());
+    }
   }
-  return false;
+  return identifiers;
 }
 
-function assertModelListShape(json: unknown, label: string): void {
+function assertModelListShape(json: unknown, label: string, expectedModel?: string): void {
   if (!json || typeof json !== "object") {
     throw new Error(`${label} response was not an object`);
   }
   const body = json as { data?: unknown; models?: unknown };
-  const candidates = [body.data, body.models].filter(Array.isArray);
-  if (!candidates.some((items) => items.some(hasModelIdentifier))) {
+  const candidates = [body.data, body.models].filter((value): value is unknown[] =>
+    Array.isArray(value),
+  );
+  const identifiers = candidates.flatMap((items) => items.flatMap(modelIdentifiers));
+  if (identifiers.length === 0) {
     throw new Error(`${label} response missing model data`);
+  }
+  if (expectedModel && !identifiers.includes(expectedModel)) {
+    throw new Error(`${label} response missing expected model '${expectedModel}'`);
   }
 }
 
@@ -386,6 +402,7 @@ export class RuntimePhaseFixture {
         await this.expectInferenceLocalModels(instance, {
           artifactName: suiteArtifactName(suiteId, "models-health"),
           curlMaxTimeSeconds: 20,
+          expectedModel: model,
           route: "inference-local",
           timeoutMs: 30_000,
         }),
@@ -441,7 +458,7 @@ export class RuntimePhaseFixture {
 
   async expectInferenceLocalModels(
     instance: NemoClawInstance,
-    options: InferenceRuntimeRouteOptions = {},
+    options: InferenceRuntimeModelsOptions = {},
   ): Promise<InferenceRuntimeProbeResult> {
     const endpoint = inferenceRouteUrl(options.route, options.path ?? MODELS_PATH);
     const result = await this.sandbox.exec(
@@ -460,6 +477,7 @@ export class RuntimePhaseFixture {
     assertModelListShape(
       parseJsonBody(result.stdout, "inference.local models"),
       "inference.local models",
+      options.expectedModel,
     );
     return { endpoint, result };
   }
@@ -527,10 +545,10 @@ export class RuntimePhaseFixture {
 
   async expectProviderModels(
     endpoint: TrustedProviderEndpoint,
-    options: ProviderRuntimeRequestOptions = {},
+    options: ProviderRuntimeRequestOptions & { expectedModel?: string } = {},
   ): Promise<InferenceRuntimeProbeResult> {
     const response = await this.provider.requestJson(endpoint, providerRequestOptions(options));
-    assertModelListShape(response.json, "provider models");
+    assertModelListShape(response.json, "provider models", options.expectedModel);
     return { endpoint: endpoint.logLabel, result: response.result };
   }
 
