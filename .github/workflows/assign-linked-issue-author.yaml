@@ -31,34 +31,115 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Discover linked issues by parsing PR body for GitHub's closing
+          # keywords and issue references (REST + body-parse path), instead
+          # of querying the GraphQL `closingIssuesReferences` field.
+          #
+          # Rationale: the GraphQL endpoint has periodic transient HTTP 401
+          # auth flakes on `pull_request_target` runs that cause this
+          # workflow to fail across many open PRs simultaneously. The REST
+          # endpoint for PR metadata (`/repos/{owner}/{repo}/pulls/{N}`)
+          # does not exhibit the same flake, and the closing-keyword
+          # contract in PR bodies is the canonical user-facing source of
+          # "what does this PR close".
+          #
+          # Trade-off: body-parsing handles GitHub's documented closing
+          # keywords for same-repo issues (the only case this workflow
+          # cares about — it can only assign authors to issues in the
+          # same repo). It does NOT pick up linked issues added solely
+          # via the PR sidebar's "Development" picker without a body
+          # keyword. That edge case is rare and has not been observed
+          # for this workflow's job scope.
+
+          extract_linked_issues() {
+            # Read body from stdin, write one same-repo issue number per line.
+            python3 - "$REPO" <<'PY'
+          import os, re, sys
+
+          repo = sys.argv[1]
+          owner, name = repo.split("/", 1)
+          body = sys.stdin.read() or ""
+
+          # Strip fenced code blocks and HTML comments so closing keywords
+          # inside example snippets don't trigger false-positive assignments.
+          body = re.sub(r"```.*?```", "", body, flags=re.DOTALL)
+          body = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL)
+
+          # GitHub closing keywords (case-insensitive):
+          #   close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved
+          # Same-repo issue reference forms recognised:
+          #   #N
+          #   OWNER/REPO#N      (where OWNER/REPO matches this repo)
+          #   GH-N
+          #   https://github.com/OWNER/REPO/issues/N (same repo)
+          keyword = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
+          repo_q  = re.escape(f"{owner}/{name}")
+          ref = (
+              r"(?:"
+                r"#(?P<short>\d+)"
+              r"|GH-(?P<gh>\d+)"
+              r"|" + repo_q + r"#(?P<qual>\d+)"
+              r"|https?://github\.com/" + repo_q + r"/issues/(?P<url>\d+)"
+              r")"
+          )
+          pattern = re.compile(
+              r"\b" + keyword + r"\b\s*:?\s*" + ref,
+              flags=re.IGNORECASE,
+          )
+
+          seen = []
+          seen_set = set()
+          for m in pattern.finditer(body):
+              n = m.group("short") or m.group("gh") or m.group("qual") or m.group("url")
+              if n and n not in seen_set:
+                  seen_set.add(n)
+                  seen.append(n)
+          for n in seen:
+              print(n)
+          PY
+          }
+
           assign_author_to_issue() {
             local issue_number="$1"
             local author="$2"
             local pr_number="$3"
 
+            # The assignability probe is REST-only.
             if gh api "repos/$REPO/issues/$issue_number/assignees/$author" >/dev/null 2>&1; then
-              gh issue edit "$issue_number" --repo "$REPO" --add-assignee "$author"
-              echo "Assigned issue #$issue_number to @$author from PR #$pr_number"
+              # Add the assignee via REST instead of `gh issue edit`, which
+              # uses GraphQL under the hood.
+              if gh api -X POST "repos/$REPO/issues/$issue_number/assignees" \
+                  -f "assignees[]=$author" >/dev/null 2>&1; then
+                echo "Assigned issue #$issue_number to @$author from PR #$pr_number"
+              else
+                echo "::warning::Failed to add @$author to issue #$issue_number from PR #$pr_number"
+              fi
             else
               echo "::notice::@$author cannot be assigned to issue #$issue_number from PR #$pr_number"
             fi
           }
 
-          process_pr_json() {
-            local pr_json="$1"
-            local author
-            local issues
-            local pr_number
+          process_pr() {
+            local pr_number="$1"
 
-            pr_number="$(jq -r '.number' <<<"$pr_json")"
-            author="$(jq -r '.author.login // empty' <<<"$pr_json")"
+            # Fetch via REST (no GraphQL dependency).
+            local pr_payload
+            if ! pr_payload="$(gh api "repos/$REPO/pulls/$pr_number" 2>/dev/null)"; then
+              echo "::warning::Failed to fetch PR #$pr_number metadata; skipping"
+              return
+            fi
+
+            local author body
+            author="$(jq -r '.user.login // empty' <<<"$pr_payload")"
+            body="$(jq -r '.body // ""' <<<"$pr_payload")"
 
             if [ -z "$author" ]; then
               echo "::notice::PR #$pr_number has no assignable author"
               return
             fi
 
-            issues="$(jq -r '.closingIssuesReferences[]?.number' <<<"$pr_json")"
+            local issues
+            issues="$(printf '%s' "$body" | extract_linked_issues)"
 
             if [ -z "$issues" ]; then
               echo "PR #$pr_number does not reference any closing issues"
@@ -72,13 +153,15 @@ jobs:
           }
 
           if [ -n "${PR_NUMBER:-}" ]; then
-            pr_json="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json author,closingIssuesReferences,number)"
-            process_pr_json "$pr_json"
+            process_pr "$PR_NUMBER"
           else
-            gh pr list --repo "$REPO" --state open --limit 1000 --json author,closingIssuesReferences,number |
-              jq -c '.[]' |
-              while IFS= read -r pr_json; do
-                [ -n "$pr_json" ] || continue
-                process_pr_json "$pr_json"
+            # Schedule / workflow_dispatch: paginate through open PRs via REST.
+            # Uses Link-header pagination automatically through `--paginate`.
+            gh api --paginate \
+              "repos/$REPO/pulls?state=open&per_page=100" \
+              --jq '.[] | .number' |
+              while IFS= read -r pr_number; do
+                [ -n "$pr_number" ] || continue
+                process_pr "$pr_number"
               done
           fi
