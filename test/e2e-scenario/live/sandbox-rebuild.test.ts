@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { expect, test } from "../framework/e2e-test.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
 
 // Manual sandbox rebuild proof. This creates and rebuilds a real sandbox, so it
 // stays behind an explicit opt-in even when live E2E scenarios are enabled.
