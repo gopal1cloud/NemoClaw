@@ -198,15 +198,32 @@ describe("runtime phase fixture", () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, JSON.stringify({ healthy_count: 1 })));
 
-    const result = await fixture(runner).expectModelRouterHealthyEndpoint();
+    const result = await fixture(runner).expectModelRouterHealthyEndpoint({
+      apiKey: "provider-secret",
+      headers: ["X-Api-Key: header-secret"],
+    });
 
     expect(result.endpoint).toBe("http://127.0.0.1:4000/health");
     expect(runner.calls[0]).toEqual({
       command: "curl",
-      args: ["-fsS", "--max-time", "10", "http://127.0.0.1:4000/health"],
+      args: [
+        "-fsS",
+        "--max-time",
+        "10",
+        "-H",
+        "X-Api-Key: header-secret",
+        "-H",
+        "Authorization: Bearer provider-secret",
+        "http://127.0.0.1:4000/health",
+      ],
       options: {
         artifactName: "runtime-model-router-health",
-        redactionValues: [],
+        redactionValues: expect.arrayContaining([
+          "X-Api-Key: header-secret",
+          "header-secret",
+          "provider-secret",
+        ]),
+        timeoutMs: 60_000,
       },
     });
   });
