@@ -11,8 +11,8 @@ const SCENARIO_SUITE_DIR = path.join(REPO_ROOT, "test/e2e-scenario");
 const MIGRATION_DOC = path.join(SCENARIO_SUITE_DIR, "docs", "MIGRATION.md");
 const README_DOC = path.join(SCENARIO_SUITE_DIR, "docs", "README.md");
 const RETIREMENT_DOC = path.join(SCENARIO_SUITE_DIR, "docs", "RETIREMENT.md");
-const LEGACY_INVENTORY = path.join(SCENARIO_SUITE_DIR, "migration", "legacy-inventory.json");
-const LEGACY_ASSERTION_INVENTORY = path.join(
+const FORBIDDEN_LEGACY_LEDGER = path.join(SCENARIO_SUITE_DIR, "migration", "legacy-inventory.json");
+const FORBIDDEN_LEGACY_ASSERTION_LEDGER = path.join(
   REPO_ROOT,
   "test",
   "e2e",
@@ -26,8 +26,8 @@ function read(filePath: string): string {
 
 describe("E2E migration tracking policy", () => {
   it("does not use a repo-local JSON ledger as durable migration state", () => {
-    expect(fs.existsSync(LEGACY_INVENTORY)).toBe(false);
-    expect(fs.existsSync(LEGACY_ASSERTION_INVENTORY)).toBe(false);
+    expect(fs.existsSync(FORBIDDEN_LEGACY_LEDGER)).toBe(false);
+    expect(fs.existsSync(FORBIDDEN_LEGACY_ASSERTION_LEDGER)).toBe(false);
   });
 
   it("documents GitHub issues and PRs as the migration source of truth", () => {
