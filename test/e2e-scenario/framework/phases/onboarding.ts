@@ -207,7 +207,9 @@ export class OnboardingPhaseFixture {
     options: OnboardingOptions = {},
   ): Promise<NemoClawInstance> {
     if (!environment.docker.available) {
-      throw new Error("cloud-openclaw-provider-routed onboarding requires an available Docker runtime.");
+      throw new Error(
+        "cloud-openclaw-provider-routed onboarding requires an available Docker runtime.",
+      );
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
     const apiKey = this.secrets.required("NVIDIA_API_KEY");

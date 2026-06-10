@@ -212,10 +212,9 @@ describe("onboarding phase fixture", () => {
     const secrets = new FakeSecrets({ NVIDIA_API_KEY: "secret-token" });
     const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets, cleanup);
 
-    const instance = await onboard.from(
-      ready({ onboarding: "cloud-openclaw-provider-routed" }),
-      { sandboxName: "e2e-provider-routed" },
-    );
+    const instance = await onboard.from(ready({ onboarding: "cloud-openclaw-provider-routed" }), {
+      sandboxName: "e2e-provider-routed",
+    });
 
     expect(instance).toMatchObject({
       onboarding: "cloud-openclaw-provider-routed",
@@ -250,7 +249,10 @@ describe("onboarding phase fixture", () => {
   });
 
   it("requires Docker for provider-routed cloud OpenClaw onboarding", async () => {
-    const onboard = new OnboardingPhaseFixture(new HostCliClient(new FakeRunner()), new FakeSecrets({ NVIDIA_API_KEY: "secret" }));
+    const onboard = new OnboardingPhaseFixture(
+      new HostCliClient(new FakeRunner()),
+      new FakeSecrets({ NVIDIA_API_KEY: "secret" }),
+    );
 
     await expect(
       onboard.from(
@@ -259,7 +261,9 @@ describe("onboarding phase fixture", () => {
           docker: { id: "docker-running", expectation: "required", available: false },
         }),
       ),
-    ).rejects.toThrow(/cloud-openclaw-provider-routed onboarding requires an available Docker runtime/);
+    ).rejects.toThrow(
+      /cloud-openclaw-provider-routed onboarding requires an available Docker runtime/,
+    );
   });
 
   it("requires Docker for cloud OpenClaw onboarding", async () => {

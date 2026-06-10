@@ -266,7 +266,9 @@ describe("runtime phase fixture", () => {
       ),
     );
 
-    await expect(fixture(runner).expectModelRouterProviderRoutedCompletion(instance())).rejects.toThrow(
+    await expect(
+      fixture(runner).expectModelRouterProviderRoutedCompletion(instance()),
+    ).rejects.toThrow(
       "model-router provider-routed completion response model was not provider-routed",
     );
   });
@@ -280,9 +282,9 @@ describe("runtime phase fixture", () => {
       ),
     );
 
-    await expect(fixture(runner).expectModelRouterProviderRoutedCompletion(instance())).rejects.toThrow(
-      "model-router provider-routed completion response missing PONG content",
-    );
+    await expect(
+      fixture(runner).expectModelRouterProviderRoutedCompletion(instance()),
+    ).rejects.toThrow("model-router provider-routed completion response missing PONG content");
   });
 
   it("accepts configured status codes for auth-proxy and route-health checks", async () => {
