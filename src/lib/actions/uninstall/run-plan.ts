@@ -490,6 +490,99 @@ function stopOllamaAuthProxy(paths: UninstallPaths, runtime: UninstallRuntime): 
   if (stopped.size === 0) runtime.log("No Ollama auth proxy processes found");
 }
 
+// The Model Router (experimental inference provider) is a detached host
+// process started by the routed-inference onboard path. It listens on
+// `NEMOCLAW_MODEL_ROUTER_PORT` (default 4000) and its PID is recorded in
+// `~/.nemoclaw/onboard-session.json` (`routerPid`). Mirrors the Ollama auth
+// proxy cleanup above.
+const DEFAULT_MODEL_ROUTER_PORT = 4000;
+
+// Both flags are unique to NemoClaw's `model-router proxy` invocation
+// (see `startModelRouter` in `src/lib/onboard/model-router.ts`). Requiring
+// both keeps the port-fallback scan from killing an unrelated listener that
+// merely happens to be bound to port 4000.
+const MODEL_ROUTER_CMDLINE_MARKS = ["--litellm-config", "--router-config"] as const;
+
+function resolveModelRouterPort(runtime: UninstallRuntime): number {
+  const raw = runtime.env.NEMOCLAW_MODEL_ROUTER_PORT;
+  if (raw === undefined || raw === "") return DEFAULT_MODEL_ROUTER_PORT;
+  const trimmed = String(raw).trim();
+  if (!/^\d+$/.test(trimmed)) return DEFAULT_MODEL_ROUTER_PORT;
+  const parsed = Number(trimmed);
+  if (parsed < 1024 || parsed > 65535) return DEFAULT_MODEL_ROUTER_PORT;
+  return parsed;
+}
+
+function isModelRouterPid(pid: number, runtime: UninstallRuntime): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  const result = runtime.run("ps", ["-p", String(pid), "-o", "args="], { env: runtime.env });
+  return result.status === 0 && MODEL_ROUTER_CMDLINE_MARKS.every((m) => result.stdout.includes(m));
+}
+
+function tryStopModelRouterPid(pid: number, runtime: UninstallRuntime): boolean {
+  // Verify the PID is actually gone before claiming success — otherwise the
+  // next onboarding fails with "Port <port> already has a healthy router
+  // endpoint, but its credential state is unknown" (issue #5169), because the
+  // session file recording the PID is wiped by the "State and binaries" step
+  // while the process keeps running.
+  runtime.kill(pid);
+  if (waitForPidExit(pid, runtime, 1000)) {
+    runtime.log(`Stopped model router ${pid}`);
+    return true;
+  }
+  runtime.kill(pid, "SIGKILL");
+  if (waitForPidExit(pid, runtime, 1000)) {
+    runtime.log(`Stopped model router ${pid}`);
+    return true;
+  }
+  runtime.warn(`Failed to stop model router ${pid}`);
+  return false;
+}
+
+function readSessionRouterPid(sessionFile: string): number | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(sessionFile, "utf-8"));
+    const pid = Number(parsed?.routerPid);
+    return Number.isFinite(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function stopModelRouter(paths: UninstallPaths, runtime: UninstallRuntime): void {
+  const port = resolveModelRouterPort(runtime);
+  const stopped = new Set<number>();
+
+  // 1. Persisted onboard session PID. Read it before the "State and binaries"
+  //    step removes `~/.nemoclaw/`. Path mirrors `SESSION_FILE` in
+  //    `src/lib/state/onboard-session.ts` (`~/.nemoclaw/onboard-session.json`).
+  const sessionFile = path.join(paths.nemoclawStateDir, "onboard-session.json");
+  if (runtime.existsSync(sessionFile)) {
+    const pid = readSessionRouterPid(sessionFile);
+    if (pid !== null && isModelRouterPid(pid, runtime)) {
+      if (tryStopModelRouterPid(pid, runtime)) stopped.add(pid);
+    }
+  }
+
+  // 2. Fall back to the configured router port for orphans whose session file
+  //    is gone (e.g. a previous uninstall wiped state but the process
+  //    survived). Filter via cmdline so we never kill unrelated listeners.
+  if (!runtime.commandExists("lsof")) {
+    if (stopped.size === 0) runtime.warn("lsof not found; skipping orphan model router scan.");
+    return;
+  }
+  const lsof = runtime.run("lsof", ["-ti", `:${port}`], { env: runtime.env });
+  const pids = splitNonEmptyLines(lsof.stdout).map(Number).filter(Number.isFinite);
+  for (const pid of pids) {
+    if (stopped.has(pid)) continue;
+    if (!pidOwnedByCurrentUser(pid, runtime)) continue;
+    if (!isModelRouterPid(pid, runtime)) continue;
+    if (tryStopModelRouterPid(pid, runtime)) stopped.add(pid);
+  }
+
+  if (stopped.size === 0) runtime.log("No model router processes found");
+}
+
 function stopOrphanedOpenShell(runtime: UninstallRuntime): void {
   if (!runtime.commandExists("pgrep")) {
     runtime.warn("pgrep not found; skipping orphaned openshell process cleanup.");
@@ -797,6 +890,7 @@ function executePlan(
         { logNoProcesses: true },
       );
       stopOllamaAuthProxy(paths, runtime);
+      stopModelRouter(paths, runtime);
     } else if (step.name === "OpenShell resources") {
       removeOpenShellResources(options, runtime);
     } else if (step.name === "NemoClaw CLI") {
