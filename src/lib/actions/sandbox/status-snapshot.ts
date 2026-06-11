@@ -72,7 +72,8 @@ export interface SandboxStatusReport {
   found: boolean;
   agent: string;
   agentDisplayName: string;
-  agentRuntime: "gateway" | "terminal";
+  agentRuntime: "gateway" | "terminal" | "unknown";
+  agentLoadError?: string;
   model: string;
   provider: string;
   phase: string | null;
@@ -111,6 +112,7 @@ export interface SandboxStatusSnapshot {
 type ReconcileSandboxGatewayState = (sandboxName: string) => Promise<SandboxGatewayState>;
 
 interface CollectSandboxStatusSnapshotDeps {
+  getSandbox?: typeof registry.getSandbox;
   probeProviderHealthImpl?: ProbeProviderHealth;
   reconcile?: ReconcileSandboxGatewayState;
 }
@@ -128,7 +130,8 @@ export async function collectSandboxStatusSnapshot(
       getReconciledSandboxGatewayState(name, {
         getState: getSandboxGatewayStateForStatus,
       }));
-  const sb = registry.getSandbox(sandboxName);
+  const getSandbox = opts.deps?.getSandbox ?? registry.getSandbox;
+  const sb = getSandbox(sandboxName);
   let lookup: SandboxGatewayState;
   try {
     lookup = await reconcile(sandboxName);
@@ -213,7 +216,8 @@ async function buildSandboxStatusReport(
   sandboxName: string,
   deps: CollectSandboxStatusSnapshotDeps,
 ): Promise<SandboxStatusReport> {
-  const preflight = await getSandboxStatusPreflight(registry.getSandbox(sandboxName));
+  const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const preflight = await getSandboxStatusPreflight(getSandbox(sandboxName));
   const snapshot = await collectSandboxStatusSnapshot(sandboxName, {
     suppressInferenceProbe: preflight.suppressInferenceProbe,
     deps,
@@ -229,13 +233,17 @@ async function buildSandboxStatusReport(
       : [];
   const agentName = sb?.agent || "openclaw";
   let agentDisplayName = agentName === "openclaw" ? "OpenClaw" : agentName;
-  let agentRuntime: "gateway" | "terminal" = "gateway";
+  let agentRuntime: "gateway" | "terminal" | "unknown" = "gateway";
+  let agentLoadError: string | undefined;
   try {
     const agent = loadAgent(agentName);
     agentDisplayName = agent.displayName;
     agentRuntime = getAgentRuntimeKind(agent);
-  } catch {
-    /* keep registry fallback values */
+  } catch (err) {
+    if (agentName !== "openclaw") {
+      agentRuntime = "unknown";
+      agentLoadError = err instanceof Error ? err.message : String(err);
+    }
   }
   return {
     schemaVersion: 1,
@@ -244,6 +252,7 @@ async function buildSandboxStatusReport(
     agent: agentName,
     agentDisplayName,
     agentRuntime,
+    ...(agentLoadError ? { agentLoadError } : {}),
     model: currentModel,
     provider: currentProvider,
     phase,

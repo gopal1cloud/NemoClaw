@@ -15,6 +15,7 @@ import {
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
+import { runAgentSmokeCommands } from "../../agent/terminal-smoke";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
@@ -27,7 +28,7 @@ import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inferen
 import { ensureOllamaAuthProxy, probeOllamaAuthProxyHealth } from "../../inference/ollama/proxy";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import { isWsl } from "../../platform";
-import { ROOT } from "../../runner";
+import { ROOT, redact } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
 import {
   isTerminalSandboxPhase,
@@ -187,9 +188,19 @@ function runSandboxConnectProbe(sandboxName: string): void {
   const agentName = agentRuntime.getAgentDisplayName(agent);
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) {
     ensureSandboxInferenceRoute(sandboxName, { quiet: true });
+    const smokeResult = runAgentSmokeCommands(sandboxName, agent, captureOpenshell);
+    if (!smokeResult.ok) {
+      console.error(
+        `  Probe failed: ${agentName} terminal smoke command failed: ${smokeResult.command}`,
+      );
+      if (smokeResult.output) {
+        console.error(`    ${String(redact(smokeResult.output)).slice(0, 500)}`);
+      }
+      process.exit(1);
+    }
     const command = agentRuntime.getTerminalCommand(agent);
     const commandText = command ? ` (${command})` : "";
-    console.log(`  Probe complete: ${agentName} terminal runtime is available${commandText}.`);
+    console.log(`  Probe complete: ${agentName} terminal smoke checks passed${commandText}.`);
     return;
   }
 

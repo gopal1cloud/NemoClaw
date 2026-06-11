@@ -68,6 +68,8 @@ function buildConfig(settings: Settings): string {
     "enabled = true",
     "",
     "[models.providers.openai.params]",
+    "# NemoClaw-managed inference.local currently exposes Chat Completions.",
+    "# Remove this override when that route supports OpenAI Responses API.",
     "use_responses_api = false",
     "",
     "[update]",

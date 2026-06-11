@@ -61,9 +61,23 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && chmod 660 /sandbox/.deepagents/config.toml
 
 USER root
+RUN chown root:root /sandbox/.nemoclaw \
+    && chmod 1755 /sandbox/.nemoclaw \
+    && chown -R root:root /sandbox/.nemoclaw/blueprints \
+    && chmod -R 755 /sandbox/.nemoclaw/blueprints \
+    && mkdir -p /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
+    && chown sandbox:sandbox /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
+    && printf '%s' '{}' > /sandbox/.nemoclaw/config.json \
+    && chown sandbox:sandbox /sandbox/.nemoclaw/config.json
+
 RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         chmod -R a+rwX /sandbox/.deepagents; \
         find /sandbox/.deepagents -type d -exec chmod a+rwx {} +; \
+        for p in /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging; do \
+            chmod -R a+rwX "$p"; \
+            find "$p" -type d -exec chmod a+rwx {} +; \
+        done; \
+        chmod a+rw /sandbox/.nemoclaw/config.json; \
         chmod a+rw /sandbox/.bashrc /sandbox/.profile; \
     fi
 

@@ -3498,7 +3498,6 @@ async function createSandbox(
       suppressGpuFlag: useDockerGpuPatch,
     }),
   ];
-
   appendResourceFlagsForProfile(createArgs, resourceProfile, getOpenshellBinary(), {
     isNonInteractive,
     note,
