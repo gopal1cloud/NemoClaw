@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -46,6 +47,7 @@ jobs:
           set -euo pipefail
           args=(--emit-live-matrix)
           matrix=""
+          hermes_selected=false
           if [ -n "${SCENARIOS}" ]; then
             if [[ ! "${SCENARIOS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
               echo "::error::Invalid scenario input: ${SCENARIOS}" >&2
@@ -57,6 +59,7 @@ jobs:
               case "${scenario}" in
                 hermes-e2e)
                   # Free-standing live Vitest job below; not registry-driven.
+                  hermes_selected=true
                   ;;
                 *)
                   registry_scenarios+=("${scenario}")
@@ -71,9 +74,11 @@ jobs:
               matrix="[]"
             fi
           else
+            hermes_selected=true
             matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"
           fi
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+          echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"
           MATRIX_JSON="${matrix}" python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
           import os
@@ -89,6 +94,7 @@ jobs:
 
   live-scenarios:
     needs: generate-matrix
+    if: ${{ needs.generate-matrix.outputs.matrix != '[]' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -271,7 +277,8 @@ jobs:
           retention-days: 14
 
   hermes-e2e-vitest:
-    if: ${{ inputs.scenarios == '' || contains(format(',{0},', inputs.scenarios), ',hermes-e2e,') }}
+    needs: generate-matrix
+    if: ${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
