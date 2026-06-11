@@ -1009,6 +1009,10 @@ nemohermes my-assistant sessions
 nemohermes my-assistant sessions --all-agents --json
 ```
 
+<Note>
+Inside the sandbox, a one-shot Hermes prompt (`hermes --resume <id> -z "..."`) starts a **new** session in this build instead of appending the turn to `<id>`; the follow-up shows up under a different session ID in `hermes sessions list`. To continue an existing session, run `hermes --resume <id>` interactively (omit `-z`). The in-sandbox shell prints this warning when it detects the `--resume … -z` combination.
+</Note>
+
 ### `nemohermes <name> sessions list`
 
 Pass-through to `openclaw sessions list` inside the sandbox.

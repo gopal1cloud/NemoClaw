@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
@@ -617,6 +617,65 @@ function runRuntimeShellEnvBootstrap() {
   }
 }
 
+// Build the sourced proxy env file (which defines the `hermes()` configure
+// guard), then run `hermes <args>` against a PATH-resolved stub so we can assert
+// the guard's behavior without a real Hermes binary.
+function runConfigureGuard(hermesArgs: string[]) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-guard-"));
+  const envFile = path.join(tmpDir, "nemoclaw-proxy-env.sh");
+  const caFile = path.join(tmpDir, "proxy ca.pem");
+  const hermesHome = path.join(tmpDir, ".hermes");
+  const scriptPath = path.join(tmpDir, "run.sh");
+  const stubDir = path.join(tmpDir, "bin");
+  const stub = path.join(stubDir, "hermes");
+
+  fs.mkdirSync(hermesHome, { recursive: true });
+  fs.mkdirSync(stubDir, { recursive: true });
+  fs.writeFileSync(caFile, "ca");
+  // `command hermes "$@"` inside the guard resolves to this stub via PATH.
+  fs.writeFileSync(stub, "#!/usr/bin/env bash\necho HERMES_STUB_RAN\n", { mode: 0o755 });
+
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'emit_sandbox_sourced_file() { cat >"$1"; chmod 444 "$1"; }',
+      `_PROXY_ENV_FILE=${shellQuote(envFile)}`,
+      `_PROXY_URL=${shellQuote("http://10.200.0.1:3128")}`,
+      `_NO_PROXY_VAL=${shellQuote("localhost,127.0.0.1,::1,10.200.0.1")}`,
+      `HERMES_DIR=${shellQuote(hermesHome)}`,
+      `SSL_CERT_FILE=${shellQuote(caFile)}`,
+      "CURL_CA_BUNDLE=",
+      "REQUESTS_CA_BUNDLE=",
+      "GIT_SSL_CAINFO=",
+      extractRuntimeShellEnvBlock(src),
+      "write_runtime_shell_env",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    const gen = spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+    if (gen.status !== 0) {
+      throw new Error(`runtime shell env bootstrap failed: ${gen.stderr}`);
+    }
+    const quotedArgs = hermesArgs.map(shellQuote).join(" ");
+    return spawnSync("bash", ["-c", `. ${shellQuote(envFile)}; hermes ${quotedArgs}`], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: { ...process.env, PATH: `${stubDir}:/usr/bin:/bin` },
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 describe("agents/hermes/start.sh runtime shell env", () => {
   it("puts the Hermes configure guard in the sourced proxy env file", () => {
     const run = runRuntimeShellEnvBootstrap();
@@ -638,6 +697,29 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.guardResult.stderr).toContain(
       "Error: 'hermes setup' cannot modify config inside the sandbox.",
     );
+  });
+
+  it("warns that --resume with a one-shot (-z) prompt does not append to the session (NemoClaw#5254)", () => {
+    // Both flags present: the one-shot would fragment history into a new
+    // session, so the guard must warn while still running the real command.
+    const resumeOneShot = runConfigureGuard([
+      "--resume",
+      "20260611_201639_8d0b6d",
+      "-z",
+      "Now repeat what I just asked you",
+    ]);
+    expect(resumeOneShot.stderr).toContain("starts a NEW session instead of appending to <id>");
+    expect(resumeOneShot.stdout).toContain("HERMES_STUB_RAN");
+
+    // Interactive resume (no -z) is the supported path and must stay quiet.
+    const interactiveResume = runConfigureGuard(["--resume", "20260611_201639_8d0b6d"]);
+    expect(interactiveResume.stderr).not.toContain("starts a NEW session");
+    expect(interactiveResume.stdout).toContain("HERMES_STUB_RAN");
+
+    // A bare one-shot (no --resume) must not warn either.
+    const bareOneShot = runConfigureGuard(["-z", "say hello"]);
+    expect(bareOneShot.stderr).not.toContain("starts a NEW session");
+    expect(bareOneShot.stdout).toContain("HERMES_STUB_RAN");
   });
 });
 

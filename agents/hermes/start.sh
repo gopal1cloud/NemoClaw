@@ -788,6 +788,25 @@ hermes() {
       return 1
       ;;
   esac
+  # NemoClaw#5254: in this Hermes build, a one-shot prompt (-z) starts a NEW
+  # session even when --resume <id> is given, so the turn is never appended to
+  # the resumed session's history. Warn (without blocking) so multi-turn
+  # scripts do not silently fragment across session IDs.
+  _nc_has_resume=""
+  _nc_has_oneshot=""
+  for _nc_arg in "$@"; do
+    case "$_nc_arg" in
+      --resume|--resume=*) _nc_has_resume=1 ;;
+      -z) _nc_has_oneshot=1 ;;
+    esac
+  done
+  if [ -n "$_nc_has_resume" ] && [ -n "$_nc_has_oneshot" ]; then
+    echo "Warning: 'hermes --resume <id> -z ...' starts a NEW session instead of appending to <id>." >&2
+    echo "         The one-shot turn will not be added to the resumed session's history," >&2
+    echo "         and 'hermes sessions list' will show it under a different session ID." >&2
+    echo "         To continue an existing session, run 'hermes --resume <id>' interactively (omit -z)." >&2
+  fi
+  unset _nc_has_resume _nc_has_oneshot _nc_arg
   command hermes "$@"
 }
 # nemoclaw-configure-guard end
