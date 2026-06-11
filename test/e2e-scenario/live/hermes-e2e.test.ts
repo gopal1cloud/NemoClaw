@@ -42,6 +42,7 @@ interface OpenAiChoiceLike {
     reasoning_content?: unknown;
   };
   text?: unknown;
+  finish_reason?: unknown;
 }
 
 interface OpenAiChatLike {
@@ -94,11 +95,11 @@ function commandEnv(apiKey?: string): NodeJS.ProcessEnv {
   return env;
 }
 
-function chatPayload(prompt: string): string {
+function chatPayload(prompt: string, maxTokens = 256): string {
   return JSON.stringify({
     model: CHAT_MODEL,
     messages: [{ role: "user", content: prompt }],
-    max_tokens: 100,
+    max_tokens: maxTokens,
   });
 }
 
@@ -119,6 +120,25 @@ function chatContent(response: unknown): string {
     if (typeof choice?.text === "string" && choice.text.trim()) return choice.text.trim();
   }
   return "";
+}
+
+function firstChoice(response: unknown): OpenAiChoiceLike | undefined {
+  if (!response || typeof response !== "object") return undefined;
+  const choices = (response as OpenAiChatLike).choices;
+  if (!Array.isArray(choices)) return undefined;
+  return choices.find((choice) => choice && typeof choice === "object");
+}
+
+function shouldRetryForReasoningBudget(response: unknown): boolean {
+  const content = chatContent(response);
+  if (/PONG/i.test(content)) return false;
+  const choice = firstChoice(response);
+  const message = choice?.message;
+  return (
+    choice?.finish_reason === "length" &&
+    typeof message?.reasoning_content === "string" &&
+    message.reasoning_content.trim().length > 0
+  );
 }
 
 function expectPong(label: string, response: unknown): void {
@@ -460,25 +480,32 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
 
     // Phase 5: live inference through both the external provider and the
     // sandbox's inference.local route.
-    const directChat = await retryHostedInference("direct NVIDIA Endpoints chat", (attempt) =>
-      provider.requestJson(
-        trustedProviderEndpoint("https://integrate.api.nvidia.com/v1/chat/completions", {
-          allowedHosts: ["integrate.api.nvidia.com"],
-        }),
-        {
-          artifactName: `phase-5-direct-nvidia-chat-attempt-${attempt}`,
-          body: chatPayload("Reply with exactly one word: PONG"),
-          curlMaxTimeSeconds: 90,
-          headers: ["Content-Type: application/json", `Authorization: Bearer ${apiKey}`],
-          env: buildAvailabilityProbeEnv(),
-          redactionValues,
-          timeoutMs: 120_000,
-        },
-      ),
+    const directChat = await retryHostedInference(
+      "direct NVIDIA Endpoints chat",
+      async (attempt) => {
+        const response = await provider.requestJson(
+          trustedProviderEndpoint("https://integrate.api.nvidia.com/v1/chat/completions", {
+            allowedHosts: ["integrate.api.nvidia.com"],
+          }),
+          {
+            artifactName: `phase-5-direct-nvidia-chat-attempt-${attempt}`,
+            body: chatPayload("Reply with exactly one word: PONG", attempt === 1 ? 256 : 1024),
+            curlMaxTimeSeconds: 90,
+            headers: ["Content-Type: application/json", `Authorization: Bearer ${apiKey}`],
+            env: buildAvailabilityProbeEnv(),
+            redactionValues,
+            timeoutMs: 120_000,
+          },
+        );
+        if (shouldRetryForReasoningBudget(response.json)) {
+          throw new Error("direct chat exhausted response budget while reasoning before PONG");
+        }
+        return response;
+      },
     );
     expectPong("direct NVIDIA Endpoints chat", directChat.json);
 
-    const sandboxChat = await retryHostedInference(
+    const sandboxChatJson = await retryHostedInference(
       "Hermes sandbox inference.local chat",
       async (attempt) => {
         const result = await sandbox.exec(
@@ -491,7 +518,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
             "-H",
             "Content-Type: application/json",
             "--data-raw",
-            chatPayload("Reply with exactly one word: PONG"),
+            chatPayload("Reply with exactly one word: PONG", attempt === 1 ? 256 : 1024),
             "https://inference.local/v1/chat/completions",
           ],
           {
@@ -501,20 +528,22 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
           },
         );
         if (result.exitCode !== 0) throw new Error(resultText(result));
-        return result;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(result.stdout) as unknown;
+        } catch (error) {
+          throw new Error(
+            `Hermes sandbox inference.local chat response was not JSON: ${
+              error instanceof Error ? error.message : String(error)
+            }; body=${result.stdout.slice(0, 500)}`,
+          );
+        }
+        if (shouldRetryForReasoningBudget(parsed)) {
+          throw new Error("sandbox chat exhausted response budget while reasoning before PONG");
+        }
+        return parsed;
       },
     );
-    expect(sandboxChat.exitCode, resultText(sandboxChat)).toBe(0);
-    let sandboxChatJson: unknown;
-    try {
-      sandboxChatJson = JSON.parse(sandboxChat.stdout) as unknown;
-    } catch (error) {
-      throw new Error(
-        `Hermes sandbox inference.local chat response was not JSON: ${
-          error instanceof Error ? error.message : String(error)
-        }; body=${sandboxChat.stdout.slice(0, 500)}`,
-      );
-    }
     expectPong("Hermes sandbox inference.local chat", sandboxChatJson);
 
     // Phase 6: CLI operations and agent manifest regression.
