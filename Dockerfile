@@ -679,8 +679,10 @@ RUN set -eu; \
     fi; \
     if [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
         openclaw plugins install "npm:@openclaw/brave-plugin@${OPENCLAW_VERSION}" --pin; \
+    fi; \
+    if [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
         BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY openclaw doctor --fix --non-interactive; \
-    elif [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ]; then \
+    else \
         openclaw doctor --fix --non-interactive; \
     fi
 
