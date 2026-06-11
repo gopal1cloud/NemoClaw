@@ -45,7 +45,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const startScript = readAgentFile("start.sh");
 
     expect(startScript).toContain('chmod 400 "$tmp"');
-    expect(startScript).toContain("write_proxy_export_if_set HTTPS_PROXY");
+    expect(startScript).toContain("write_proxy_export_pair HTTPS_PROXY https_proxy");
     expect(startScript).not.toContain("write_export_if_set DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(startScript).not.toContain("NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(startScript).not.toMatch(
@@ -53,7 +53,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     );
   });
 
-  it("omits credential-bearing proxy URLs from the shell env file", () => {
+  it("serializes non-credential proxy URLs into the shell env file", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-start-"));
     const { envFile, scriptPath } = makeStartScriptFixture(tempDir);
 
@@ -62,10 +62,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
         NEMOCLAW_TEST_PROXY_ENV: envFile,
         PATH: process.env.PATH ?? "/usr/bin:/bin",
         HTTP_PROXY: "http://proxy.example:8080",
-        HTTPS_PROXY: "https://user:pass@proxy.example:8443",
-        http_proxy: "user:pass@proxy.example:8080",
         https_proxy: "https://safe-proxy.example:8443",
-        NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST: "all",
       },
       encoding: "utf8",
     });
@@ -73,10 +70,51 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const envFileText = fs.readFileSync(envFile, "utf8");
     expect(envFileText).toContain("export HTTP_PROXY=http://proxy.example:8080");
     expect(envFileText).toContain("export https_proxy=https://safe-proxy.example:8443");
+  });
+
+  it("omits and unsets credential-bearing proxy URLs", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-start-"));
+    const { envFile, scriptPath } = makeStartScriptFixture(tempDir);
+
+    const output = execFileSync(
+      "bash",
+      [
+        scriptPath,
+        "sh",
+        "-c",
+        [
+          'cat "$NEMOCLAW_TEST_PROXY_ENV"',
+          'printf "\\nENV_HTTP_PROXY=%s\\n" "${HTTP_PROXY-__unset__}"',
+          'printf "ENV_http_proxy=%s\\n" "${http_proxy-__unset__}"',
+          'printf "ENV_HTTPS_PROXY=%s\\n" "${HTTPS_PROXY-__unset__}"',
+          'printf "ENV_https_proxy=%s\\n" "${https_proxy-__unset__}"',
+        ].join("; "),
+      ],
+      {
+        env: {
+          NEMOCLAW_TEST_PROXY_ENV: envFile,
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          HTTP_PROXY: "http://proxy.example:8080",
+          HTTPS_PROXY: "https://user:pass@proxy.example:8443",
+          http_proxy: "user:pass@proxy.example:8080",
+          https_proxy: "https://safe-proxy.example:8443",
+          NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST: "all",
+        },
+        encoding: "utf8",
+      },
+    );
+
+    const envFileText = fs.readFileSync(envFile, "utf8");
+    expect(envFileText).not.toContain("HTTP_PROXY");
     expect(envFileText).not.toContain("HTTPS_PROXY");
     expect(envFileText).not.toContain("http_proxy");
+    expect(envFileText).not.toContain("https_proxy");
     expect(envFileText).not.toContain("NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(envFileText).not.toContain("DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
+    expect(output).toContain("ENV_HTTP_PROXY=__unset__");
+    expect(output).toContain("ENV_http_proxy=__unset__");
+    expect(output).toContain("ENV_HTTPS_PROXY=__unset__");
+    expect(output).toContain("ENV_https_proxy=__unset__");
     expect(envFileText).not.toContain("user:pass");
     expect(envFileText).not.toContain("user:pass@proxy.example:8443");
     expect(envFileText).not.toContain("user:pass@proxy.example:8080");
