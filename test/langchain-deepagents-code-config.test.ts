@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -50,6 +50,9 @@ describe("LangChain Deep Agents Code config generator", () => {
     expect(config).toContain('default = "openai:nvidia/nemotron-3-super-120b-a12b"');
     expect(config).toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
     expect(config).toContain('base_url = "https://inference.local/v1"');
+    expect(config).toContain(
+      "# NemoClaw provider route: inference; upstream provider: nvidia-prod; API: openai-completions.",
+    );
     expect(config).toContain("use_responses_api = false");
     expect(config).toContain("auto_update = false");
     expect(config).not.toMatch(/NVIDIA_API_KEY|OPENAI_API_KEY=|sk-/);

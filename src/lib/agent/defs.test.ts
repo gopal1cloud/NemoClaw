@@ -96,6 +96,41 @@ describe("agent definitions", () => {
     ]);
   });
 
+  it("loads the LangChain Deep Agents Code terminal acceptance contract", () => {
+    const deepAgentsCode = loadAgent("langchain-deepagents-code");
+
+    expect(deepAgentsCode.name).toBe("langchain-deepagents-code");
+    expect(deepAgentsCode.displayName).toBe("LangChain Deep Agents Code");
+    expect(deepAgentsCode.runtime).toEqual({
+      kind: "terminal",
+      interactive_command: "dcode",
+      headless_command: "dcode -n",
+      smoke_commands: [
+        "dcode --version",
+        "test -s /sandbox/.deepagents/config.toml && echo NEMOCLAW_DEEPAGENTS_CONFIG_OK",
+      ],
+    });
+    expect(deepAgentsCode.binary_path).toBe("/usr/local/bin/dcode");
+    expect(deepAgentsCode.versionCommand).toBe("dcode --version");
+    expect(deepAgentsCode.expectedVersion).toBe("0.1.12");
+    expect(deepAgentsCode.healthProbe).toBeNull();
+    expect(deepAgentsCode.forwardPort).toBe(0);
+    expect(deepAgentsCode.configPaths).toEqual({
+      dir: "/sandbox/.deepagents",
+      configFile: "config.toml",
+      envFile: ".env",
+      format: "toml",
+    });
+    expect(deepAgentsCode.inference?.provider_type).toBe("openai_compatible");
+    expect(deepAgentsCode.stateDirs).toEqual([".state", "skills"]);
+    expect(deepAgentsCode.stateFiles).toEqual([
+      { path: "config.toml", strategy: "copy" },
+      { path: "hooks.json", strategy: "copy" },
+      { path: ".mcp.json", strategy: "copy" },
+    ]);
+    expect(deepAgentsCode.stateFiles.map((entry) => entry.path)).not.toContain(".env");
+  });
+
   it("orders OpenClaw first in interactive choices", () => {
     const choices = getAgentChoices();
     expect(choices[0]?.name).toBe("openclaw");
