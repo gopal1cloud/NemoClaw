@@ -18,6 +18,17 @@ import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 
+// Read a file that may legitimately be absent without a check-then-read
+// race (CodeQL js/file-system-race): attempt the read and treat a missing
+// file as null.
+function readFileIfPresent(filePath: string): string | null {
+  try {
+    return fs.readFileSync(filePath, "utf-8");
+  } catch {
+    return null;
+  }
+}
+
 function extractShellFunction(src: string, name: string): string {
   const header = `${name}() {`;
   const start = src.indexOf(header);
@@ -131,7 +142,7 @@ function runWatchdog(opts: {
 
   const stdout = typeof result.stdout === "string" ? result.stdout : "";
   const fakeAlive = /^FAKE_ALIVE=1$/m.test(stdout);
-  const wedgeLog = fs.existsSync(wedgeLogFile) ? fs.readFileSync(wedgeLogFile, "utf-8") : "";
+  const wedgeLog = readFileIfPresent(wedgeLogFile) ?? "";
   return { result, fakeAlive, wedgeLog, tmpDir };
 }
 
@@ -366,8 +377,14 @@ describe("record_gateway_pid", () => {
 
       const result = spawnSync("bash", [script], { encoding: "utf-8", timeout: 5000 });
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
-      expect(fs.lstatSync(pidFile).isSymbolicLink()).toBe(false);
-      expect(fs.readFileSync(pidFile, "utf-8")).toBe("4242\n");
+      // O_NOFOLLOW makes a single open both the not-a-symlink assertion and
+      // the content read — no check-then-use window.
+      const fd = fs.openSync(pidFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        expect(fs.readFileSync(fd, "utf-8")).toBe("4242\n");
+      } finally {
+        fs.closeSync(fd);
+      }
       // The symlink target was never opened, written, or chmod-ed.
       expect(fs.readFileSync(sensitiveTarget, "utf-8")).toBe("do not touch");
       expect((fs.statSync(sensitiveTarget).mode & 0o777).toString(8)).toBe("600");
@@ -484,8 +501,8 @@ describe("healthcheck marker (#4503, #4710)", () => {
       ].join("\n");
       const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
       expect(result.status).toBe(0);
-      expect(fs.existsSync(markerPath)).toBe(true);
-      // file must be empty (`:` redirected to it, not appended)
+      // statSync throws when the marker is missing, so this single call
+      // asserts both existence and emptiness (`:` redirected, not appended).
       expect(fs.statSync(markerPath).size).toBe(0);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -581,8 +598,8 @@ describe("gateway launch wiring (#4710)", () => {
     const gatewayPid = stdout.match(/^GATEWAY_PID=(\d+)$/m)?.[1];
     const watchdogPid = stdout.match(/^WATCHDOG_PID=(\d+)$/m)?.[1];
     const childPids = (stdout.match(/^CHILD_PIDS=(.+)$/m)?.[1] ?? "").split(/\s+/);
-    const pidFileContent = fs.existsSync(pidFile) ? fs.readFileSync(pidFile, "utf-8").trim() : null;
-    const markerExists = fs.existsSync(markerPath);
+    const pidFileContent = readFileIfPresent(pidFile)?.trim() ?? null;
+    const markerExists = readFileIfPresent(markerPath) !== null;
     fs.rmSync(tmpDir, { recursive: true, force: true });
     return { result, stdout, gatewayPid, watchdogPid, childPids, pidFileContent, markerExists };
   }
@@ -709,5 +726,145 @@ describe("respawn loop pidfile refresh (#4710)", () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+});
+
+// Launch-path signal handling and child-PID tracking for both entrypoint
+// modes. Moved from test/nemoclaw-start.test.ts so the legacy file stays
+// under its ratcheted size budget; this file owns gateway-launch coverage.
+describe("nemoclaw-start gateway launch signal handling", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  function launchBlock(kind: "non-root" | "root", gatewayLog: string): string {
+    const startMarker =
+      kind === "non-root"
+        ? "# Start gateway in background, auto-pair, then wait"
+        : "# Start the gateway as the 'gateway' user.";
+    const start = src.indexOf(startMarker);
+    const trap = src.indexOf("trap cleanup_on_signal SIGTERM SIGINT", start);
+    if (start === -1 || trap === -1) {
+      throw new Error(`Expected ${kind} gateway launch block in scripts/nemoclaw-start.sh`);
+    }
+    const lineEnd = src.indexOf("\n", trap);
+    return src.slice(start, lineEnd).replaceAll("/tmp/gateway.log", gatewayLog);
+  }
+
+  function runLaunchBlock(kind: "non-root" | "root") {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-launch-${kind}-`));
+    const fakeBin = path.join(tmpDir, "bin");
+    const openclawLog = path.join(tmpDir, "openclaw.log");
+    const gosuLog = path.join(tmpDir, "gosu.log");
+    const gatewayLog = path.join(tmpDir, "gateway.log");
+    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
+    const scriptPath = path.join(tmpDir, "run.sh");
+    const waitForLaunchLogIterations = Array.from({ length: 100 }, (_, i) => String(i + 1)).join(
+      " ",
+    );
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "openclaw"),
+      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nif [ -f ${JSON.stringify(markerPath)} ]; then printf 'marker=present\\n' >> ${JSON.stringify(openclawLog)}; else printf 'marker=absent\\n' >> ${JSON.stringify(openclawLog)}; fi\nprintf 'state=%s oauth=%s home=%s config=%s\\n' "$OPENCLAW_STATE_DIR" "$OPENCLAW_OAUTH_DIR" "$OPENCLAW_HOME" "$OPENCLAW_CONFIG_PATH" >> ${JSON.stringify(openclawLog)}\nprintf 'gateway stdout marker\\n'\nprintf 'gateway stderr marker\\n' >&2\nexec sleep 30\n`,
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(fakeBin, "gosu"),
+      `#!/usr/bin/env bash\nprintf 'user=%s args=%s\\n' "$1" "${"$*"}" >> ${JSON.stringify(gosuLog)}\nshift\nexec "$@"\n`,
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(gatewayLog, "gateway booting\n");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `export PATH=${JSON.stringify(`${fakeBin}:${process.env.PATH || ""}`)}`,
+        `OPENCLAW=${JSON.stringify(path.join(fakeBin, "openclaw"))}`,
+        "export OPENCLAW_HOME=/sandbox",
+        "export OPENCLAW_STATE_DIR=/sandbox/.openclaw",
+        "export OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json",
+        "export OPENCLAW_OAUTH_DIR=/sandbox/.openclaw/credentials",
+        '_DASHBOARD_PORT="19000"',
+        "start_persistent_gateway_log_mirror() { sleep 30 & GATEWAY_LOG_PERSIST_PID=$!; }",
+        "start_auto_pair() { sleep 30 & AUTO_PAIR_PID=$!; }",
+        "start_plugin_registry_refresh() { :; }",
+        "cleanup_on_signal() { :; }",
+        extractShellFunction(src, "mark_in_container_gateway").replaceAll(
+          "/tmp/nemoclaw-gateway-local",
+          markerPath,
+        ),
+        // #4710: the launch block also records the gateway PID for the
+        // serving watchdog and starts the watchdog alongside the other
+        // background services. Stub both — watchdog behavior has its own
+        // suite in test/nemoclaw-start-gateway-health.test.ts.
+        "record_gateway_pid() { :; }",
+        "start_gateway_serving_watchdog() { :; }",
+        "STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)",
+        "STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)",
+        launchBlock(kind, gatewayLog),
+        kind === "root"
+          ? `for _ in ${waitForLaunchLogIterations}; do [ -s ${JSON.stringify(gosuLog)} ] && [ -s ${JSON.stringify(openclawLog)} ] && break; sleep 0.1; done`
+          : `for _ in ${waitForLaunchLogIterations}; do [ -s ${JSON.stringify(openclawLog)} ] && break; sleep 0.1; done`,
+        'printf "GATEWAY_PID=%s\\n" "$GATEWAY_PID"',
+        'printf "AUTO_PAIR_PID=%s\\n" "${AUTO_PAIR_PID:-}"',
+        'printf "TAIL_PID=%s\\n" "${GATEWAY_LOG_TAIL_PID:-}"',
+        'printf "PERSIST_PID=%s\\n" "${GATEWAY_LOG_PERSIST_PID:-}"',
+        'printf "WAIT_PID=%s\\n" "$SANDBOX_WAIT_PID"',
+        'printf "CHILD_PIDS=%s\\n" "${SANDBOX_CHILD_PIDS[*]}"',
+        "trap -p SIGTERM",
+        'for pid in "${SANDBOX_CHILD_PIDS[@]}"; do pkill -P "$pid" 2>/dev/null || true; kill "$pid" 2>/dev/null || true; done',
+        'for pid in "${SANDBOX_CHILD_PIDS[@]}"; do wait "$pid" 2>/dev/null || true; done',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 15_000 });
+    const openclaw = readFileIfPresent(openclawLog) ?? "";
+    const gosu = readFileIfPresent(gosuLog) ?? "";
+    const gateway = readFileIfPresent(gatewayLog) ?? "";
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    return { result, openclaw, gosu, gateway };
+  }
+
+  it("registers child PIDs, redirects gateway output, and traps signals in non-root mode", () => {
+    const { result, openclaw, gateway } = runLaunchBlock("non-root");
+    expect(result.status).toBe(0);
+    expect(openclaw).toContain("gateway run --port 19000");
+    expect(openclaw).toContain("marker=present");
+    expect(openclaw).not.toContain("marker=absent");
+    expect(openclaw).toContain(
+      "state=/sandbox/.openclaw oauth=/sandbox/.openclaw/credentials home=/sandbox config=/sandbox/.openclaw/openclaw.json",
+    );
+    expect(gateway).toContain("gateway stdout marker");
+    expect(gateway).toContain("gateway stderr marker");
+    expect(result.stdout).not.toContain("gateway stdout marker");
+    const stdout = result.stdout;
+    const gatewayPid = stdout.match(/GATEWAY_PID=(\d+)/)?.[1];
+    expect(gatewayPid).toBeTruthy();
+    expect(stdout).toContain(`WAIT_PID=${gatewayPid}`);
+    expect(stdout).toContain(`CHILD_PIDS=${gatewayPid}`);
+    expect(stdout).toMatch(/AUTO_PAIR_PID=\d+/);
+    expect(stdout).toMatch(/TAIL_PID=\d+/);
+    expect(stdout).toMatch(/PERSIST_PID=\d+/);
+    expect(stdout).toContain("cleanup_on_signal");
+  });
+
+  it("launches the root gateway through gosu with the configured port and tracks child PIDs", () => {
+    const { result, openclaw, gosu } = runLaunchBlock("root");
+    expect(result.status).toBe(0);
+    expect(gosu).toContain("user=gateway");
+    expect(gosu).toContain("gateway run --port 19000");
+    expect(openclaw).toContain("marker=present");
+    expect(openclaw).not.toContain("marker=absent");
+    expect(openclaw).toContain(
+      "state=/sandbox/.openclaw oauth=/sandbox/.openclaw/credentials home=/sandbox config=/sandbox/.openclaw/openclaw.json",
+    );
+    const gatewayPid = result.stdout.match(/GATEWAY_PID=(\d+)/)?.[1];
+    expect(gatewayPid).toBeTruthy();
+    expect(result.stdout).toContain(`WAIT_PID=${gatewayPid}`);
+    expect(result.stdout).toContain(`CHILD_PIDS=${gatewayPid}`);
+    expect(result.stdout).toMatch(/AUTO_PAIR_PID=\d+/);
+    expect(result.stdout).toMatch(/TAIL_PID=\d+/);
+    expect(result.stdout).toMatch(/PERSIST_PID=\d+/);
+    expect(result.stdout).toContain("cleanup_on_signal");
   });
 });
