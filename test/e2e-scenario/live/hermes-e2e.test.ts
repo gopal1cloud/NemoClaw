@@ -32,7 +32,7 @@ const HERMES_DASHBOARD_INTERNAL_PORT =
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const LIVE_TIMEOUT_MS = 70 * 60_000;
-const CHAT_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+const CHAT_MODEL = process.env.NEMOCLAW_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
 
 interface OpenAiChoiceLike {
   message?: {
@@ -68,6 +68,7 @@ function commandEnv(apiKey?: string): NodeJS.ProcessEnv {
     NEMOCLAW_AGENT: "hermes",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_RECREATE_SANDBOX: "1",
+    NEMOCLAW_MODEL: CHAT_MODEL,
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
   };
   if (apiKey) env.NVIDIA_API_KEY = apiKey;
