@@ -122,8 +122,6 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     });
   });
 
-
-
   it("keeps jobs-only dispatches from selecting the Hermes secret-bearing job", () => {
     expect(
       generateMatrixForDispatch({ JOBS: "openshell-version-pin-vitest", SCENARIOS: "" }),
@@ -135,7 +133,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       hermes_selected: "true",
       matrix: "[]",
     });
-    expect(generateMatrixForDispatch({ JOBS: "network-policy-vitest", SCENARIOS: "" })).toMatchObject({
+    expect(
+      generateMatrixForDispatch({ JOBS: "network-policy-vitest", SCENARIOS: "" }),
+    ).toMatchObject({
       hermes_selected: "false",
       matrix: "[]",
     });
@@ -453,7 +453,6 @@ jobs:
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
 
   it("rejects raw jobs selector echo from matrix generation", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
