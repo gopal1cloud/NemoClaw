@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isTerminalAgent, type AgentDefinition } from "../agent/defs";
+import { type AgentDefinition, isTerminalAgent } from "../agent/defs";
 import { DASHBOARD_PORT } from "../core/ports";
 
 type RunCaptureOpenshell = (args: string[], options: { ignoreError: true }) => string;
@@ -75,7 +75,7 @@ export function resolveDashboardRuntimePlan({
   }
 
   const preferredPort =
-    controlUiPort ?? envPort ?? persistedPort ?? (agent ? agent.forwardPort : DASHBOARD_PORT);
+    controlUiPort ?? envPort ?? persistedPort ?? agent?.forwardPort ?? DASHBOARD_PORT;
   const earlyForwards = runCaptureOpenshell(["forward", "list"], { ignoreError: true });
   const effectivePort = findAvailableDashboardPort(sandboxName, preferredPort, earlyForwards);
   if (effectivePort !== preferredPort) {
@@ -84,11 +84,15 @@ export function resolveDashboardRuntimePlan({
 
   let chatUiUrl = `http://127.0.0.1:${effectivePort}`;
   if (env.CHAT_UI_URL && controlUiPort == null) {
-    const parsed = new URL(
-      env.CHAT_UI_URL.includes("://") ? env.CHAT_UI_URL : `http://${env.CHAT_UI_URL}`,
-    );
-    parsed.port = String(effectivePort);
-    chatUiUrl = parsed.toString().replace(/\/$/, "");
+    try {
+      const parsed = new URL(
+        env.CHAT_UI_URL.includes("://") ? env.CHAT_UI_URL : `http://${env.CHAT_UI_URL}`,
+      );
+      parsed.port = String(effectivePort);
+      chatUiUrl = parsed.toString().replace(/\/$/, "");
+    } catch {
+      /* malformed URL - keep the local default */
+    }
   }
   return { manageDashboard, effectivePort, chatUiUrl };
 }
