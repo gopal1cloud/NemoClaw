@@ -3260,22 +3260,49 @@ gateway_pid_is_openclaw_gateway() {
 
 start_gateway_serving_watchdog() {
   (
-    local interval refused_threshold armed=0 refused_streak=0 pid rc msg
+    local interval refused_threshold armed=0 refused_streak=0 pid last_pid="" rc msg
     interval="${NEMOCLAW_GATEWAY_WATCHDOG_INTERVAL_SECONDS:-30}"
     refused_threshold="${NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD:-4}"
+    # Both knobs must be positive integers: a zero/garbage interval would
+    # busy-loop the probe, and a zero threshold would kill on the first
+    # refusal. Fall back to the defaults rather than trusting bad input.
+    case "$interval" in
+      [1-9] | [1-9][0-9]*) ;;
+      *)
+        echo "[gateway-watchdog] invalid NEMOCLAW_GATEWAY_WATCHDOG_INTERVAL_SECONDS='${interval}'; defaulting to 30" >&2
+        interval=30
+        ;;
+    esac
+    case "$refused_threshold" in
+      [1-9] | [1-9][0-9]*) ;;
+      *)
+        echo "[gateway-watchdog] invalid NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD='${refused_threshold}'; defaulting to 4" >&2
+        refused_threshold=4
+        ;;
+    esac
     [ -n "${_DASHBOARD_PORT:-}" ] || exit 0
     while :; do
       sleep "$interval"
       pid="$(cat "$GATEWAY_PID_FILE" 2>/dev/null)" || pid=""
       case "$pid" in
         '' | *[!0-9]*)
+          last_pid=""
           armed=0
           refused_streak=0
           continue
           ;;
       esac
+      # A respawned gateway must earn its own armed state — never inherit
+      # the previous PID's serve history, or a booting replacement could be
+      # killed for refusals that belong to its predecessor.
+      if [ "$pid" != "$last_pid" ]; then
+        last_pid="$pid"
+        armed=0
+        refused_streak=0
+      fi
       if ! kill -0 "$pid" 2>/dev/null; then
         # Process exit is the respawn loop's signal, not ours.
+        last_pid=""
         armed=0
         refused_streak=0
         continue

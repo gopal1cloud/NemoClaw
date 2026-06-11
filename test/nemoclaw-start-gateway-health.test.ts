@@ -236,6 +236,107 @@ describe("gateway serving watchdog (#4710)", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("falls back to defaults when the env knobs are not positive integers", () => {
+    // A zero/garbage interval would busy-loop the probe; a zero threshold
+    // would kill on the first refusal. Both must be rejected with a warning
+    // while the watchdog keeps working on the defaults.
+    const { result, fakeAlive, tmpDir } = runWatchdog({
+      curlPlan: [0, 7, 7, 7, 7],
+      env: {
+        NEMOCLAW_GATEWAY_WATCHDOG_INTERVAL_SECONDS: "0",
+        NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD: "banana",
+      },
+      expectKill: true,
+    });
+    try {
+      expect(result.status, `script failed: ${result.stderr}`).toBe(0);
+      expect(result.stderr).toContain(
+        "invalid NEMOCLAW_GATEWAY_WATCHDOG_INTERVAL_SECONDS='0'; defaulting to 30",
+      );
+      expect(result.stderr).toContain(
+        "invalid NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD='banana'; defaulting to 4",
+      );
+      // Default threshold of 4 still applies.
+      expect(fakeAlive).toBe(false);
+      expect(result.stderr).toContain("4 consecutive refused probes");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not inherit the armed state when the pidfile switches to a new gateway PID", () => {
+    // A fast respawn can replace the pidfile between probes without the
+    // watchdog ever observing the old PID as dead. The new gateway must earn
+    // its own armed state — otherwise its boot-time refusals would count
+    // against the predecessor's serve history and it could be killed while
+    // still starting up.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-watchdog-swap-"));
+    try {
+      const planFile = path.join(tmpDir, "curl-plan.txt");
+      const probeLog = path.join(tmpDir, "probes.log");
+      const pidFile = path.join(tmpDir, "gateway.pid");
+      const procRoot = path.join(tmpDir, "proc");
+      // First probe arms on gateway A; everything after refuses.
+      fs.writeFileSync(planFile, "0\n7\n");
+
+      const wrapper = [
+        "#!/usr/bin/env bash",
+        "set -o pipefail",
+        `GATEWAY_PID_FILE=${JSON.stringify(pidFile)}`,
+        "_DASHBOARD_PORT=18789",
+        `_NEMOCLAW_PROC_ROOT=${JSON.stringify(procRoot)}`,
+        `_NEMOCLAW_GATEWAY_LOG=${JSON.stringify(path.join(tmpDir, "gateway.log"))}`,
+        // A low threshold makes an inherited armed state lethal within a few
+        // cycles, so survival proves the per-PID reset.
+        "export NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD=2",
+        "sleep() { command sleep 0.01; }",
+        `_CURL_PLAN=${JSON.stringify(planFile)}`,
+        "curl() {",
+        "  local next rest",
+        '  next="$(head -n1 "$_CURL_PLAN" 2>/dev/null)"',
+        '  [ -n "$next" ] || next=0',
+        '  rest="$(tail -n +2 "$_CURL_PLAN" 2>/dev/null)"',
+        '  if [ -n "$rest" ]; then printf "%s\\n" "$rest" >"$_CURL_PLAN"; fi',
+        `  printf 'probe\\n' >> ${JSON.stringify(probeLog)}`,
+        '  return "$next"',
+        "}",
+        "command sleep 60 &",
+        "GATEWAY_A=$!",
+        "command sleep 60 &",
+        "GATEWAY_B=$!",
+        `mkdir -p ${JSON.stringify(procRoot)}/$GATEWAY_A ${JSON.stringify(procRoot)}/$GATEWAY_B`,
+        `printf 'openclaw-gateway' >${JSON.stringify(procRoot)}/$GATEWAY_A/cmdline`,
+        `printf 'openclaw-gateway' >${JSON.stringify(procRoot)}/$GATEWAY_B/cmdline`,
+        watchdogFunctions(),
+        'record_gateway_pid "$GATEWAY_A"',
+        "start_gateway_serving_watchdog",
+        // Wait until gateway A has been probed (and armed via the plan's 0),
+        // then swap the pidfile to gateway B while refusals continue.
+        `for _ in $(command seq 1 200); do [ -s ${JSON.stringify(probeLog)} ] && break; command sleep 0.02; done`,
+        'record_gateway_pid "$GATEWAY_B"',
+        "command sleep 0.6",
+        'if kill -0 "$GATEWAY_B" 2>/dev/null; then printf "B_ALIVE=1\\n"; else printf "B_ALIVE=0\\n"; fi',
+        "disown -a 2>/dev/null || true",
+        'kill -KILL "$GATEWAY_WATCHDOG_PID" "$GATEWAY_A" "$GATEWAY_B" 2>/dev/null || true',
+        "command sleep 0.05",
+      ].join("\n");
+
+      const script = path.join(tmpDir, "run.sh");
+      fs.writeFileSync(script, wrapper, { mode: 0o755 });
+      const result = spawnSync("bash", [script], { encoding: "utf-8", timeout: 30000 });
+
+      expect(result.status, `script failed: ${result.stderr}`).toBe(0);
+      const stdout = typeof result.stdout === "string" ? result.stdout : "";
+      // Without the per-PID reset, B inherits armed=1 and dies after two
+      // refused probes (threshold 2, 10ms cycles) well inside the 600ms
+      // observation window.
+      expect(stdout).toContain("B_ALIVE=1");
+      expect(result.stderr).not.toContain("dropped its HTTP listener on port 18789");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("record_gateway_pid", () => {
@@ -298,7 +399,7 @@ describe("gateway_pid_is_openclaw_gateway", () => {
     }
   }
 
-  const nulArgv = (...argv: string[]): Buffer => Buffer.from(`${argv.join(" ")} `);
+  const nulArgv = (...argv: string[]): Buffer => Buffer.from(`${argv.join("\u0000")}\u0000`);
 
   it("matches the launch argv and both rewritten process-title forms", () => {
     // Launch argv as /proc presents it: NUL-separated.
