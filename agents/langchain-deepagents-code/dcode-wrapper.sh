@@ -13,39 +13,55 @@ export DEEPAGENTS_CODE_AUTO_UPDATE=0
 export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 
-real_bin="/usr/local/lib/nemoclaw/dcode.upstream"
+run_dcode() {
+  exec python3 -m deepagents_code "$@"
+}
 
-for arg in "$@"; do
-  case "$arg" in
-    --version | -V | --help | -h)
-      exec "$real_bin" "$@"
-      ;;
-  esac
-done
+case "${1:-}" in
+  --version | -v | -V | --help | -h)
+    run_dcode "$@"
+    ;;
+esac
 
 if [ -n "${NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST:-}" ] \
   && [ -z "${DEEPAGENTS_CODE_SHELL_ALLOW_LIST:-}" ]; then
   export DEEPAGENTS_CODE_SHELL_ALLOW_LIST="${NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST}"
 fi
 
-has_arg() {
-  local wanted="$1"
-  shift
-  for arg in "$@"; do
-    [ "$arg" = "$wanted" ] && return 0
-    case "$arg" in
-      "${wanted}="*) return 0 ;;
-    esac
-  done
-  return 1
+reject_managed_override() {
+  local posture="$1"
+  local arg="$2"
+  printf 'NemoClaw manages Deep Agents Code %s; remove %s and use NemoClaw policy/configuration instead.\n' "$posture" "$arg" >&2
+  exit 2
 }
 
-extra_args=()
-if ! has_arg "--sandbox" "$@"; then
-  extra_args+=(--sandbox none)
-fi
-if ! has_arg "--no-mcp" "$@"; then
-  extra_args+=(--no-mcp)
+if [ "${1:-}" = "mcp" ]; then
+  reject_managed_override "MCP posture" "mcp"
 fi
 
-exec "$real_bin" "${extra_args[@]}" "$@"
+for arg in "$@"; do
+  case "$arg" in
+    --sandbox | --sandbox=*)
+      reject_managed_override "sandbox isolation" "$arg"
+      ;;
+    --sandbox-id | --sandbox-id=*)
+      reject_managed_override "sandbox isolation" "$arg"
+      ;;
+    --sandbox-snapshot-name | --sandbox-snapshot-name=*)
+      reject_managed_override "sandbox isolation" "$arg"
+      ;;
+    --sandbox-setup | --sandbox-setup=*)
+      reject_managed_override "sandbox isolation" "$arg"
+      ;;
+    --mcp-config | --mcp-config=* | --trust-project-mcp | --no-mcp=*)
+      reject_managed_override "MCP posture" "$arg"
+      ;;
+    --shell-allow-list | --shell-allow-list=* | -S | -S?*)
+      reject_managed_override "shell allow-list posture" "$arg"
+      ;;
+  esac
+done
+
+extra_args=(--sandbox none --no-mcp)
+
+run_dcode "${extra_args[@]}" "$@"

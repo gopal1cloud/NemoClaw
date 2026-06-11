@@ -34,18 +34,25 @@ describe("LangChain Deep Agents Code image contracts", () => {
     );
   });
 
-  it("keeps dcode.real behind the managed wrapper boundary", () => {
+  it("keeps all Deep Agents Code entry points behind the managed wrapper boundary", () => {
     const dockerfile = readAgentFile("Dockerfile");
     const wrapper = readAgentFile("dcode-wrapper.sh");
     const policy = readAgentFile("policy-additions.yaml");
 
-    expect(dockerfile).toContain("mv /usr/local/bin/dcode /usr/local/lib/nemoclaw/dcode.upstream");
+    expect(dockerfile).toContain("rm -f /usr/local/bin/dcode /usr/local/bin/deepagents-code");
     expect(dockerfile).toContain(
       "install -m 0755 /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/bin/dcode.real",
     );
-    expect(wrapper).toContain("/usr/local/lib/nemoclaw/dcode.upstream");
-    expect(wrapper).toContain("extra_args+=(--sandbox none)");
-    expect(wrapper).toContain("extra_args+=(--no-mcp)");
+    expect(dockerfile).toContain(
+      "install -m 0755 /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/bin/deepagents-code",
+    );
+    expect(dockerfile).not.toContain("dcode.upstream");
+    expect(wrapper).toContain("exec python3 -m deepagents_code");
+    expect(wrapper).toContain('reject_managed_override "sandbox isolation"');
+    expect(wrapper).toContain('reject_managed_override "MCP posture"');
+    expect(wrapper).toContain('reject_managed_override "shell allow-list posture"');
+    expect(wrapper).toContain("extra_args=(--sandbox none --no-mcp)");
     expect(policy).not.toContain("/usr/local/bin/dcode.real");
+    expect(policy).not.toContain("dcode.upstream");
   });
 });

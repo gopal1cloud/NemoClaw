@@ -25,11 +25,13 @@ COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts \
     && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/dcode-wrapper.sh \
     && chmod -R a+rX /opt/nemoclaw-blueprint \
-    && mv /usr/local/bin/dcode /usr/local/lib/nemoclaw/dcode.upstream \
+    && rm -f /usr/local/bin/dcode /usr/local/bin/deepagents-code \
     && install -m 0755 /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/bin/dcode \
     && install -m 0755 /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/bin/dcode.real \
+    && install -m 0755 /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/bin/deepagents-code \
     && /usr/local/bin/dcode --version \
-    && /usr/local/bin/dcode.real --version
+    && /usr/local/bin/dcode.real --version \
+    && /usr/local/bin/deepagents-code --version
 
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
 ARG NEMOCLAW_PROVIDER_KEY=inference
