@@ -31,6 +31,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const startScript = readAgentFile("start.sh");
 
     expect(startScript).toContain('chmod 400 "$tmp"');
+    expect(startScript).not.toContain("write_export_if_set DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(startScript).not.toMatch(
       /write_export_if_set (?:NVIDIA_API_KEY|OPENAI_API_KEY|TAVILY_API_KEY|DEEPAGENTS_CODE_TAVILY_API_KEY|LANGSMITH_API_KEY)\b/,
     );
@@ -43,6 +44,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
     expect(dockerfile).toContain("rm -f /usr/local/bin/dcode /usr/local/bin/deepagents-code");
     expect(dockerfile).toContain("patch-managed-deepagents-code.py");
+    expect(dockerfile).not.toContain("NEMOCLAW_WEB_SEARCH_ENABLED");
     expect(wrapper).toContain("unset DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(dockerfile).toContain(
       "install -m 0755 /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/bin/dcode.real",
