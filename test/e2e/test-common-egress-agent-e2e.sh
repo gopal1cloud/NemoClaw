@@ -286,10 +286,20 @@ run_openclaw_agent_assertion() {
     } >>"$log_file"
     rm -f "$stderr_file"
 
-    if printf '%s' "$raw" | grep -qiE "SsrFBlockedError|Blocked hostname|ECONNREFUSED|EAI_AGAIN|gateway unavailable|network connection error"; then
+    # Permanent SSRF policy blocks — never retry; the egress policy is wrong.
+    if printf '%s' "$raw" | grep -qiE "SsrFBlockedError|Blocked hostname"; then
       rm -f "$ssh_cfg"
-      fail "${label}: agent hit policy/transport error (exit ${rc}): ${raw:0:300}"
+      fail "${label}: agent hit SSRF policy block (exit ${rc}): ${raw:0:300}"
       return
+    fi
+
+    # Transient network errors — warn and allow the retry loop to continue so
+    # brief DNS outages or upstream blips do not immediately fail the test.
+    if printf '%s' "$raw" | grep -qiE "ECONNREFUSED|EAI_AGAIN|gateway unavailable|network connection error|fetch failed|DNS error"; then
+      printf '\033[33m  [warn]\033[0m %s: transient network error on attempt %d/3 (exit %s)\n' "$label" "$attempt" "$rc"
+      last_fail="transient network error on attempt ${attempt} (exit ${rc}): ${raw:0:240}"
+      [ "$attempt" -ge 3 ] || sleep $((attempt * 15))
+      continue
     fi
 
     reply=$(printf '%s' "$raw" | parse_openclaw_agent_text 2>/dev/null) || true
