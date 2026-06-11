@@ -340,6 +340,42 @@ describe("gateway serving watchdog (#4710)", () => {
 });
 
 describe("record_gateway_pid", () => {
+  it("replaces a planted symlink without writing through it (#4710 pidfile race)", () => {
+    // In root mode the pidfile lives in sticky /tmp; a sandbox process can
+    // plant a symlink at that path between respawns. The update must replace
+    // the symlink as a directory entry (atomic rename), never open it.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-watchdog-pid-symlink-"));
+    try {
+      const pidFile = path.join(tmpDir, "gateway.pid");
+      const sensitiveTarget = path.join(tmpDir, "sensitive.txt");
+      fs.writeFileSync(sensitiveTarget, "do not touch", { mode: 0o600 });
+      fs.symlinkSync(sensitiveTarget, pidFile);
+
+      const script = path.join(tmpDir, "run.sh");
+      fs.writeFileSync(
+        script,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          `GATEWAY_PID_FILE=${JSON.stringify(pidFile)}`,
+          extractShellFunction(fs.readFileSync(START_SCRIPT, "utf-8"), "record_gateway_pid"),
+          "record_gateway_pid 4242",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const result = spawnSync("bash", [script], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, `script failed: ${result.stderr}`).toBe(0);
+      expect(fs.lstatSync(pidFile).isSymbolicLink()).toBe(false);
+      expect(fs.readFileSync(pidFile, "utf-8")).toBe("4242\n");
+      // The symlink target was never opened, written, or chmod-ed.
+      expect(fs.readFileSync(sensitiveTarget, "utf-8")).toBe("do not touch");
+      expect((fs.statSync(sensitiveTarget).mode & 0o777).toString(8)).toBe("600");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("writes the pidfile with 644 permissions, replacing any preexisting file", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-watchdog-pid-"));
     try {

@@ -3232,14 +3232,24 @@ GATEWAY_PID_FILE=/tmp/nemoclaw-gateway.pid
 
 # Record the live gateway PID where the watchdog (a separate PID 1 child whose
 # copy of $GATEWAY_PID goes stale after a respawn) can re-read it each cycle.
-# rm-then-create keeps the file owned by PID 1's uid in sticky /tmp, so in
-# root mode the sandbox user can neither modify nor replace it and cannot aim
-# the watchdog's kill at an arbitrary PID. Best-effort: a write failure must
-# never block startup or respawn.
+# The pidfile lives in sticky, world-writable /tmp, so in root mode it must
+# never be written through a path a sandbox process could have planted:
+# unlink-then-open is symlink-raceable (root would follow an attacker symlink
+# and gain an arbitrary write/chmod). Write to a mktemp-owned file and
+# atomically rename it into place — rename(2) replaces a planted symlink as a
+# directory entry instead of following it, and the result is owned by PID 1's
+# uid so the sandbox user can neither modify nor replace it (it can at worst
+# deny its own sandbox's self-healing, e.g. by pre-creating a directory).
+# Best-effort: a write failure must never block startup or respawn.
 record_gateway_pid() {
-  rm -f "$GATEWAY_PID_FILE" 2>/dev/null || true
-  printf '%s\n' "$1" >"$GATEWAY_PID_FILE" 2>/dev/null || true
-  chmod 644 "$GATEWAY_PID_FILE" 2>/dev/null || true
+  local tmp
+  tmp="$(mktemp "${GATEWAY_PID_FILE}.XXXXXX" 2>/dev/null)" || return 0
+  if ! printf '%s\n' "$1" >"$tmp" 2>/dev/null; then
+    rm -f "$tmp" 2>/dev/null || true
+    return 0
+  fi
+  chmod 644 "$tmp" 2>/dev/null || true
+  mv -f "$tmp" "$GATEWAY_PID_FILE" 2>/dev/null || rm -f "$tmp" 2>/dev/null || true
 }
 
 # PID-reuse / tamper defense: only kill a process whose cmdline still looks
