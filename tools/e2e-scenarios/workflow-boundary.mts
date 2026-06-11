@@ -337,6 +337,9 @@ function validateHermesE2EVitestJob(errors: string[], jobs: WorkflowRecord): voi
   if (jobEnv.NEMOCLAW_MODEL !== "minimaxai/minimax-m2.7") {
     errors.push("hermes-e2e-vitest job must pin the CI-safe Hermes model");
   }
+  if (jobEnv.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS !== "60") {
+    errors.push("hermes-e2e-vitest job must give hosted endpoint validation a CI-safe timeout");
+  }
   requireEnvDoesNotExposeSecret(errors, "hermes-e2e-vitest job", jobEnv, "NVIDIA_API_KEY");
 
   const steps = asSteps(job.steps);
