@@ -45,13 +45,11 @@ state_dirs:
 
 # ── Top-level durable state files ───────────────────────────────
 # config.toml is non-secret NemoClaw-generated provider/model configuration.
-# .env is intentionally omitted because it may contain user-added Tavily,
-# LangSmith, or provider credentials. Backup sanitization would strip secrets,
-# but restoring an empty credential file over the generated image is not useful.
+# .env and .mcp.json are intentionally omitted because they may contain
+# user-added service credentials; this managed harness disables MCP at runtime.
 state_files:
   - path: config.toml
   - path: hooks.json
-  - path: .mcp.json
 
 device_pairing: false
 

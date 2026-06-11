@@ -167,7 +167,7 @@ export function createAgentSandbox(
     const dockerfile = fs.readFileSync(stagedDockerfile, "utf8");
     fs.writeFileSync(
       stagedDockerfile,
-      dockerfile.replace(/^ARG BASE_IMAGE=.*$/m, `ARG BASE_IMAGE=${baseImageRef}`),
+      dockerfile.replace(/^ARG BASE_IMAGE(?:=.*)?$/m, `ARG BASE_IMAGE=${baseImageRef}`),
     );
   }
   console.log(`  Using ${agent.displayName} Dockerfile: ${agentDockerfile}`);

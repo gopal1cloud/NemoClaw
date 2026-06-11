@@ -60,6 +60,8 @@ RUN printf '%s\n' \
     && chown root:root /sandbox/.bashrc /sandbox/.profile \
     && chmod 444 /sandbox/.bashrc /sandbox/.profile
 
+# Experimental harness: PyPI dependencies are exact-pinned but not hash-locked.
+# Promote this to a hash-locked or wheelhouse install before graduating support.
 RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}" \
     && pip3 install --no-cache-dir --break-system-packages "deepagents-code[nvidia]==${DEEPAGENTS_CODE_VERSION}" \
     && /usr/local/bin/dcode --version

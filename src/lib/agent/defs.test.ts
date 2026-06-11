@@ -126,7 +126,6 @@ describe("agent definitions", () => {
     expect(deepAgentsCode.stateFiles).toEqual([
       { path: "config.toml", strategy: "copy" },
       { path: "hooks.json", strategy: "copy" },
-      { path: ".mcp.json", strategy: "copy" },
     ]);
     expect(deepAgentsCode.stateFiles.map((entry) => entry.path)).not.toContain(".env");
   });

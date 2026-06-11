@@ -3,7 +3,9 @@
 #
 # LangChain Deep Agents Code sandbox image.
 
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest
+# NemoClaw staging supplies a resolved base image reference. Direct Docker builds
+# must pass --build-arg BASE_IMAGE=... rather than falling back to a mutable tag.
+ARG BASE_IMAGE
 
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
