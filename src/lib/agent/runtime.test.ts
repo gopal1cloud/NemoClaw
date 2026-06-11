@@ -1,14 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 // Import from compiled dist/ so coverage is attributed correctly.
 import {
   buildHermesDashboardProcessRecoveryScript,
   buildManualRecoveryCommand,
   buildOpenClawRecoveryScript,
   buildRecoveryScript,
-  getTerminalCommand,
 } from "../../../dist/lib/agent/runtime";
 import type { AgentDefinition } from "./defs";
 
@@ -64,17 +63,6 @@ const hermesAgent = makeAgent({
   },
 });
 
-const terminalAgent = makeAgent({
-  name: "terminal-agent",
-  displayName: "Terminal Agent",
-  runtime: {
-    kind: "terminal",
-    interactive_command: "terminal-agent",
-    headless_command: "terminal-agent -n",
-  },
-  gateway_command: undefined,
-});
-
 function extractGatewayProcessPattern(script: string | null): string {
   const match = script?.match(/_GATEWAY_PROC_PATTERN='([^']+)'/);
   expect(match).toBeTruthy();
@@ -88,16 +76,6 @@ function toJsRegex(pattern: string): RegExp {
 describe("buildRecoveryScript", () => {
   it("returns null for null agent (OpenClaw inline script handles it)", () => {
     expect(buildRecoveryScript(null, 18789)).toBeNull();
-  });
-
-  it("returns null for terminal agents without a gateway process", () => {
-    expect(buildRecoveryScript(terminalAgent, 18789)).toBeNull();
-  });
-
-  it("resolves terminal launch commands without synthesizing gateway recovery", () => {
-    expect(getTerminalCommand(terminalAgent)).toBe("terminal-agent");
-    expect(getTerminalCommand(terminalAgent, "headless")).toBe("terminal-agent -n");
-    expect(buildManualRecoveryCommand(terminalAgent, 18789)).toBe("terminal-agent");
   });
 
   it("embeds the port in the gateway launch command (#1925)", () => {

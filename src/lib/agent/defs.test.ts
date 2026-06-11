@@ -288,4 +288,23 @@ describe("agent definitions", () => {
 
     expect(() => loadAgent(agentName)).toThrow(/interactive_command or headless_command/);
   });
+
+  it("rejects invalid terminal smoke command values in manifests", () => {
+    const agentName = `invalid-terminal-smoke-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Broken Terminal Smoke",
+        "runtime:",
+        "  kind: terminal",
+        "  interactive_command: broken-terminal",
+        "  smoke_commands:",
+        "    - broken-terminal --version",
+        "    - 42",
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/runtime\.smoke_commands/);
+  });
 });

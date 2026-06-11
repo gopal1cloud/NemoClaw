@@ -32,6 +32,7 @@ export function verifyAgentBinaryAvailable(
   const script = binaryPath
     ? [
         `if [ -x ${shellQuote(binaryPath)} ]; then echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}ok`)}; exit 0; fi`,
+        `if [ -e ${shellQuote(binaryPath)} ] && [ ! -x ${shellQuote(binaryPath)} ]; then echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}not_executable`)}; exit 0; fi`,
         `resolved="$(command -v ${shellQuote(executable)} 2>/dev/null || true)"`,
         `[ -n "$resolved" ] || { echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}not_found`)}; exit 0; }`,
         `[ -x "$resolved" ] || { printf '${AGENT_BINARY_CHECK_PREFIX}not_executable:%s\\n' "$resolved"; exit 0; }`,

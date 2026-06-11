@@ -24,7 +24,10 @@ function readString(record: RuntimeRecord, key: string): string | undefined {
 function readStringArray(record: RuntimeRecord, key: string): string[] | undefined {
   const value = record[key];
   if (!Array.isArray(value)) return undefined;
-  return value.filter((entry): entry is string => typeof entry === "string");
+  if (value.some((entry) => typeof entry !== "string")) {
+    throw new Error(`Agent manifest field 'runtime.${key}' must be an array of strings`);
+  }
+  return value as string[];
 }
 
 export function readAgentRuntime(record: RuntimeRecord): AgentRuntime {
