@@ -344,10 +344,13 @@ export async function handleAgentSetup(
         runCaptureOpenshell,
       );
       if (binaryAvailability.available) {
-        skippedStepMessage("agent_setup", sandboxName);
         syncNemoClawConfig();
-        await recordStepComplete("agent_setup", { sandboxName, provider, model });
-        return;
+        const smokeResult = runAgentSmokeCommands(sandboxName, agent, runCaptureOpenshell);
+        if (smokeResult.ok) {
+          skippedStepMessage("agent_setup", sandboxName);
+          await recordStepComplete("agent_setup", { sandboxName, provider, model });
+          return;
+        }
       }
     }
 

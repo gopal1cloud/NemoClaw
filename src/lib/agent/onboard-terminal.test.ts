@@ -13,6 +13,22 @@ function makeDeepAgentsCodeAgent(): AgentDefinition {
   return loadAgent("langchain-deepagents-code");
 }
 
+function recordSuccessfulDeepAgentsRuntimeCall(args: string[], calls: string[]): string {
+  calls.push(args.join(" "));
+  const call = calls[calls.length - 1] || "";
+  const command = args[args.length - 1] || "";
+  if (call.includes("NEMOCLAW_AGENT_BINARY_CHECK")) {
+    return "NEMOCLAW_AGENT_BINARY_CHECK:ok";
+  }
+  if (command.includes("dcode --version")) {
+    return "dcode 0.1.12\nNEMOCLAW_AGENT_SMOKE_EXIT:0";
+  }
+  if (command.includes("/sandbox/.deepagents/config.toml")) {
+    return "NEMOCLAW_DEEPAGENTS_CONFIG_OK\nNEMOCLAW_AGENT_SMOKE_EXIT:0";
+  }
+  return "";
+}
+
 function createAgentSetupContext(
   runCaptureOpenshell: RunCaptureOpenshell = vi.fn((_args: string[]) => ""),
 ) {
@@ -37,20 +53,9 @@ function createAgentSetupContext(
 describe("Deep Agents Code terminal onboard acceptance", () => {
   it("runs terminal smoke checks on fresh setup without gateway probes", async () => {
     const calls: string[] = [];
-    const runCaptureOpenshell = vi.fn((args: string[]) => {
-      calls.push(args.join(" "));
-      const command = args[args.length - 1] || "";
-      if (calls[calls.length - 1]?.includes("NEMOCLAW_AGENT_BINARY_CHECK")) {
-        return "NEMOCLAW_AGENT_BINARY_CHECK:ok";
-      }
-      if (command.includes("dcode --version")) {
-        return "dcode 0.1.12\nNEMOCLAW_AGENT_SMOKE_EXIT:0";
-      }
-      if (command.includes("/sandbox/.deepagents/config.toml")) {
-        return "NEMOCLAW_DEEPAGENTS_CONFIG_OK\nNEMOCLAW_AGENT_SMOKE_EXIT:0";
-      }
-      return "";
-    });
+    const runCaptureOpenshell = vi.fn((args: string[]) =>
+      recordSuccessfulDeepAgentsRuntimeCall(args, calls),
+    );
     const context = createAgentSetupContext(runCaptureOpenshell);
 
     await handleAgentSetup(
@@ -80,12 +85,11 @@ describe("Deep Agents Code terminal onboard acceptance", () => {
     expect(calls.some((call) => call.includes("curl"))).toBe(false);
   });
 
-  it("resumes by verifying the binary while preserving terminal state ownership", async () => {
+  it("resumes only after verifying the binary and terminal smoke checks", async () => {
     const calls: string[] = [];
-    const runCaptureOpenshell = vi.fn((args: string[]) => {
-      calls.push(args.join(" "));
-      return "NEMOCLAW_AGENT_BINARY_CHECK:ok";
-    });
+    const runCaptureOpenshell = vi.fn((args: string[]) =>
+      recordSuccessfulDeepAgentsRuntimeCall(args, calls),
+    );
     const context = createAgentSetupContext(runCaptureOpenshell);
 
     await handleAgentSetup(
@@ -106,10 +110,12 @@ describe("Deep Agents Code terminal onboard acceptance", () => {
     });
     expect(context.startRecordedStep).not.toHaveBeenCalled();
     expect(context.recordStepFailed).not.toHaveBeenCalled();
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(3);
     expect(calls[0]).toContain("NEMOCLAW_AGENT_BINARY_CHECK");
-    expect(calls[0]).not.toContain("NEMOCLAW_AGENT_SMOKE_EXIT");
-    expect(calls[0]).not.toContain("curl");
+    expect(calls.filter((call) => call.includes("NEMOCLAW_AGENT_SMOKE_EXIT"))).toHaveLength(2);
+    expect(calls.some((call) => call.includes("nemoclaw-agent-smoke dcode --version"))).toBe(true);
+    expect(calls.some((call) => call.includes("/sandbox/.deepagents/config.toml"))).toBe(true);
+    expect(calls.some((call) => call.includes("curl"))).toBe(false);
   });
 
   it("fails setup with an actionable terminal smoke error", async () => {
