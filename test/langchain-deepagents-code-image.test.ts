@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -40,6 +42,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const policy = readAgentFile("policy-additions.yaml");
 
     expect(dockerfile).toContain("rm -f /usr/local/bin/dcode /usr/local/bin/deepagents-code");
+    expect(dockerfile).toContain("patch-managed-deepagents-code.py");
+    expect(wrapper).toContain("unset DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(dockerfile).toContain(
       "install -m 0755 /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/bin/dcode.real",
     );
@@ -54,5 +58,36 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(wrapper).toContain("extra_args=(--sandbox none --no-mcp)");
     expect(policy).not.toContain("/usr/local/bin/dcode.real");
     expect(policy).not.toContain("dcode.upstream");
+  });
+
+  it("patches direct module execution back to NemoClaw managed posture", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-patch-"));
+    const packageDir = path.join(tempDir, "deepagents_code");
+    fs.mkdirSync(packageDir);
+    fs.writeFileSync(path.join(packageDir, "__init__.py"), "", "utf8");
+    fs.writeFileSync(
+      path.join(packageDir, "main.py"),
+      [
+        "import os",
+        "",
+        "def parse_args():",
+        "    args = parser.parse_args()",
+        "    return args",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    execFileSync("python3", [path.join(agentDir, "patch-managed-deepagents-code.py")], {
+      env: { ...process.env, PYTHONPATH: tempDir },
+    });
+
+    const patched = fs.readFileSync(path.join(packageDir, "main.py"), "utf8");
+    expect(patched).toContain('args.sandbox = "none"');
+    expect(patched).toContain("args.no_mcp = True");
+    expect(patched).toContain("args.mcp_config = None");
+    expect(patched).toContain("args.shell_allow_list = None");
+    expect(patched).toContain('os.environ.pop("DEEPAGENTS_CODE_SHELL_ALLOW_LIST", None)');
+    expect(patched).toContain('getattr(args, "command", None) == "mcp"');
   });
 });
