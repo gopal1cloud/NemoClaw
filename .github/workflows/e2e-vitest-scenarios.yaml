@@ -40,7 +40,7 @@ jobs:
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
-          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,hermes-e2e-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
           if [ -n "${JOBS}" ] && [ -n "${SCENARIOS}" ]; then
             echo "::error::Use either scenarios or jobs, not both." >&2
             exit 1
@@ -85,13 +85,38 @@ jobs:
       - id: matrix
         name: Generate Vitest scenario matrix
         env:
+          JOBS: ${{ inputs.jobs }}
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
+          allowed_jobs="openshell-version-pin-vitest,onboard-negative-paths-vitest,hermes-e2e-vitest,openclaw-tui-chat-correlation-vitest,gateway-guard-recovery"
           args=(--emit-live-matrix)
           matrix=""
           hermes_selected=false
-          if [ -n "${SCENARIOS}" ]; then
+          if [ -n "${JOBS}" ] && [ -n "${SCENARIOS}" ]; then
+            echo "::error::Use either scenarios or jobs, not both." >&2
+            exit 1
+          fi
+          if [ -n "${JOBS}" ]; then
+            if [[ ! "${JOBS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
+              echo "::error::Invalid jobs input; use comma-separated job ids containing only letters, numbers, underscores, and hyphens." >&2
+              exit 1
+            fi
+            IFS=, read -r -a selected_jobs <<< "${JOBS}"
+            for job in "${selected_jobs[@]}"; do
+              if [[ ",${allowed_jobs}," != *",${job},"* ]]; then
+                echo "::error::Unknown free-standing Vitest job: ${job}" >&2
+                echo "::error::Allowed jobs: ${allowed_jobs}" >&2
+                exit 1
+              fi
+              case "${job}" in
+                hermes-e2e-vitest)
+                  hermes_selected=true
+                  ;;
+              esac
+            done
+            matrix="[]"
+          elif [ -n "${SCENARIOS}" ]; then
             if [[ ! "${SCENARIOS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
               echo "::error::Invalid scenario input: ${SCENARIOS}" >&2
               exit 1
@@ -324,7 +349,7 @@ jobs:
           retention-days: 14
 
   hermes-e2e-vitest:
-    needs: generate-matrix
+    needs: [validate-jobs, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 75

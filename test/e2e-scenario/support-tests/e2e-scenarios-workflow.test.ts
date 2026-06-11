@@ -1,16 +1,80 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 import { validateE2eVitestScenariosWorkflowBoundary } from "../../../tools/e2e-scenarios/workflow-boundary.mts";
+
+function readWorkflow(): Record<string, unknown> {
+  return YAML.parse(
+    fs.readFileSync(
+      path.join(process.cwd(), ".github/workflows/e2e-vitest-scenarios.yaml"),
+      "utf-8",
+    ),
+  ) as Record<string, unknown>;
+}
+
+function generateMatrixForDispatch(env: {
+  JOBS: string;
+  SCENARIOS: string;
+}): Record<string, string> {
+  const workflow = readWorkflow();
+  const jobs = workflow.jobs as Record<string, { steps?: Array<Record<string, unknown>> }>;
+  const generateStep = jobs["generate-matrix"]?.steps?.find(
+    (step) => step.name === "Generate Vitest scenario matrix",
+  );
+  expect(generateStep?.run).toEqual(expect.any(String));
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-matrix-"));
+  const outputPath = path.join(tmp, "github-output");
+  const summaryPath = path.join(tmp, "github-summary");
+  try {
+    const result = spawnSync("bash", ["-c", generateStep?.run as string], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        GITHUB_OUTPUT: outputPath,
+        GITHUB_STEP_SUMMARY: summaryPath,
+        JOBS: env.JOBS,
+        SCENARIOS: env.SCENARIOS,
+      },
+    });
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    return Object.fromEntries(
+      fs
+        .readFileSync(outputPath, "utf-8")
+        .trim()
+        .split("\n")
+        .map((line) => line.split(/=(.*)/s).slice(0, 2)),
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
 
 describe("e2e-vitest-scenarios workflow boundary", () => {
   it("keeps the live Vitest scenario workflow manual, pinned, and artifact-safe", () => {
     expect(validateE2eVitestScenariosWorkflowBoundary()).toEqual([]);
+  });
+
+  it("keeps jobs-only dispatches from selecting the Hermes secret-bearing job", () => {
+    expect(
+      generateMatrixForDispatch({ JOBS: "openshell-version-pin-vitest", SCENARIOS: "" }),
+    ).toMatchObject({
+      hermes_selected: "false",
+      matrix: "[]",
+    });
+    expect(generateMatrixForDispatch({ JOBS: "hermes-e2e-vitest", SCENARIOS: "" })).toMatchObject({
+      hermes_selected: "true",
+      matrix: "[]",
+    });
   });
 
   it("flags direct dispatch-input interpolation and unsafe artifact upload", () => {

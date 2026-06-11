@@ -163,6 +163,7 @@ function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, validate, "allowed_jobs=");
   requireRunContains(errors, validate, "openshell-version-pin-vitest");
   requireRunContains(errors, validate, "onboard-negative-paths-vitest");
+  requireRunContains(errors, validate, "hermes-e2e-vitest");
   requireRunContains(errors, validate, "openclaw-tui-chat-correlation-vitest");
   requireRunContains(errors, validate, "gateway-guard-recovery");
   requireRunContains(errors, validate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
@@ -346,8 +347,9 @@ function validateHermesE2EVitestJob(errors: string[], jobs: WorkflowRecord): voi
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push("hermes-e2e-vitest job must run on ubuntu-latest");
   }
-  if (job.needs !== "generate-matrix") {
-    errors.push("hermes-e2e-vitest job must depend on generate-matrix validation");
+  const needs = Array.isArray(job.needs) ? job.needs : [];
+  if (!needs.includes("validate-jobs") || !needs.includes("generate-matrix")) {
+    errors.push("hermes-e2e-vitest job must depend on validate-jobs and generate-matrix validation");
   }
   if (job.if !== "${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}") {
     errors.push("hermes-e2e-vitest job must use validated hermes_selected output");
@@ -483,9 +485,17 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   requireFullShaAction(errors, generateSetupNode, "generate-matrix setup-node");
   const generate = requireStep(errors, generateSteps, "Generate Vitest scenario matrix");
   const generateEnv = asRecord(generate?.env);
+  if (generateEnv.JOBS !== "${{ inputs.jobs }}") {
+    errors.push("matrix generation step must pass jobs through JOBS env");
+  }
   if (generateEnv.SCENARIOS !== "${{ inputs.scenarios }}") {
     errors.push("matrix generation step must pass scenarios through SCENARIOS env");
   }
+  requireRunContains(errors, generate, "allowed_jobs=");
+  requireRunContains(errors, generate, "Use either scenarios or jobs, not both");
+  requireRunContains(errors, generate, "Unknown free-standing Vitest job");
+  requireRunContains(errors, generate, "hermes-e2e-vitest");
+  requireRunContains(errors, generate, "matrix=\"[]\"");
   requireRunContains(errors, generate, "npx tsx test/e2e-scenario/scenarios/run.ts");
   requireRunContains(errors, generate, "--emit-live-matrix");
   requireRunContains(errors, generate, "--scenarios");
