@@ -175,6 +175,26 @@ async function bestEffort(run: () => Promise<unknown>): Promise<void> {
   }
 }
 
+async function retryHostedInference<T>(
+  label: string,
+  run: (attempt: number) => Promise<T>,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await run(attempt);
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) await sleep(5_000 * attempt);
+    }
+  }
+  throw new Error(
+    `${label} failed after retries: ${
+      lastError instanceof Error ? lastError.message : String(lastError)
+    }`,
+  );
+}
+
 test.skipIf(!shouldRunLiveE2EScenarios())(
   "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
   { timeout: LIVE_TIMEOUT_MS },
@@ -440,39 +460,48 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
 
     // Phase 5: live inference through both the external provider and the
     // sandbox's inference.local route.
-    const directChat = await provider.requestJson(
-      trustedProviderEndpoint("https://integrate.api.nvidia.com/v1/chat/completions", {
-        allowedHosts: ["integrate.api.nvidia.com"],
-      }),
-      {
-        artifactName: "phase-5-direct-nvidia-chat",
-        body: chatPayload("Reply with exactly one word: PONG"),
-        curlMaxTimeSeconds: 60,
-        headers: ["Content-Type: application/json", `Authorization: Bearer ${apiKey}`],
-        env: buildAvailabilityProbeEnv(),
-        redactionValues,
-        timeoutMs: 90_000,
-      },
+    const directChat = await retryHostedInference("direct NVIDIA Endpoints chat", (attempt) =>
+      provider.requestJson(
+        trustedProviderEndpoint("https://integrate.api.nvidia.com/v1/chat/completions", {
+          allowedHosts: ["integrate.api.nvidia.com"],
+        }),
+        {
+          artifactName: `phase-5-direct-nvidia-chat-attempt-${attempt}`,
+          body: chatPayload("Reply with exactly one word: PONG"),
+          curlMaxTimeSeconds: 90,
+          headers: ["Content-Type: application/json", `Authorization: Bearer ${apiKey}`],
+          env: buildAvailabilityProbeEnv(),
+          redactionValues,
+          timeoutMs: 120_000,
+        },
+      ),
     );
     expectPong("direct NVIDIA Endpoints chat", directChat.json);
 
-    const sandboxChat = await sandbox.exec(
-      SANDBOX_NAME,
-      [
-        "curl",
-        "-fsS",
-        "--max-time",
-        "60",
-        "-H",
-        "Content-Type: application/json",
-        "--data-raw",
-        chatPayload("Reply with exactly one word: PONG"),
-        "https://inference.local/v1/chat/completions",
-      ],
-      {
-        artifactName: "phase-5-inference-local-chat",
-        env: commandEnv(),
-        timeoutMs: 90_000,
+    const sandboxChat = await retryHostedInference(
+      "Hermes sandbox inference.local chat",
+      async (attempt) => {
+        const result = await sandbox.exec(
+          SANDBOX_NAME,
+          [
+            "curl",
+            "-fsS",
+            "--max-time",
+            "90",
+            "-H",
+            "Content-Type: application/json",
+            "--data-raw",
+            chatPayload("Reply with exactly one word: PONG"),
+            "https://inference.local/v1/chat/completions",
+          ],
+          {
+            artifactName: `phase-5-inference-local-chat-attempt-${attempt}`,
+            env: commandEnv(),
+            timeoutMs: 120_000,
+          },
+        );
+        if (result.exitCode !== 0) throw new Error(resultText(result));
+        return result;
       },
     );
     expect(sandboxChat.exitCode, resultText(sandboxChat)).toBe(0);
