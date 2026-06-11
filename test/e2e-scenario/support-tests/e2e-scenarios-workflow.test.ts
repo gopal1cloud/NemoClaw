@@ -37,6 +37,8 @@ function generateMatrixForDispatch(env: {
     const result = spawnSync("bash", ["-c", generateStep?.run as string], {
       cwd: process.cwd(),
       encoding: "utf-8",
+      timeout: 120_000,
+      killSignal: "SIGKILL",
       env: {
         ...process.env,
         GITHUB_OUTPUT: outputPath,
@@ -45,6 +47,7 @@ function generateMatrixForDispatch(env: {
         SCENARIOS: env.SCENARIOS,
       },
     });
+    expect(result.signal).toBeNull();
     expect(result.stderr).toBe("");
     expect(result.status).toBe(0);
     return Object.fromEntries(
