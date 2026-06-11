@@ -55,6 +55,27 @@ function gatewayTokenFail(lines: string | readonly string[], exitCode = 1): neve
 const SECURITY_WARNING = "Treat this token like a password -- do not log, share, or commit it.";
 
 /**
+ * Build the agent-aware "not applicable" diagnostic for a non-OpenClaw agent.
+ *
+ * NCQ #5249: the bare "this command only supports OpenClaw" line (NCQ #3180)
+ * leaves Hermes users following generic dashboard-token quickstart patterns
+ * without a next step. For Hermes specifically, point them at the supported
+ * dashboard auth path so Day0 verification is not a dead end. Other
+ * non-OpenClaw agents keep the single explanatory line.
+ */
+function notApplicableLines(sandboxName: string, agent: string): readonly string[] {
+  const lead = `  gateway-token is not applicable for sandbox '${sandboxName}': it uses the '${agent}' agent, which does not expose a gateway auth token. This command only supports the OpenClaw agent.`;
+  if (agent === "hermes") {
+    return [
+      lead,
+      `  For Hermes dashboard access, run: nemoclaw ${sandboxName} dashboard-url`,
+      "  Hermes dashboard auth is read from the in-sandbox config (~/.hermes/config.yaml), not a gateway token.",
+    ];
+  }
+  return [lead];
+}
+
+/**
  * Run the gateway-token command. Throws {@link GatewayTokenCommandError} on
  * failure. The caller is responsible for rendering failures and for having
  * validated that the sandbox exists in the registry.
@@ -80,9 +101,7 @@ export function runGatewayTokenCommand(
     }
   }
   if (resolvedAgent && resolvedAgent !== "openclaw") {
-    gatewayTokenFail(
-      `  gateway-token is not applicable for sandbox '${sandboxName}': it uses the '${resolvedAgent}' agent, which does not expose a gateway auth token. This command only supports the OpenClaw agent.`,
-    );
+    gatewayTokenFail(notApplicableLines(sandboxName, resolvedAgent));
   }
 
   let token: string | null;
