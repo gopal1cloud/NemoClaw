@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
 import { runWithEnv, writeSandboxRegistry } from "./helpers";
 
@@ -35,10 +35,10 @@ describe("CLI dispatch for terminal agents", () => {
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "-n" ] && [ "$4" = "alpha" ]; then',
-        '  cmd="$8"',
+        '  cmd="${10}"',
         '  case "$cmd" in',
-        '    *"dcode --version"*) echo "dcode 0.1.12"; exit 0 ;;',
-        '    *"config.toml"*) echo "NEMOCLAW_DEEPAGENTS_CONFIG_OK"; exit 0 ;;',
+        '    *"dcode --version"*) echo "dcode 0.1.12"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
+        '    *"config.toml"*) echo "NEMOCLAW_DEEPAGENTS_CONFIG_OK"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
         "  esac",
         "fi",
         "exit 0",
@@ -55,10 +55,13 @@ describe("CLI dispatch for terminal agents", () => {
     expect(r.out).toContain("terminal smoke checks passed");
     const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
     expect(calls).toContain("sandbox get alpha");
-    expect(calls).toContain("sandbox exec -n alpha -- sh -lc dcode --version");
-    expect(calls).toContain(
-      "sandbox exec -n alpha -- sh -lc test -s /sandbox/.deepagents/config.toml && echo NEMOCLAW_DEEPAGENTS_CONFIG_OK",
-    );
+    expect(calls.some((call) => call.includes("NEMOCLAW_AGENT_SMOKE_EXIT"))).toBe(true);
+    expect(calls.some((call) => call.includes("nemoclaw-agent-smoke dcode --version"))).toBe(true);
+    expect(
+      calls.some((call) =>
+        call.includes("nemoclaw-agent-smoke test -s /sandbox/.deepagents/config.toml"),
+      ),
+    ).toBe(true);
     expect(calls.some((call) => call.includes("OPENCLAW="))).toBe(false);
     expect(calls.some((call) => call.includes("curl -so"))).toBe(false);
   });
