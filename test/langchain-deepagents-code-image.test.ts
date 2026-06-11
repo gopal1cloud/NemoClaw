@@ -33,4 +33,19 @@ describe("LangChain Deep Agents Code image contracts", () => {
       /write_export_if_set (?:NVIDIA_API_KEY|OPENAI_API_KEY|TAVILY_API_KEY|DEEPAGENTS_CODE_TAVILY_API_KEY|LANGSMITH_API_KEY)\b/,
     );
   });
+
+  it("keeps dcode.real behind the managed wrapper boundary", () => {
+    const dockerfile = readAgentFile("Dockerfile");
+    const wrapper = readAgentFile("dcode-wrapper.sh");
+    const policy = readAgentFile("policy-additions.yaml");
+
+    expect(dockerfile).toContain("mv /usr/local/bin/dcode /usr/local/lib/nemoclaw/dcode.upstream");
+    expect(dockerfile).toContain(
+      "install -m 0755 /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/bin/dcode.real",
+    );
+    expect(wrapper).toContain("/usr/local/lib/nemoclaw/dcode.upstream");
+    expect(wrapper).toContain("extra_args+=(--sandbox none)");
+    expect(wrapper).toContain("extra_args+=(--no-mcp)");
+    expect(policy).not.toContain("/usr/local/bin/dcode.real");
+  });
 });

@@ -47,7 +47,6 @@ network_policies:
           - allow: { method: GET, path: "/v1/models/**" }
     binaries:
       - { path: /usr/local/bin/dcode }
-      - { path: /usr/local/bin/dcode.real }
       - { path: /usr/bin/python3* }
       - { path: /usr/local/lib/python3.13/** }
 
@@ -63,7 +62,6 @@ network_policies:
     binaries:
       - { path: /usr/bin/git }
       - { path: /usr/local/bin/dcode }
-      - { path: /usr/local/bin/dcode.real }
       - { path: /usr/bin/python3* }
 
   pypi:
@@ -85,7 +83,6 @@ network_policies:
       - { path: /usr/local/bin/pip3 }
       - { path: /usr/bin/python3* }
       - { path: /usr/local/bin/dcode }
-      - { path: /usr/local/bin/dcode.real }
 
   tavily:
     name: tavily
@@ -98,7 +95,6 @@ network_policies:
           - allow: { method: POST, path: "/**" }
     binaries:
       - { path: /usr/local/bin/dcode }
-      - { path: /usr/local/bin/dcode.real }
       - { path: /usr/bin/python3* }
 
   langsmith:
@@ -113,5 +109,4 @@ network_policies:
           - allow: { method: POST, path: "/**" }
     binaries:
       - { path: /usr/local/bin/dcode }
-      - { path: /usr/local/bin/dcode.real }
       - { path: /usr/bin/python3* }

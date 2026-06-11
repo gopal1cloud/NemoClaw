@@ -13,10 +13,12 @@ export DEEPAGENTS_CODE_AUTO_UPDATE=0
 export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 
+real_bin="/usr/local/lib/nemoclaw/dcode.upstream"
+
 for arg in "$@"; do
   case "$arg" in
     --version | -V | --help | -h)
-      exec /usr/local/bin/dcode.real "$@"
+      exec "$real_bin" "$@"
       ;;
   esac
 done
@@ -46,4 +48,4 @@ if ! has_arg "--no-mcp" "$@"; then
   extra_args+=(--no-mcp)
 fi
 
-exec /usr/local/bin/dcode.real "${extra_args[@]}" "$@"
+exec "$real_bin" "${extra_args[@]}" "$@"
