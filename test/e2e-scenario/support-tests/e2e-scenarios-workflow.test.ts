@@ -68,9 +68,10 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
 
   it("evaluates jobs-only dispatch selector behavior before secret-bearing jobs run", () => {
     expect(
-      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "network-policy,../escape" }),
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "network-policy-vitest,../escape" }),
     ).toMatchObject({
       valid: false,
+      errors: ["Invalid jobs input"],
       liveScenariosRuns: false,
       selectedFreeStandingJobs: [],
     });
@@ -489,6 +490,7 @@ jobs:
           "report-to-pr job must wait for live-scenarios",
           "report-to-pr job must wait for double-onboard-vitest",
           "report-to-pr step must pass pr_number through JOB_PR_NUMBER env",
+          "report-to-pr step must pass jobs through JOBS env",
           "step 'Post Vitest scenario results to PR' run script must include process.env.JOBS",
           "step 'Post Vitest scenario results to PR' run script must check validate-jobs before echoing selectors",
           "step 'Post Vitest scenario results to PR' run script must omit rejected job selectors",
