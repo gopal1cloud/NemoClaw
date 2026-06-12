@@ -13,9 +13,10 @@
  * netns blocks the syscall). The only manual recovery is a 5-min
  * `nemoclaw <name> rebuild --yes`.
  *
- * This test asserts the desired contract — recovery RESTORES the guard
- * chain before launching, no WARNING line, gateway PID stable. It will fail
- * on `main` (proving the bug), pass once the fix lands.
+ * This test asserts the desired contract — recovery logs that it is restoring
+ * from trusted packaged preloads, RESTORES the guard chain before launching,
+ * and keeps the gateway PID stable. It will fail on `main` (proving the bug),
+ * pass once the fix lands.
  *
  * The contract is platform-independent: we don't need aarch64 to assert
  * "guards are present after recovery." The aarch64 ciao crash is a
@@ -101,15 +102,16 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   });
 
   // ── Assert #2701 contract ────────────────────────────────────────
-  // After recovery completes, the guard chain MUST be restored. Today
-  // this fails: recovery emits a WARNING but launches the gateway
-  // naked, leaving /tmp/nemoclaw-proxy-env.sh absent. After the fix
-  // lands, recovery re-emits the chain before launching.
+  // After recovery completes, the guard chain MUST be restored. Before the
+  // fix, recovery emitted a WARNING but launched the gateway naked, leaving
+  // /tmp/nemoclaw-proxy-env.sh absent. After the fix lands, recovery re-emits
+  // the chain before launching.
   await gateway.expectGuardChainActive(instance);
 
-  // No WARNING line should appear in the gateway log — the fix turns
-  // the warn-and-proceed branch into a re-emit-and-continue branch.
-  await gateway.expectLogDoesNotContain(instance, /\[gateway-recovery\] WARNING/);
+  // A missing proxy-env file is still worth surfacing, but the warning must
+  // describe trusted restoration instead of an unguarded launch.
+  await gateway.expectLogContains(instance, /restoring library guards from packaged preloads/);
+  await gateway.expectLogDoesNotContain(instance, /gateway launching without library guards/);
 
   // Gateway must be steady-state — no crash loop. This assertion is
   // the "would have caught DGX Spark" check, even on x86 runners,
