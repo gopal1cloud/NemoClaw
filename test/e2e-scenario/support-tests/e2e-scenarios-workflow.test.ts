@@ -356,31 +356,27 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     }
   });
 
-  it(
-    "keeps each free-standing scenario out of the registry matrix",
-    () => {
-      const inventory = readFreeStandingJobsInventory();
-      for (const job of inventory.allowedJobs) {
-        expect(generateMatrixForDispatch({ JOBS: job, SCENARIOS: "" })).toMatchObject({
-          hermes_selected: job === "hermes-e2e-vitest" ? "true" : "false",
-          matrix: "[]",
-        });
-      }
-      for (const [scenario, job] of inventory.scenarioToJob) {
-        expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: scenario })).toMatchObject({
-          hermes_selected: scenario === "hermes-e2e" ? "true" : "false",
-          matrix: "[]",
-        });
-        expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: scenario })).toMatchObject({
-          valid: true,
-          liveScenariosRuns: false,
-          selectedFreeStandingJobs: [job],
-          registryScenarios: [],
-        });
-      }
-    },
-    15_000,
-  );
+  it("keeps each free-standing scenario out of the registry matrix", () => {
+    const inventory = readFreeStandingJobsInventory();
+    for (const job of inventory.allowedJobs) {
+      expect(generateMatrixForDispatch({ JOBS: job, SCENARIOS: "" })).toMatchObject({
+        hermes_selected: job === "hermes-e2e-vitest" ? "true" : "false",
+        matrix: "[]",
+      });
+    }
+    for (const [scenario, job] of inventory.scenarioToJob) {
+      expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: scenario })).toMatchObject({
+        hermes_selected: scenario === "hermes-e2e" ? "true" : "false",
+        matrix: "[]",
+      });
+      expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: scenario })).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: [job],
+        registryScenarios: [],
+      });
+    }
+  }, 15_000);
 
   it("flags direct dispatch-input interpolation and unsafe artifact upload", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
@@ -605,6 +601,7 @@ jobs:
           "workflow missing hermes-e2e-vitest job",
           "workflow missing skill-agent-vitest job",
           "workflow missing model-router-provider-routed-inference-vitest job",
+          "workflow missing snapshot-commands-vitest job",
           "report-to-pr job must wait for live-scenarios",
           "report-to-pr step must pass jobs through JOBS env",
           "step 'Post Vitest scenario results to PR' run script must check selector validation before echoing selectors",
@@ -631,6 +628,59 @@ jobs:
     try {
       expect(validateE2eVitestScenariosWorkflowBoundary(workflowPath)).toContain(
         "free-standing inventory mapping sandbox-rebuild:sandbox-rebuild-vitest must match the workflow job selector",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("requires snapshot commands workflow boundary coverage", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = fs.readFileSync(
+      path.join(process.cwd(), ".github/workflows/e2e-vitest-scenarios.yaml"),
+      "utf8",
+    );
+    const parsedWorkflow = YAML.parse(workflow) as {
+      jobs: Record<string, { env: Record<string, string>; steps: Array<Record<string, unknown>> }>;
+    };
+    const snapshotJob = parsedWorkflow.jobs["snapshot-commands-vitest"];
+    snapshotJob.env.DOCKER_CONFIG = "${{ github.workspace }}/.docker-config-shared";
+    for (const step of snapshotJob.steps) {
+      if (step.uses === "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10") {
+        step.with = { ...(step.with as Record<string, unknown>), "persist-credentials": true };
+      }
+      if (step.name === "Install root dependencies") step.run = "npm install";
+      if (step.name === "Run snapshot commands live test") {
+        step.run = String(step.run).replace(
+          "test/e2e-scenario/live/snapshot-commands.test.ts",
+          "test/e2e-scenario/live/registry-scenarios.test.ts",
+        );
+      }
+      if (step.name === "Upload snapshot commands artifacts") {
+        step.with = {
+          ...(step.with as Record<string, unknown>),
+          path: "e2e-artifacts/vitest/",
+          "include-hidden-files": true,
+        };
+      }
+      if (step.name === "Clean up Docker auth") {
+        step.run = String(step.run).replace('rm -rf "${DOCKER_CONFIG}"', 'echo "missing cleanup"');
+      }
+    }
+    fs.writeFileSync(workflowPath, YAML.stringify(parsedWorkflow));
+
+    try {
+      expect(validateE2eVitestScenariosWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "snapshot-commands-vitest job must use an isolated Docker auth directory",
+          "snapshot-commands-vitest checkout step must set persist-credentials=false",
+          "snapshot-commands-vitest artifact upload must set include-hidden-files: false",
+          "artifact upload path must include e2e-artifacts/vitest/snapshot-commands/",
+          "step 'Clean up Docker auth' run script must include rm -rf \"${DOCKER_CONFIG}\"",
+          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
+          "step 'Run snapshot commands live test' run script must include test/e2e-scenario/live/snapshot-commands.test.ts",
+        ]),
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

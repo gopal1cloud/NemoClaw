@@ -16,29 +16,19 @@ import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import {
-  type SandboxClient,
-  trustedSandboxShellScript,
-} from "../fixtures/clients/sandbox.ts";
+import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-snapshot";
-const BACKUP_DIR = path.join(
-  os.homedir(),
-  ".nemoclaw",
-  "rebuild-backups",
-  SANDBOX_NAME,
-);
+const BACKUP_DIR = path.join(os.homedir(), ".nemoclaw", "rebuild-backups", SANDBOX_NAME);
 const MARKER_FILE = "/sandbox/.openclaw/workspace/snapshot-marker.txt";
 const SECOND_MARKER = "/sandbox/.openclaw/workspace/snapshot-marker-2.txt";
 const LIVE_TIMEOUT_MS = 30 * 60_000;
 
-function resultText(
-  result: Pick<ShellProbeResult, "stdout" | "stderr">,
-): string {
+function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
@@ -121,15 +111,12 @@ async function expectSandboxFileContent(
 function firstSnapshotTimestamp(listOutput: string): string {
   const match = listOutput.match(/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d+Z/);
   if (!match)
-    throw new Error(
-      `Failed to parse snapshot timestamp from list output:\n${listOutput}`,
-    );
+    throw new Error(`Failed to parse snapshot timestamp from list output:\n${listOutput}`);
   return match[0];
 }
 
 function scanSnapshotCredentialLeaks(root: string): string[] {
-  if (!fs.existsSync(root))
-    throw new Error(`Backup directory missing: ${root}`);
+  if (!fs.existsSync(root)) throw new Error(`Backup directory missing: ${root}`);
   const ignored = new Set([
     "package-lock.json",
     "npm-shrinkwrap.json",
@@ -147,13 +134,7 @@ function scanSnapshotCredentialLeaks(root: string): string[] {
       }
       if (!entry.isFile()) continue;
       if (ignored.has(entry.name)) continue;
-      if (
-        !(
-          entry.name === ".env" ||
-          entry.name.endsWith(".env") ||
-          entry.name.endsWith(".json")
-        )
-      ) {
+      if (!(entry.name === ".env" || entry.name.endsWith(".env") || entry.name.endsWith(".json"))) {
         continue;
       }
       const body = fs.readFileSync(fullPath, "utf8");
@@ -169,17 +150,13 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
   { timeout: LIVE_TIMEOUT_MS },
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
     const apiKey = secrets.required("NVIDIA_API_KEY");
-    expect(
-      apiKey.startsWith("nvapi-"),
-      "NVIDIA_API_KEY must start with nvapi-",
-    ).toBe(true);
+    expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
 
     await artifacts.writeJson("scenario.json", {
       id: "snapshot-commands",
       runner: "vitest",
       legacySource: "test/e2e/test-snapshot-commands.sh",
-      boundary:
-        "install.sh + nemoclaw snapshot commands + openshell sandbox exec",
+      boundary: "install.sh + nemoclaw snapshot commands + openshell sandbox exec",
       sandboxName: SANDBOX_NAME,
       backupDir: BACKUP_DIR,
       contracts: [
@@ -200,13 +177,9 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     });
     if (dockerInfo.exitCode !== 0) {
       if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(
-          `Docker is required for snapshot commands E2E: ${resultText(dockerInfo)}`,
-        );
+        throw new Error(`Docker is required for snapshot commands E2E: ${resultText(dockerInfo)}`);
       }
-      skip(
-        `Docker is required for snapshot commands E2E: ${resultText(dockerInfo)}`,
-      );
+      skip(`Docker is required for snapshot commands E2E: ${resultText(dockerInfo)}`);
     }
 
     cleanup.add(`destroy snapshot sandbox ${SANDBOX_NAME}`, () =>
@@ -216,17 +189,13 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     await cleanupSnapshotSandbox(host, sandbox, "pre-cleanup");
     fs.rmSync(BACKUP_DIR, { recursive: true, force: true });
 
-    const install = await host.command(
-      "bash",
-      ["install.sh", "--non-interactive"],
-      {
-        artifactName: "phase-1-install-nemoclaw",
-        cwd: REPO_ROOT,
-        env: commandEnv(apiKey),
-        redactionValues: [apiKey],
-        timeoutMs: 20 * 60_000,
-      },
-    );
+    const install = await host.command("bash", ["install.sh", "--non-interactive"], {
+      artifactName: "phase-1-install-nemoclaw",
+      cwd: REPO_ROOT,
+      env: commandEnv(apiKey),
+      redactionValues: [apiKey],
+      timeoutMs: 20 * 60_000,
+    });
     expect(install.exitCode, resultText(install)).toBe(0);
 
     const cliProbe = await host.command(
@@ -251,35 +220,22 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       "phase-2-write-marker",
     );
     expect(writeMarker.exitCode, resultText(writeMarker)).toBe(0);
-    await expectSandboxFileContent(
-      sandbox,
-      MARKER_FILE,
-      markerContent,
-      "phase-2-read-marker",
-    );
+    await expectSandboxFileContent(sandbox, MARKER_FILE, markerContent, "phase-2-read-marker");
 
-    const firstCreate = await host.command(
-      "nemoclaw",
-      [SANDBOX_NAME, "snapshot", "create"],
-      {
-        artifactName: "phase-3-snapshot-create-first",
-        env: commandEnv(),
-        timeoutMs: 120_000,
-      },
-    );
+    const firstCreate = await host.command("nemoclaw", [SANDBOX_NAME, "snapshot", "create"], {
+      artifactName: "phase-3-snapshot-create-first",
+      env: commandEnv(),
+      timeoutMs: 120_000,
+    });
     expect(firstCreate.exitCode, resultText(firstCreate)).toBe(0);
     expect(resultText(firstCreate)).toMatch(/Snapshot v\d+.*created/);
     expect(resultText(firstCreate)).toContain("rebuild-backups");
 
-    const list = await host.command(
-      "nemoclaw",
-      [SANDBOX_NAME, "snapshot", "list"],
-      {
-        artifactName: "phase-4-snapshot-list",
-        env: commandEnv(),
-        timeoutMs: 60_000,
-      },
-    );
+    const list = await host.command("nemoclaw", [SANDBOX_NAME, "snapshot", "list"], {
+      artifactName: "phase-4-snapshot-list",
+      env: commandEnv(),
+      timeoutMs: 60_000,
+    });
     expect(list.exitCode, resultText(list)).toBe(0);
     expect(resultText(list)).toContain("snapshot(s)");
     const timestamp = firstSnapshotTimestamp(resultText(list));
@@ -292,26 +248,18 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     );
     expect(modify.exitCode, resultText(modify)).toBe(0);
 
-    const firstGone = await sandbox.exec(
-      SANDBOX_NAME,
-      ["sh", "-lc", `test ! -e ${MARKER_FILE}`],
-      {
-        artifactName: "phase-5-first-marker-gone",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      },
-    );
+    const firstGone = await sandbox.exec(SANDBOX_NAME, ["sh", "-lc", `test ! -e ${MARKER_FILE}`], {
+      artifactName: "phase-5-first-marker-gone",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    });
     expect(firstGone.exitCode, resultText(firstGone)).toBe(0);
 
-    const secondCreate = await host.command(
-      "nemoclaw",
-      [SANDBOX_NAME, "snapshot", "create"],
-      {
-        artifactName: "phase-5-snapshot-create-second",
-        env: commandEnv(),
-        timeoutMs: 120_000,
-      },
-    );
+    const secondCreate = await host.command("nemoclaw", [SANDBOX_NAME, "snapshot", "create"], {
+      artifactName: "phase-5-snapshot-create-second",
+      env: commandEnv(),
+      timeoutMs: 120_000,
+    });
     expect(secondCreate.exitCode, resultText(secondCreate)).toBe(0);
     expect(resultText(secondCreate)).toMatch(/Snapshot v\d+.*created/);
 
@@ -322,15 +270,11 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     );
     expect(perturb.exitCode, resultText(perturb)).toBe(0);
 
-    const latestRestore = await host.command(
-      "nemoclaw",
-      [SANDBOX_NAME, "snapshot", "restore"],
-      {
-        artifactName: "phase-6-snapshot-restore-latest",
-        env: commandEnv(),
-        timeoutMs: 120_000,
-      },
-    );
+    const latestRestore = await host.command("nemoclaw", [SANDBOX_NAME, "snapshot", "restore"], {
+      artifactName: "phase-6-snapshot-restore-latest",
+      env: commandEnv(),
+      timeoutMs: 120_000,
+    });
     expect(latestRestore.exitCode, resultText(latestRestore)).toBe(0);
     expect(resultText(latestRestore)).toContain("Restored");
     await expectSandboxFileContent(
