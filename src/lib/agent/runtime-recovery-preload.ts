@@ -27,11 +27,11 @@ export const GATEWAY_PRELOAD_GUARDS: ReadonlyArray<{
   },
 ];
 
-// Self-heal NODE_OPTIONS at recovery time for sandboxes that were onboarded
-// by an older entrypoint which did not emit the --require preload lines into
-// /tmp/nemoclaw-proxy-env.sh. The whole block is gated on _PE_MISSING="0"
-// (proxy-env was sourced successfully) so that the legacy "proxy-env missing
-// → launching without library guards" warning still reflects reality.
+// Build the installer-and-call lines for the recovery self-heal. Callers MUST
+// wrap the returned lines in `if [ "$_PE_MISSING" = "0" ]; then … fi;` so the
+// installer only runs when /tmp/nemoclaw-proxy-env.sh was sourced cleanly —
+// otherwise the existing "missing - launching without library guards" warning
+// would no longer reflect reality.
 //
 // Provenance is enforced before any path joins NODE_OPTIONS — the staged
 // /tmp/<preload>.js must be a regular non-symlink with mode 444 (and root-
@@ -43,7 +43,8 @@ export const GATEWAY_PRELOAD_GUARDS: ReadonlyArray<{
 // Every failure mode (symlink, wrong mode, wrong owner, source absent, copy
 // failed) skips the entry — it never grafts an untrusted file into
 // NODE_OPTIONS. The trailing "refusing unguarded gateway relaunch" invariant
-// at the end of the script still fires when provenance gates anything off.
+// at the end of the recovery script still fires when provenance gates
+// anything off.
 export function buildGatewayPreloadSelfHealLines(): string[] {
   const installer = [
     "_nemoclaw_install_recovery_preload() {",
@@ -98,5 +99,5 @@ export function buildGatewayPreloadSelfHealLines(): string[] {
       `_nemoclaw_install_recovery_preload ${tmpPath} ${sourcePath} || true;`,
   );
 
-  return ['if [ "$_PE_MISSING" = "0" ]; then', installer, ...calls, "fi;"];
+  return [installer, ...calls];
 }
