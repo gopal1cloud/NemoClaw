@@ -98,7 +98,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
           PATH: process.env.PATH ?? "/usr/bin:/bin",
           HTTP_PROXY: "http://proxy.example:8080",
           HTTPS_PROXY: "https://user:pass@proxy.example:8443",
-          http_proxy: "user:pass@proxy.example:8080",
+          http_proxy: "http://user:pass@proxy.example:8080",
           https_proxy: "https://safe-proxy.example:8443",
           NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST: "all",
         },
