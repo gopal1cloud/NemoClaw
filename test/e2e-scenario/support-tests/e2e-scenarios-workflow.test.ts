@@ -255,6 +255,20 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       selectedFreeStandingJobs: ["model-router-provider-routed-inference-vitest"],
       registryScenarios: [],
     });
+    expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "diagnostics" })).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["diagnostics-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "diagnostics-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["diagnostics-vitest"],
+      registryScenarios: [],
+    });
   });
 
   it("keeps the free-standing inventory internally consistent and data-only", () => {
