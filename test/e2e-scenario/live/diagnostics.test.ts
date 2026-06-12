@@ -228,7 +228,7 @@ runDiagnosticsTest(
       [CLI_ENTRYPOINT, "debug", "--quick", "--output", quickArchive],
       {
         artifactName: "diagnostics-debug-quick",
-        env: testEnv(home),
+        env: testEnv(home, { NEMOCLAW_SANDBOX_NAME: "" }),
         timeoutMs: DEBUG_QUICK_TIMEOUT_MS,
       },
     );
