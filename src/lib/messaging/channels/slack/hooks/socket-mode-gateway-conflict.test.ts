@@ -10,7 +10,11 @@ import {
   slackChannel,
 } from "../../../../../../test/helpers/messaging-conflict-fixtures";
 import type { ConflictRegistryEntry } from "../../../applier/conflict-detection/types";
-import { MessagingHookRegistry, runMessagingHook } from "../../../hooks";
+import {
+  MESSAGING_HOOK_CONFLICT_CODE,
+  MessagingHookRegistry,
+  runMessagingHook,
+} from "../../../hooks";
 import type { ChannelHookSpec, MessagingSerializableValue } from "../../../manifest";
 import {
   createSlackSocketModeGatewayConflictHookRegistration,
@@ -66,6 +70,9 @@ describe("slack.socketModeGatewayConflict hook", () => {
       "Slack Socket Mode is already enabled for sandbox 'alice' on this gateway; " +
         "only one sandbox can receive Slack Socket Mode events unless the gateway supports multiplexing.",
     );
+    await expect(runMessagingHook(HOOK, registry, { channelId: "slack" })).rejects.toMatchObject({
+      code: MESSAGING_HOOK_CONFLICT_CODE,
+    });
   });
 
   it("accepts serialized applier inputs for registry-scoped checks", async () => {

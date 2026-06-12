@@ -404,7 +404,7 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(checkMessagingBridgeHealth).toHaveBeenCalledWith("alpha", ["telegram"]);
+    expect(checkMessagingBridgeHealth).toHaveBeenCalledWith("alpha", ["telegram"], undefined);
     expect(lines).toContain(
       "  ⚠ telegram bridge: degraded (7 conflict errors in /tmp/gateway.log)",
     );

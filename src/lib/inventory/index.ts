@@ -117,7 +117,11 @@ export interface ShowStatusCommandDeps {
    * detect the degraded state from `$?` (#3386).
    */
   getGatewayHealth?: () => GatewayHealth;
-  checkMessagingBridgeHealth?: (sandboxName: string, channels: string[]) => MessagingBridgeHealth[];
+  checkMessagingBridgeHealth?: (
+    sandboxName: string,
+    channels: string[],
+    agent?: string | null,
+  ) => MessagingBridgeHealth[];
   findMessagingOverlaps?: () => MessagingOverlap[];
   readGatewayLog?: (sandboxName: string) => string | null;
   log?: (message?: string) => void;
@@ -500,7 +504,11 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
     const defaultEntry = refreshed.find((sb) => sb.name === resolvedDefault);
     const channels = getActiveChannelIdsFromPlan(defaultEntry?.messaging?.plan);
     if (channels.length > 0) {
-      const degraded = deps.checkMessagingBridgeHealth(resolvedDefault, channels);
+      const degraded = deps.checkMessagingBridgeHealth(
+        resolvedDefault,
+        channels,
+        defaultEntry?.agent,
+      );
       if (degraded.length > 0) {
         log("");
         for (const { channel, conflicts } of degraded) {

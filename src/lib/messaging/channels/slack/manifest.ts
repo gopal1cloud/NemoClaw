@@ -72,6 +72,7 @@ export const slackManifest = {
       providerName: "{sandboxName}-slack-bridge",
       providerEnvKey: "SLACK_BOT_TOKEN",
       placeholder: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+      primary: true,
     },
     {
       id: "slackAppToken",

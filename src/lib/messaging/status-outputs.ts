@@ -38,7 +38,11 @@ export interface SingleGatewayChannelOverlapStatusOutput extends MessagingStatus
 export function collectBuiltInMessagingStatusOutputs(
   options: { readonly agent?: MessagingAgentId } = {},
 ): MessagingStatusOutput[] {
-  return collectMessagingStatusOutputs(createBuiltInChannelManifestRegistry().list(), options);
+  const registry = createBuiltInChannelManifestRegistry();
+  return collectMessagingStatusOutputs(
+    options.agent ? registry.listAvailable({ agent: options.agent }) : registry.list(),
+    options,
+  );
 }
 
 export function collectMessagingStatusOutputs(
@@ -49,6 +53,7 @@ export function collectMessagingStatusOutputs(
 ): MessagingStatusOutput[] {
   const outputs: MessagingStatusOutput[] = [];
   for (const manifest of manifests) {
+    if (options.agent && !manifest.supportedAgents.includes(options.agent)) continue;
     for (const hook of manifest.hooks) {
       if (hook.phase !== "status") continue;
       if (options.agent && hook.agents && !hook.agents.includes(options.agent)) continue;

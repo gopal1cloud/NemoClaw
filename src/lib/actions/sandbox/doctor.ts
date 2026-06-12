@@ -454,7 +454,7 @@ function messagingDoctorCheck(sandboxName: string, sb: SandboxEntry): DoctorChec
   }
 
   const statusDeps = buildStatusCommandDeps(ROOT);
-  const degraded = statusDeps.checkMessagingBridgeHealth?.(sandboxName, channels) || [];
+  const degraded = statusDeps.checkMessagingBridgeHealth?.(sandboxName, channels, sb.agent) || [];
   const overlaps = (statusDeps.findMessagingOverlaps?.() ?? []).filter(
     (overlap) => channels.includes(overlap.channel) && overlap.sandboxes.includes(sandboxName),
   );

@@ -124,7 +124,7 @@ function channelDefFromManifest(manifest: ChannelManifest): ChannelDef {
       `${manifest.displayName} messaging`,
     label: primaryInput?.prompt?.label ?? manifest.displayName,
     ...(manifest.enrollmentNotes ? { setupNotes: manifest.enrollmentNotes } : {}),
-    ...(manifest.auth.mode === "in-sandbox-qr" ? {} : configFieldMetadata(manifest)),
+    ...configFieldMetadata(manifest),
   };
 
   if (manifest.auth.mode === "in-sandbox-qr") {

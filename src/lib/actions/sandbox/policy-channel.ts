@@ -15,6 +15,7 @@ import {
   createBuiltInRenderTemplateResolver,
   createMessagingPreEnableHookInputs,
   getMessagingManifestAvailabilityContext,
+  isMessagingHookConflictError,
   type MessagingHookOutputValue,
   MessagingHostStateApplier,
   type MessagingSerializableValue,
@@ -488,9 +489,11 @@ async function checkMessagingPreEnableHooks(
   }
 
   const hookRegistry = createBuiltInMessagingHookRegistry();
+  const currentGatewayName =
+    registryEntries.find((entry) => entry.name === sandboxName)?.gatewayName || BASE_GATEWAY_NAME;
   const additionalInputs = createMessagingPreEnableHookInputs({
     currentSandbox: sandboxName,
-    currentGatewayName: BASE_GATEWAY_NAME,
+    currentGatewayName,
     registryEntries,
   });
 
@@ -516,6 +519,7 @@ async function checkMessagingPreEnableHooks(
         ),
     });
   } catch (err) {
+    if (!isMessagingHookConflictError(err)) throw err;
     const message = err instanceof Error ? err.message : String(err);
     for (const line of message.split("\n").filter((line) => line.trim().length > 0)) {
       console.log(`  ${YW}⚠${R} ${line}`);

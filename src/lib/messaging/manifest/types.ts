@@ -109,6 +109,7 @@ export interface ChannelCredentialSpec {
   readonly providerName: MessagingTemplateString;
   readonly providerEnvKey: string;
   readonly placeholder: MessagingTemplateString;
+  readonly primary?: boolean;
 }
 
 /** Manifest render declaration for supported output formats. */

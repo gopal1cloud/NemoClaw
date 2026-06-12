@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import type { ChannelManifest } from "../manifest";
 import {
   getMessagingChannelForCredentialEnvKey,
   getMessagingConfigEnvAliases,
@@ -125,4 +126,76 @@ describe("built-in messaging channel metadata", () => {
     });
     expect(listMessagingPackageInstallSpecs({ agent: "hermes" })).toEqual([]);
   });
+
+  it("merges duplicate policy preset metadata by preset name", () => {
+    const manifests: ChannelManifest[] = [
+      manifestWithPreset("alpha", {
+        name: "shared",
+        policyKeys: ["alpha_key"],
+        agentPolicyKeys: { hermes: ["alpha_hermes"] },
+        validationWarningLines: ["alpha warning"],
+      }),
+      manifestWithPreset("beta", {
+        name: "shared",
+        policyKeys: ["beta_key"],
+        validationWarningLines: ["beta warning"],
+      }),
+    ];
+
+    expect(getMessagingPolicyKeyAliases({ manifests }).shared).toEqual([
+      "alpha_key",
+      "alpha_hermes",
+      "beta_key",
+    ]);
+    expect(getMessagingPolicyPresetValidationWarnings({ manifests }).shared).toEqual([
+      "alpha warning",
+      "beta warning",
+    ]);
+  });
+
+  it("expands universal package-install hooks to the manifest supported agents", () => {
+    const manifests: ChannelManifest[] = [
+      {
+        ...manifestWithPreset("alpha", "alpha"),
+        hooks: [
+          {
+            id: "alpha-install",
+            phase: "agent-install",
+            handler: "common.staticOutputs",
+            outputs: [
+              {
+                id: "alphaPackage",
+                kind: "package-install",
+                value: { manager: "npm", spec: "alpha@1.0.0" },
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    expect(listMessagingPackageInstallSpecs({ manifests })[0]?.agents).toEqual([
+      "openclaw",
+      "hermes",
+    ]);
+  });
 });
+
+function manifestWithPreset(
+  id: string,
+  preset: NonNullable<ChannelManifest["policyPresets"]>[number],
+): ChannelManifest {
+  return {
+    schemaVersion: 1,
+    id,
+    displayName: id,
+    supportedAgents: ["openclaw", "hermes"],
+    auth: { mode: "none" },
+    inputs: [],
+    credentials: [],
+    policyPresets: [preset],
+    render: [],
+    state: {},
+    hooks: [],
+  };
+}

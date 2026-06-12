@@ -431,7 +431,7 @@ describe("nemoclaw-start non-root fallback", () => {
     }
   });
 
-  it("executes explicit non-root commands before gateway startup setup", () => {
+  it("runs runtime preloads and scans before explicit non-root commands", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
     const script = [
       "set -euo pipefail",
@@ -456,20 +456,20 @@ describe("nemoclaw-start non-root fallback", () => {
       "lock_rc_files() { :; }",
       "apply_messaging_runtime_env_aliases() { :; }",
       'configure_messaging_channels() { echo "SHOULD_NOT_CONFIGURE"; exit 70; }',
-      'install_messaging_runtime_preloads() { echo "SHOULD_NOT_INSTALL"; exit 71; }',
-      'verify_messaging_runtime_secret_scans() { echo "SHOULD_NOT_VERIFY"; exit 74; }',
+      'install_messaging_runtime_preloads() { echo "ORDER:install"; }',
+      'verify_messaging_runtime_secret_scans() { echo "ORDER:verify"; }',
       "seed_default_workspace_templates() { :; }",
       "_SANDBOX_HOME=/sandbox",
       "NEMOCLAW_CMD=(bash -c 'echo EXPLICIT_COMMAND; exit 23')",
       nonRootFallbackBlock(src),
       'echo "SHOULD_NOT_REACH"',
     ].join("\n");
-
     const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
 
     expect(result.status).toBe(23);
     expect(result.stdout).toContain("EXPLICIT_COMMAND");
-    expect(result.stdout).not.toContain("SHOULD_NOT");
+    expect(result.stdout).toMatch(/ORDER:install[\s\S]*ORDER:verify[\s\S]*EXPLICIT_COMMAND/);
+    expect(result.stdout).not.toContain("SHOULD_NOT_CONFIGURE");
   });
 
   it("#3256: only requires early gateway token generation for gateway and OpenClaw commands", () => {

@@ -146,11 +146,44 @@ describe("messaging applier hook phases", () => {
       },
     ]);
   });
+
+  it("stops later hooks for the skipped channel after a skip-channel failure", async () => {
+    const calls: string[] = [];
+    const runHook: MessagingHookApplyRunner = (request) => {
+      calls.push(`${request.channelId}:${request.hookId}`);
+      if (request.hookId === "telegram-pre-enable") {
+        throw new Error("telegram skipped");
+      }
+      return {
+        hookId: request.hookId,
+        handlerId: request.handler,
+        phase: request.phase,
+        outputs: {},
+      };
+    };
+
+    const result = await MessagingSetupApplier.applyPreEnableChecks(
+      makePlan({
+        telegramOnFailure: "skip-channel",
+        includeTelegramSecondPreEnable: true,
+        includeDiscordPreEnable: true,
+      }),
+      { runHook },
+    );
+
+    expect(calls).toEqual(["telegram:telegram-pre-enable", "discord:discord-pre-enable"]);
+    expect(result.skippedHooks).toEqual([
+      "telegram:telegram-pre-enable",
+      "telegram:telegram-second-pre-enable",
+    ]);
+    expect(result.appliedHooks).toEqual(["discord:discord-pre-enable"]);
+  });
 });
 
 function makePlan(
   options: {
     readonly telegramOnFailure?: "abort" | "skip-channel";
+    readonly includeTelegramSecondPreEnable?: boolean;
     readonly includeDiscordPreEnable?: boolean;
   } = {},
 ): SandboxMessagingPlan {
@@ -171,6 +204,17 @@ function makePlan(
           ],
           onFailure: options.telegramOnFailure,
         },
+        ...(options.includeTelegramSecondPreEnable
+          ? [
+              {
+                channelId: "telegram" as MessagingChannelId,
+                id: "telegram-second-pre-enable",
+                phase: "pre-enable" as const,
+                handler: "telegram.secondPreEnable",
+                onFailure: "abort" as const,
+              },
+            ]
+          : []),
         {
           channelId: "telegram",
           id: "telegram-runtime-preload",

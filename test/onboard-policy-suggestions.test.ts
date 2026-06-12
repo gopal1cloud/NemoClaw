@@ -113,6 +113,22 @@ describe("onboard policy preset suggestions", () => {
     }
   });
 
+  it("auto-detects messaging policy presets from secondary channel credentials", () => {
+    const originalSlackBotToken = process.env.SLACK_BOT_TOKEN;
+    const originalSlackAppToken = process.env.SLACK_APP_TOKEN;
+    try {
+      delete process.env.SLACK_BOT_TOKEN;
+      process.env.SLACK_APP_TOKEN = "xapp-secondary";
+
+      expect(getSuggestedPolicyPresets()).toContain("slack");
+    } finally {
+      if (originalSlackBotToken === undefined) delete process.env.SLACK_BOT_TOKEN;
+      else process.env.SLACK_BOT_TOKEN = originalSlackBotToken;
+      if (originalSlackAppToken === undefined) delete process.env.SLACK_APP_TOKEN;
+      else process.env.SLACK_APP_TOKEN = originalSlackAppToken;
+    }
+  });
+
   it("suggests local-inference preset for local providers only", () => {
     const ollamaPresets = getSuggestedPolicyPresets({ provider: "ollama-local" });
     expect(ollamaPresets).toContain("local-inference");

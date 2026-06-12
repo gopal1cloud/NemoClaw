@@ -528,8 +528,9 @@ export function shouldApplyDockerGpuPatch(
 ): boolean {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
-  const dockerDriverGateway = options.dockerDriverGateway ?? platform === "linux";
   const dockerDesktopWsl = options.dockerDesktopWsl === true;
+  const dockerDriverGateway =
+    options.dockerDriverGateway ?? (platform === "linux" || dockerDesktopWsl);
   if (
     !(config.sandboxGpuEnabled && (platform === "linux" || dockerDesktopWsl) && dockerDriverGateway)
   ) {

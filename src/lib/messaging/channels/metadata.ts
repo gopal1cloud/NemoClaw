@@ -25,6 +25,7 @@ export interface MessagingCredentialMetadata {
   readonly providerNameSuffix: string;
   readonly providerEnvKey: string;
   readonly placeholder: string;
+  readonly primary: boolean;
 }
 
 export interface MessagingConfigEnvMetadata {
@@ -87,6 +88,7 @@ export function listMessagingCredentialMetadata(
       providerNameSuffix: providerNameSuffix(credential.providerName),
       providerEnvKey: credential.providerEnvKey,
       placeholder: credential.placeholder,
+      primary: credential.primary === true,
     })),
   );
 }
@@ -240,25 +242,29 @@ export function listRequiredCreateTimeMessagingPolicyPresetsByChannel(
 export function getMessagingPolicyKeyAliases(
   options: MessagingManifestMetadataOptions = {},
 ): Readonly<Record<string, readonly string[]>> {
-  return Object.fromEntries(
-    listMessagingPolicyPresetMetadata(options).map((preset) => [
-      preset.presetName,
-      uniqueStrings([
-        ...preset.policyKeys,
-        ...Object.values(preset.agentPolicyKeys).flatMap((keys) => keys ?? []),
-      ]),
-    ]),
-  );
+  const result: Record<string, string[]> = {};
+  for (const preset of listMessagingPolicyPresetMetadata(options)) {
+    result[preset.presetName] = uniqueStrings([
+      ...(result[preset.presetName] ?? []),
+      ...preset.policyKeys,
+      ...Object.values(preset.agentPolicyKeys).flatMap((keys) => keys ?? []),
+    ]);
+  }
+  return result;
 }
 
 export function getMessagingPolicyPresetValidationWarnings(
   options: MessagingManifestMetadataOptions = {},
 ): Readonly<Record<string, readonly string[]>> {
-  return Object.fromEntries(
-    listMessagingPolicyPresetMetadata(options)
-      .filter((preset) => preset.validationWarningLines.length > 0)
-      .map((preset) => [preset.presetName, preset.validationWarningLines]),
-  );
+  const result: Record<string, string[]> = {};
+  for (const preset of listMessagingPolicyPresetMetadata(options)) {
+    if (preset.validationWarningLines.length === 0) continue;
+    result[preset.presetName] = uniqueStrings([
+      ...(result[preset.presetName] ?? []),
+      ...preset.validationWarningLines,
+    ]);
+  }
+  return result;
 }
 
 export function listOpenClawRuntimeChannelMetadata(
@@ -300,7 +306,7 @@ export function listMessagingPackageInstallSpecs(
             channelId: manifest.id,
             hookId: hook.id,
             outputId: output.id,
-            agents: hook.agents ?? [],
+            agents: hook.agents ?? manifest.supportedAgents,
             ...packageInstallValue(value),
           },
         ];

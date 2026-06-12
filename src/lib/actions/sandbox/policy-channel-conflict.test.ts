@@ -687,6 +687,38 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(upsertMock).not.toHaveBeenCalled(); // aborted before registering
   });
 
+  it("slack: uses the current sandbox gateway when checking Socket Mode conflicts", async () => {
+    const bob = makePlanEntry("bob", "slack", [
+      {
+        providerEnvKey: "SLACK_BOT_TOKEN",
+        credentialHash: hashCredential("xoxb-bob-bot") as string,
+      },
+      {
+        providerEnvKey: "SLACK_APP_TOKEN",
+        credentialHash: hashCredential("xapp-bob-app") as string,
+      },
+    ]);
+    (bob as { gatewayName?: string }).gatewayName = "nemoclaw-9090";
+    arrangeRegistry({
+      current: { name: "alpha", gatewayName: "nemoclaw-9090" } as SandboxEntry,
+      others: [bob],
+    });
+    getCredentialMock.mockImplementation((key: string) =>
+      key === "SLACK_BOT_TOKEN"
+        ? "xoxb-alpha-bot"
+        : key === "SLACK_APP_TOKEN"
+          ? "xapp-alpha-app"
+          : null,
+    );
+    promptMock.mockResolvedValue("n");
+
+    await addSandboxChannel("alpha", { channel: "slack" });
+
+    expect(loggedText()).toContain("Slack Socket Mode is already enabled for sandbox 'bob'");
+    expect(conflictPromptShown()).toBe(true);
+    expect(upsertMock).not.toHaveBeenCalled();
+  });
+
   it("slack: shared token on the same gateway reports the credential conflict first (#4953)", async () => {
     // The credential axis runs before the gateway axis, so a shared Slack token
     // surfaces the gateway-independent "same slack credential" warning (more

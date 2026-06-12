@@ -123,6 +123,34 @@ describe("enforceMessagingChannelConflicts — Slack Socket Mode gateway axis (#
     expect(error).not.toHaveBeenCalled();
   });
 
+  it("rethrows unexpected pre-enable hook infrastructure failures", async () => {
+    const badPlan = makePlan("bob", {
+      channels: [
+        {
+          ...slackChannel(),
+          hooks: [
+            {
+              ...SLACK_SOCKET_MODE_GATEWAY_CONFLICT_HOOK,
+              handler: "slack.missingHandler",
+            },
+          ],
+        },
+      ],
+      credentialBindings: [],
+    });
+    const { deps, log, error, promptContinue } = makeDeps({
+      currentPlan: badPlan,
+      isNonInteractive: () => false,
+    });
+
+    await expect(enforceMessagingChannelConflicts(deps as never)).rejects.toThrow(
+      "Missing messaging hook handler 'slack.missingHandler'",
+    );
+    expect(log).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    expect(promptContinue).not.toHaveBeenCalled();
+  });
+
   it("is a no-op when the current plan does not enable Slack", async () => {
     const { deps, log } = makeDeps({ currentPlan: makePlan("bob") });
     await expect(enforceMessagingChannelConflicts(deps as never)).resolves.toBeUndefined();

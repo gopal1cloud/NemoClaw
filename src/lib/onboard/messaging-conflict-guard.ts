@@ -19,7 +19,11 @@ import {
   findChannelConflictsFromPlan,
   MessagingSetupApplier,
 } from "../messaging/applier";
-import { createBuiltInMessagingHookRegistry, runMessagingHook } from "../messaging/hooks";
+import {
+  createBuiltInMessagingHookRegistry,
+  isMessagingHookConflictError,
+  runMessagingHook,
+} from "../messaging/hooks";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 
 export interface MessagingConflictGuardDeps {
@@ -152,6 +156,7 @@ async function enforceMessagingPreEnableHooks(
         ),
     });
   } catch (error) {
+    if (!isMessagingHookConflictError(error)) throw error;
     const message = error instanceof Error ? error.message : String(error);
     for (const line of message.split("\n").filter((entry) => entry.trim().length > 0)) {
       deps.log(`  ⚠ ${line}`);

@@ -50,6 +50,8 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
 
   it("omits envKey for in-sandbox QR-paired channels (whatsapp)", () => {
     expect(getChannelDef("whatsapp")?.envKey).toBeUndefined();
+    expect(getChannelDef("whatsapp")?.userIdEnvKey).toBe("WHATSAPP_ALLOWED_IDS");
+    expect(getChannelDef("whatsapp")?.allowIdsMode).toBe("dm");
     expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.whatsapp)).toBe(true);
     expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.wechat)).toBe(false);
     expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.slack)).toBe(false);

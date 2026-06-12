@@ -7,6 +7,7 @@ import {
   type SlackGatewayConflict,
 } from "../../../applier/conflict-detection/slack-socket-mode";
 import type { ConflictRegistryEntry } from "../../../applier/conflict-detection/types";
+import { MessagingHookConflictError } from "../../../hooks/errors";
 import type {
   MessagingHookContext,
   MessagingHookHandler,
@@ -50,7 +51,9 @@ export function createSlackSocketModeGatewayConflictHook(
     if (conflicts.length === 0) return {};
 
     const formatConflict = options.formatConflict ?? formatSlackSocketModeConflictMessage;
-    throw new Error(conflicts.map(({ sandbox }) => formatConflict(sandbox)).join("\n"));
+    throw new MessagingHookConflictError(
+      conflicts.map(({ sandbox }) => formatConflict(sandbox)).join("\n"),
+    );
   };
 }
 

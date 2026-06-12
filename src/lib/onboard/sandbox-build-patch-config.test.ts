@@ -11,6 +11,7 @@ describe("prepareSandboxBuildPatchConfig", () => {
       TELEGRAM_ALLOWED_IDS: "123,456",
       SLACK_ALLOWED_USERS: "U01ABC2DEF3",
       SLACK_ALLOWED_CHANNELS: "C012AB3CD,C987ZY6XW",
+      WECHAT_ALLOWED_IDS: "wxid-unused",
     }));
     const env = {
       TELEGRAM_ALLOWED_IDS: "123,456",

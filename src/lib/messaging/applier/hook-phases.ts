@@ -63,7 +63,12 @@ export async function applyMessagingHooksForPhase(
   const hookResults: MessagingHookRunResult[] = [];
   const appliedHooks: string[] = [];
   const skippedHooks: string[] = [];
+  const skippedChannelIds = new Set<string>();
   for (const request of hookRequests) {
+    if (skippedChannelIds.has(request.channelId)) {
+      skippedHooks.push(formatHookKey(request));
+      continue;
+    }
     const requestWithInputs = withAdditionalInputs(request, options.additionalInputs);
     try {
       const result = await options.runHook?.(requestWithInputs);
@@ -71,6 +76,7 @@ export async function applyMessagingHooksForPhase(
       hookResults.push(normalizeHookRunResult(requestWithInputs, result));
     } catch (error) {
       if (requestWithInputs.onFailure === "skip-channel") {
+        skippedChannelIds.add(requestWithInputs.channelId);
         skippedHooks.push(formatHookKey(requestWithInputs));
         continue;
       }

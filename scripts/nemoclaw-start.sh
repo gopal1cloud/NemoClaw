@@ -1598,14 +1598,17 @@ apply_messaging_runtime_env_aliases() {
   _rows="$(
     python3 - "$_MESSAGING_RUNTIME_PRELOAD_PLAN" <<'PYMESSAGINGALIASES'
 import json
+import os
+import re
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     plan = json.load(handle)
 for alias in plan.get("envAliases", []):
+    if not re.search(alias["match"], os.environ.get(alias["envKey"], "")):
+        continue
     print("\t".join([
         alias["envKey"],
-        alias["match"],
         alias["value"],
         alias.get("message", ""),
     ]))
@@ -1613,13 +1616,10 @@ PYMESSAGINGALIASES
   )" || return $?
   [ -n "$_rows" ] || return 0
 
-  local _env_key _match _value _message _current
-  while IFS=$'\t' read -r _env_key _match _value _message; do
-    _current="$(printenv "$_env_key" 2>/dev/null || true)"
-    if [[ "$_current" =~ $_match ]]; then
-      export "$_env_key=$_value"
-      [ -n "$_message" ] && printf '%s\n' "$_message" >&2
-    fi
+  local _env_key _value _message
+  while IFS=$'\t' read -r _env_key _value _message; do
+    export "$_env_key=$_value"
+    [ -n "$_message" ] && printf '%s\n' "$_message" >&2
   done <<<"$_rows"
 }
 
@@ -3573,6 +3573,8 @@ if [ "$(id -u)" -ne 0 ]; then
   apply_messaging_runtime_env_aliases
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
+    install_messaging_runtime_preloads
+    verify_messaging_runtime_secret_scans
     exec "${NEMOCLAW_CMD[@]}"
   fi
 

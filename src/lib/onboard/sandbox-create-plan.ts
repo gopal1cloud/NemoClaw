@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { listMessagingCredentialMetadata } from "../messaging/channels";
+import {
+  type MessagingCredentialMetadata,
+  listMessagingCredentialMetadata,
+} from "../messaging/channels";
 import type { InitialSandboxPolicy } from "./initial-policy";
 import type { MessagingChannel } from "./messaging-state";
 import { resolveQrSelectedChannels } from "./messaging-state";
@@ -109,14 +112,31 @@ function resolveActiveMessagingChannels({
 }
 
 function getPrimaryCredentialEnvKeys(): Set<string> {
-  const seenChannels = new Set<string>();
-  const envKeys = new Set<string>();
+  const credentialsByChannel = new Map<string, MessagingCredentialMetadata[]>();
   for (const credential of listMessagingCredentialMetadata()) {
-    if (seenChannels.has(credential.channelId)) continue;
-    seenChannels.add(credential.channelId);
-    envKeys.add(credential.providerEnvKey);
+    const credentials = credentialsByChannel.get(credential.channelId) ?? [];
+    credentials.push(credential);
+    credentialsByChannel.set(credential.channelId, credentials);
+  }
+
+  const envKeys = new Set<string>();
+  for (const credentials of credentialsByChannel.values()) {
+    const primary =
+      credentials.find((credential) => credential.primary) ??
+      [...credentials].sort(compareCredentialsForPrimarySelection)[0];
+    if (primary) envKeys.add(primary.providerEnvKey);
   }
   return envKeys;
+}
+
+function compareCredentialsForPrimarySelection(
+  left: MessagingCredentialMetadata,
+  right: MessagingCredentialMetadata,
+): number {
+  return (
+    left.credentialId.localeCompare(right.credentialId) ||
+    left.providerEnvKey.localeCompare(right.providerEnvKey)
+  );
 }
 
 export function prepareSandboxCreatePlan({

@@ -865,7 +865,7 @@ EOF
 
     it("returns silently when no messaging plan is set", () => {
       const { stderr } = runWithLib("configure_messaging_channels", {
-        env: {},
+        env: { NEMOCLAW_MESSAGING_PLAN_B64: "" },
       });
       expect(stderr).not.toContain("[channels]");
     });

@@ -43,27 +43,29 @@ export function getSuggestedPolicyPresets({
   const usesExplicitMessagingSelection = Array.isArray(enabledChannels);
   const nonInteractive = isNonInteractive?.() ?? process.env.NEMOCLAW_NON_INTERACTIVE === "1";
 
-  const credentialsByChannel = new Map<string, string>();
+  const credentialsByChannel = new Map<string, string[]>();
   for (const credential of listMessagingCredentialMetadata()) {
-    if (!credentialsByChannel.has(credential.channelId)) {
-      credentialsByChannel.set(credential.channelId, credential.providerEnvKey);
-    }
+    const envKeys = credentialsByChannel.get(credential.channelId) ?? [];
+    envKeys.push(credential.providerEnvKey);
+    credentialsByChannel.set(credential.channelId, envKeys);
   }
 
   const maybeSuggestMessagingPreset = (
     channel: string,
     preset: string,
-    envKey: string | null,
+    envKeys: readonly string[],
   ): void => {
     if (usesExplicitMessagingSelection) {
       if (enabledChannels.includes(channel)) suggestions.push(preset);
       return;
     }
-    if (envKey === null) return;
-    if (getCredential(envKey) || process.env[envKey]) {
-      suggestions.push(preset);
-      if (process.stdout.isTTY && !nonInteractive && process.env.CI !== "true") {
-        console.log(`  Auto-detected: ${envKey} -> suggesting ${preset} preset`);
+    for (const envKey of envKeys) {
+      if (getCredential(envKey) || env[envKey]) {
+        if (!suggestions.includes(preset)) suggestions.push(preset);
+        if (process.stdout.isTTY && !nonInteractive && process.env.CI !== "true") {
+          console.log(`  Auto-detected: ${envKey} -> suggesting ${preset} preset`);
+        }
+        return;
       }
     }
   };
@@ -72,7 +74,7 @@ export function getSuggestedPolicyPresets({
     maybeSuggestMessagingPreset(
       preset.channelId,
       preset.presetName,
-      credentialsByChannel.get(preset.channelId) ?? null,
+      credentialsByChannel.get(preset.channelId) ?? [],
     );
   }
 
