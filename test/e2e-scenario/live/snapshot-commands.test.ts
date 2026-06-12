@@ -186,7 +186,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
 
     let install: ShellProbeResult | undefined;
     for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
-      install = await host.command("bash", ["install.sh", "--non-interactive"], {
+      install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
         artifactName:
           attempt === 1
             ? "phase-1-install-nemoclaw"
