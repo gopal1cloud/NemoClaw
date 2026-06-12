@@ -337,6 +337,25 @@ describe("gateway recovery preload repair", () => {
     }
   });
 
+  it("validates proxy-env.sh before shell init hooks can source it", () => {
+    for (const script of [
+      buildRecoveryScript(minimalAgent, 19000),
+      buildOpenClawRecoveryScript(18789),
+    ]) {
+      expect(script).not.toBeNull();
+      const validateIdx = script!.indexOf(
+        "_nemoclaw_validate_recovery_proxy_env /tmp/nemoclaw-proxy-env.sh",
+      );
+      const bashrcIdx = script!.indexOf("[ -f ~/.bashrc ] && . ~/.bashrc;");
+      const healthIdx = script!.indexOf("_GW_CODE=");
+      expect(validateIdx).toBeGreaterThanOrEqual(0);
+      expect(bashrcIdx).toBeGreaterThanOrEqual(0);
+      expect(healthIdx).toBeGreaterThanOrEqual(0);
+      expect(validateIdx).toBeLessThan(bashrcIdx);
+      expect(bashrcIdx).toBeLessThan(healthIdx);
+    }
+  });
+
   it("repairs guard files before health probing and the ALREADY_RUNNING fast path", () => {
     for (const script of [
       buildRecoveryScript(minimalAgent, 19000),

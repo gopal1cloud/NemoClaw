@@ -194,11 +194,11 @@ export function buildHermesDashboardProcessRecoveryScript(
 export function buildOpenClawRecoveryScript(port: number): string {
   const staleGatewayPattern = "[o]penclaw([ -]gateway| gateway run|$)";
   return [
-    "[ -f ~/.bashrc ] && . ~/.bashrc;",
     ...buildGatewayLogSetup(true, "gateway"),
     buildGatewayLogSelection(),
     ...buildGatewayGuardRecoveryLines(),
     '[ "$_GUARDS_MISSING" = "1" ] && { _E="[gateway-recovery] ERROR: NODE_OPTIONS missing safety-net preload or ciao preload after trusted recovery - refusing unguarded gateway relaunch (#2478/#2701)"; echo "$_E" >&2; echo "$_E" >> "$_GATEWAY_LOG"; exit 1; };',
+    "[ -f ~/.bashrc ] && . ~/.bashrc;",
     `_GW_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${port}/health 2>/dev/null || echo 000); case "$_GW_CODE" in 200|401) echo ALREADY_RUNNING; exit 0 ;; esac;`,
     "rm -rf /tmp/openclaw-*/gateway.*.lock 2>/dev/null;",
     `_GATEWAY_PROC_PATTERN=${shellQuote(staleGatewayPattern)};`,
@@ -256,18 +256,18 @@ export function buildRecoveryScript(
         `${hermesLaunchEnv}${configuredGatewayCommand}${isHermes ? "" : ` --port ${port}`}`,
       );
 
-  // Validate or rebuild /tmp/nemoclaw-proxy-env.sh before the health fast path so
-  // a healthy gateway cannot leave a wiped guard chain unrepaired. Recovery also
-  // stops stale launcher/gateway processes that may have respawned between the
-  // health probe and relaunch.
+  // Validate or rebuild /tmp/nemoclaw-proxy-env.sh before shell init and the
+  // health fast path so a healthy gateway cannot leave a wiped guard chain
+  // unrepaired. Recovery also stops stale launcher/gateway processes that may
+  // have respawned between the health probe and relaunch.
   return [
-    "[ -f ~/.bashrc ] && . ~/.bashrc;",
     hermesHome,
     ...(isHermes ? [buildHermesEnvFileBoundaryGuard()] : []),
     ...buildGatewayLogSetup(false),
     buildGatewayLogSelection(),
     ...buildGatewayGuardRecoveryLines(),
     '[ "$_GUARDS_MISSING" = "1" ] && { _E="[gateway-recovery] ERROR: NODE_OPTIONS missing safety-net preload or ciao preload after trusted recovery - refusing unguarded gateway relaunch (#2478/#2701)"; echo "$_E" >&2; echo "$_E" >> "$_GATEWAY_LOG"; exit 1; };',
+    "[ -f ~/.bashrc ] && . ~/.bashrc;",
     `_GW_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null || echo 000); case "$_GW_CODE" in 200|401) echo ALREADY_RUNNING; exit 0 ;; esac;`,
     `_GATEWAY_PROC_PATTERN=${shellQuote(staleGatewayPattern)};`,
     'if [ -n "$_GATEWAY_PROC_PATTERN" ]; then pkill -TERM -f "$_GATEWAY_PROC_PATTERN" 2>/dev/null || true; for _i in 1 2 3 4 5; do pgrep -f "$_GATEWAY_PROC_PATTERN" >/dev/null 2>&1 || break; sleep 1; done; pkill -KILL -f "$_GATEWAY_PROC_PATTERN" 2>/dev/null || true; for _i in 1 2 3 4 5; do pgrep -f "$_GATEWAY_PROC_PATTERN" >/dev/null 2>&1 || break; sleep 1; done; if pgrep -f "$_GATEWAY_PROC_PATTERN" >/dev/null 2>&1; then echo GATEWAY_STALE_PROCESSES; exit 1; fi; fi;',
