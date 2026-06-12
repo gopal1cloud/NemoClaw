@@ -356,7 +356,7 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     }
   });
 
-  it("keeps each free-standing scenario out of the registry matrix", { timeout: 15_000 }, () => {
+  it("keeps each free-standing scenario out of the registry matrix", () => {
     const inventory = readFreeStandingJobsInventory();
     for (const job of inventory.allowedJobs) {
       expect(generateMatrixForDispatch({ JOBS: job, SCENARIOS: "" })).toMatchObject({
@@ -376,7 +376,7 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
         registryScenarios: [],
       });
     }
-  }, 15_000);
+  });
 
   it("flags direct dispatch-input interpolation and unsafe artifact upload", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
