@@ -240,9 +240,7 @@ describe("buildRecoveryScript", () => {
       expect(script).toContain(
         'if [ -r /tmp/nemoclaw-ciao-network-guard.js ]; then case "${NODE_OPTIONS:-}" in *nemoclaw-ciao-network-guard*) ;; *) export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require /tmp/nemoclaw-ciao-network-guard.js" ;; esac; fi;',
       );
-      const selfHealSafetyIdx = script!.indexOf(
-        "if [ -r /tmp/nemoclaw-sandbox-safety-net.js ]",
-      );
+      const selfHealSafetyIdx = script!.indexOf("if [ -r /tmp/nemoclaw-sandbox-safety-net.js ]");
       const selfHealCiaoIdx = script!.indexOf("if [ -r /tmp/nemoclaw-ciao-network-guard.js ]");
       const sourceIdx = script!.indexOf("then . /tmp/nemoclaw-proxy-env.sh");
       const guardCheckIdx = script!.indexOf('if [ "$_PE_MISSING" = "0" ]');
@@ -293,7 +291,8 @@ describe("buildRecoveryScript", () => {
         const ciao = path.join(tmp, "nemoclaw-ciao-network-guard.js");
         fs.writeFileSync(safetyNet, "// stub\n");
         fs.writeFileSync(ciao, "// stub\n");
-        const selfHealRe = /if \[ -r \/tmp\/nemoclaw-(?:sandbox-safety-net|ciao-network-guard)\.js \].+?esac; fi;/g;
+        const selfHealRe =
+          /if \[ -r \/tmp\/nemoclaw-(?:sandbox-safety-net|ciao-network-guard)\.js \].+?esac; fi;/g;
         const matches = script!.match(selfHealRe);
         expect(matches?.length ?? 0).toBeGreaterThanOrEqual(2);
         const inlineSelfHeal = (matches ?? [])
@@ -322,7 +321,8 @@ describe("buildRecoveryScript", () => {
         const ciao = path.join(tmp, "nemoclaw-ciao-network-guard.js");
         fs.writeFileSync(safetyNet, "// stub\n");
         fs.writeFileSync(ciao, "// stub\n");
-        const selfHealRe = /if \[ -r \/tmp\/nemoclaw-(?:sandbox-safety-net|ciao-network-guard)\.js \].+?esac; fi;/g;
+        const selfHealRe =
+          /if \[ -r \/tmp\/nemoclaw-(?:sandbox-safety-net|ciao-network-guard)\.js \].+?esac; fi;/g;
         const matches = script!.match(selfHealRe) ?? [];
         const inlineSelfHeal = matches
           .map((s) =>
