@@ -2981,10 +2981,9 @@ async function createSandbox(
   const plannedMessagingState =
     envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
   const plannedMessagingPlan = plannedMessagingState?.plan;
-  const configuredMessagingChannels =
-    getChannelsFromPlan(plannedMessagingPlan) ?? activeMessagingChannels;
   sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
-    configuredMessagingChannels,
+    configuredMessagingChannels:
+      getChannelsFromPlan(plannedMessagingPlan) ?? activeMessagingChannels,
   });
   const { buildId } = await sandboxDockerfilePatchFlow.prepareSandboxDockerfilePatch({
     agent,
