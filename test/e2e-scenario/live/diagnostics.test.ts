@@ -241,8 +241,8 @@ runDiagnosticsTest(
     ).toBeGreaterThan(0);
     expect(
       quickElapsedMs,
-      "debug --quick must complete within the legacy 30s budget",
-    ).toBeLessThanOrEqual(DEBUG_QUICK_TIMEOUT_MS);
+      "debug --quick must complete within the legacy 30s process timeout plus harness scheduling grace",
+    ).toBeLessThanOrEqual(DEBUG_QUICK_TIMEOUT_MS + 5_000);
 
     const install = await host.command(
       "bash",

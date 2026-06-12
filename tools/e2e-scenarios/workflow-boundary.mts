@@ -1723,8 +1723,8 @@ function validateDiagnosticsVitestJob(errors: string[], jobs: WorkflowRecord): v
   }
 
   const jobEnv = asRecord(job.env);
-  if (jobEnv.DOCKER_CONFIG !== "${{ github.workspace }}/.docker-config-diagnostics") {
-    errors.push("diagnostics-vitest job must isolate Docker auth under .docker-config-diagnostics");
+  if ("DOCKER_CONFIG" in jobEnv) {
+    errors.push("diagnostics-vitest job must not expose Docker auth to branch-controlled steps");
   }
   if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/diagnostics") {
     errors.push("diagnostics-vitest job must write artifacts under e2e-artifacts/vitest/diagnostics");
@@ -1759,12 +1759,16 @@ function validateDiagnosticsVitestJob(errors: string[], jobs: WorkflowRecord): v
     if (step.name !== "Run diagnostics live test") {
       requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
     }
-    if (step.name !== "Authenticate to Docker Hub") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
-      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
-    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+    requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
     requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+  }
+
+  if (namedStep(steps, "Authenticate to Docker Hub")) {
+    errors.push(
+      "diagnostics-vitest job must not authenticate to Docker Hub before branch-controlled test code runs",
+    );
   }
 
   const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
@@ -1773,20 +1777,6 @@ function validateDiagnosticsVitestJob(errors: string[], jobs: WorkflowRecord): v
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("diagnostics-vitest checkout step must set persist-credentials=false");
   }
-
-  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerLoginEnv = asRecord(dockerLogin?.env);
-  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("diagnostics-vitest Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
-  }
-  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("diagnostics-vitest Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
-  }
-  requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, "docker login docker.io");
-  requireRunContains(errors, dockerLogin, "--password-stdin");
-  requireRunContains(errors, dockerLogin, "continuing with anonymous pulls");
 
   const setupNode = namedStep(steps, "Set up Node");
   if (!setupNode) errors.push("diagnostics-vitest job missing step: Set up Node");
@@ -1824,13 +1814,6 @@ function validateDiagnosticsVitestJob(errors: string[], jobs: WorkflowRecord): v
   if (uploadWith["retention-days"] !== 14) {
     errors.push("diagnostics-vitest artifact upload retention-days must be 14");
   }
-
-  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
-  if (cleanup?.if !== "always()") {
-    errors.push("diagnostics-vitest Docker auth cleanup must always run");
-  }
-  requireRunContains(errors, cleanup, "docker logout docker.io");
-  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
 function validateModelRouterProviderRoutedInferenceVitestJob(

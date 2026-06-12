@@ -1698,7 +1698,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-diagnostics
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/diagnostics
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
@@ -1711,33 +1710,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -1774,12 +1746,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Clean up Docker auth
-        if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
 
   # Focused coverage slice for the #2603/#3145 OpenClaw websocket
   # protocol/history contract. The retained legacy bash lane remains the

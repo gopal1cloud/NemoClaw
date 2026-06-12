@@ -714,9 +714,20 @@ jobs:
     expect(job.steps).toEqual(expect.any(Array));
     job.env = {
       ...job.env,
+      DOCKER_CONFIG: "${{ github.workspace }}/.docker-config-diagnostics",
       NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
       GITHUB_TOKEN: "${{ github.token }}",
     };
+    const setupNodeIndex = job.steps.findIndex((step) => step.name === "Set up Node");
+    expect(setupNodeIndex).toBeGreaterThan(0);
+    job.steps.splice(setupNodeIndex, 0, {
+      name: "Authenticate to Docker Hub",
+      env: {
+        DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
+        DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
+      },
+      run: 'docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin',
+    });
     const runStep = job.steps.find((step) => step.name === "Run diagnostics live test");
     expect(runStep).toBeDefined();
     runStep!.run = `${runStep!.run}\necho "\${{ inputs.jobs }}"`;
@@ -727,21 +738,22 @@ jobs:
       "include-hidden-files": true,
       "retention-days": 1,
     };
-    const cleanupStep = job.steps.find((step) => step.name === "Clean up Docker auth");
-    expect(cleanupStep).toBeDefined();
-    cleanupStep!.if = "success()";
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
     try {
       const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
       expect(errors).toEqual(
         expect.arrayContaining([
+          "diagnostics-vitest job must not expose Docker auth to branch-controlled steps",
           "diagnostics-vitest job env must not include NVIDIA_API_KEY",
           "diagnostics-vitest job env must not include GITHUB_TOKEN",
+          "diagnostics-vitest job must not authenticate to Docker Hub before branch-controlled test code runs",
+          "diagnostics-vitest step 'Authenticate to Docker Hub' env must not include DOCKERHUB_USERNAME",
+          "diagnostics-vitest step 'Authenticate to Docker Hub' env must not include DOCKERHUB_TOKEN",
+          "diagnostics-vitest step 'Authenticate to Docker Hub' run script must not use docker login or inline secret interpolation",
           "step 'Run diagnostics live test' run script must not interpolate dispatch inputs directly",
           "diagnostics-vitest artifact upload must set include-hidden-files: false",
           "diagnostics-vitest artifact upload retention-days must be 14",
-          "diagnostics-vitest Docker auth cleanup must always run",
         ]),
       );
     } finally {
