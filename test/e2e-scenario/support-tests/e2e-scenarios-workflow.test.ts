@@ -646,6 +646,7 @@ jobs:
     };
     const snapshotJob = parsedWorkflow.jobs["snapshot-commands-vitest"];
     snapshotJob.env.DOCKER_CONFIG = "${{ github.workspace }}/.docker-config-shared";
+    snapshotJob.env.NVIDIA_API_KEY = "${{ secrets.NVIDIA_API_KEY }}";
     for (const step of snapshotJob.steps) {
       if (step.uses === "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10") {
         step.with = { ...(step.with as Record<string, unknown>), "persist-credentials": true };
@@ -654,7 +655,16 @@ jobs:
         step.run =
           'echo "DOCKER_CONFIG=${{ github.workspace }}/.docker-config-shared" >> "$GITHUB_ENV"';
       }
-      if (step.name === "Install root dependencies") step.run = "npm install";
+      if (step.name === "Set up Node") {
+        step.env = { NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}" };
+      }
+      if (step.name === "Install root dependencies") {
+        step.env = {
+          DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
+          DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
+        };
+        step.run = "npm install";
+      }
       if (step.name === "Run snapshot commands live test") {
         step.run = String(step.run).replace(
           "test/e2e-scenario/live/snapshot-commands.test.ts",
@@ -680,6 +690,10 @@ jobs:
           "snapshot-commands-vitest job must not set DOCKER_CONFIG at job level",
           'step \'Configure isolated Docker auth directory\' run script must include echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-snapshot-commands" >> "$GITHUB_ENV"',
           "snapshot-commands-vitest checkout step must set persist-credentials=false",
+          "snapshot-commands-vitest job env must not include NVIDIA_API_KEY",
+          "snapshot-commands-vitest step 'Set up Node' env must not include NVIDIA_API_KEY",
+          "snapshot-commands-vitest step 'Install root dependencies' env must not include DOCKERHUB_USERNAME",
+          "snapshot-commands-vitest step 'Install root dependencies' env must not include DOCKERHUB_TOKEN",
           "snapshot-commands-vitest artifact upload must set include-hidden-files: false",
           "artifact upload path must include e2e-artifacts/vitest/snapshot-commands/",
           "step 'Clean up Docker auth' run script must include rm -rf \"${DOCKER_CONFIG}\"",
