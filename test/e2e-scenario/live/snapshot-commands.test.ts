@@ -20,6 +20,7 @@ import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clien
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-snapshot";
@@ -27,6 +28,7 @@ const BACKUP_DIR = path.join(os.homedir(), ".nemoclaw", "rebuild-backups", SANDB
 const MARKER_FILE = "/sandbox/.openclaw/workspace/snapshot-marker.txt";
 const SECOND_MARKER = "/sandbox/.openclaw/workspace/snapshot-marker-2.txt";
 const LIVE_TIMEOUT_MS = 30 * 60_000;
+const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
 
 function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
@@ -189,14 +191,38 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     await cleanupSnapshotSandbox(host, sandbox, "pre-cleanup");
     fs.rmSync(BACKUP_DIR, { recursive: true, force: true });
 
-    const install = await host.command("bash", ["install.sh", "--non-interactive"], {
-      artifactName: "phase-1-install-nemoclaw",
-      cwd: REPO_ROOT,
-      env: commandEnv(apiKey),
-      redactionValues: [apiKey],
-      timeoutMs: 20 * 60_000,
-    });
-    expect(install.exitCode, resultText(install)).toBe(0);
+    let install: ShellProbeResult | undefined;
+    for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
+      install = await host.command("bash", ["install.sh", "--non-interactive"], {
+        artifactName:
+          attempt === 1
+            ? "phase-1-install-nemoclaw"
+            : `phase-1-install-nemoclaw-attempt-${attempt}`,
+        cwd: REPO_ROOT,
+        env: commandEnv(apiKey),
+        redactionValues: [apiKey],
+        timeoutMs: 20 * 60_000,
+      });
+      if (install.exitCode === 0) break;
+      if (isTransientProviderValidationFailure(install) && attempt < INSTALL_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, 10_000 * attempt));
+        continue;
+      }
+      if (isTransientProviderValidationFailure(install) && process.env.GITHUB_ACTIONS === "true") {
+        await artifacts.writeJson("transient-provider-validation.skip.json", {
+          reason: "transient NVIDIA Endpoints validation failure during install.sh onboard",
+          attempts: INSTALL_ATTEMPTS,
+          sourceBoundary: "external NVIDIA Endpoints provider availability",
+          removalCondition:
+            "remove once CI endpoint validation is stable for a release cycle or covered by a hermetic provider-validation fixture",
+        });
+        skip(
+          `NVIDIA Endpoints validation hit a transient upstream/rate-limit failure after ${INSTALL_ATTEMPTS} attempts`,
+        );
+      }
+      break;
+    }
+    expect(install?.exitCode, install ? resultText(install) : "install did not run").toBe(0);
 
     const cliProbe = await host.command(
       "bash",
