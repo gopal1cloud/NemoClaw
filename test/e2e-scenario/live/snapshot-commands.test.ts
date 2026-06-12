@@ -16,11 +16,7 @@ import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import {
-  type SandboxClient,
-  trustedSandboxShellScript,
-  validateSandboxName,
-} from "../fixtures/clients/sandbox.ts";
+import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -90,18 +86,6 @@ async function cleanupSnapshotSandbox(
       timeoutMs: 60_000,
     }),
   );
-}
-
-async function execWorkspaceShell(
-  sandbox: SandboxClient,
-  script: string,
-  artifactName: string,
-): Promise<ShellProbeResult> {
-  return sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript(script), {
-    artifactName,
-    env: commandEnv(),
-    timeoutMs: 60_000,
-  });
 }
 
 async function expectSandboxFileContent(
@@ -249,10 +233,18 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     const markerContent = `SNAPSHOT_E2E_${Date.now()}`;
     const secondContent = `SNAPSHOT_E2E_SECOND_${Date.now()}`;
 
-    const writeMarker = await execWorkspaceShell(
-      sandbox,
-      `mkdir -p /sandbox/.openclaw/workspace && printf '%s\n' '${markerContent}' > ${MARKER_FILE}`,
-      "phase-2-write-marker",
+    const writeMarker = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "sh",
+        "-lc",
+        `mkdir -p /sandbox/.openclaw/workspace && printf '%s' '${markerContent}' > ${MARKER_FILE}`,
+      ],
+      {
+        artifactName: "phase-2-write-marker",
+        env: commandEnv(),
+        timeoutMs: 60_000,
+      },
     );
     expect(writeMarker.exitCode, resultText(writeMarker)).toBe(0);
     await expectSandboxFileContent(sandbox, MARKER_FILE, markerContent, "phase-2-read-marker");
@@ -276,10 +268,14 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     const timestamp = firstSnapshotTimestamp(resultText(list));
     await artifacts.writeJson("phase-4-first-snapshot.json", { timestamp });
 
-    const modify = await execWorkspaceShell(
-      sandbox,
-      `rm -f ${MARKER_FILE} && printf '%s\n' '${secondContent}' > ${SECOND_MARKER}`,
-      "phase-5-modify-workspace",
+    const modify = await sandbox.exec(
+      SANDBOX_NAME,
+      ["sh", "-lc", `rm -f ${MARKER_FILE} && printf '%s' '${secondContent}' > ${SECOND_MARKER}`],
+      {
+        artifactName: "phase-5-modify-workspace",
+        env: commandEnv(),
+        timeoutMs: 60_000,
+      },
     );
     expect(modify.exitCode, resultText(modify)).toBe(0);
 
@@ -298,10 +294,14 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     expect(secondCreate.exitCode, resultText(secondCreate)).toBe(0);
     expect(resultText(secondCreate)).toMatch(/Snapshot v\d+.*created/);
 
-    const perturb = await execWorkspaceShell(
-      sandbox,
-      `rm -f ${SECOND_MARKER} && printf '%s\n' 'BROKEN' > ${MARKER_FILE}`,
-      "phase-5-perturb-workspace",
+    const perturb = await sandbox.exec(
+      SANDBOX_NAME,
+      ["sh", "-lc", `rm -f ${SECOND_MARKER} && printf '%s' 'BROKEN' > ${MARKER_FILE}`],
+      {
+        artifactName: "phase-5-perturb-workspace",
+        env: commandEnv(),
+        timeoutMs: 60_000,
+      },
     );
     expect(perturb.exitCode, resultText(perturb)).toBe(0);
 
