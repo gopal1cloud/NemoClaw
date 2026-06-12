@@ -115,6 +115,14 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       registryScenarios: [],
     });
     expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "sandbox-rebuild-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["sandbox-rebuild-vitest"],
+      registryScenarios: [],
+    });
+    expect(
       evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "sandbox-survival-vitest" }),
     ).toMatchObject({
       valid: true,
@@ -140,6 +148,9 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     expect(
       generateMatrixForDispatch("model-router-provider-routed-inference-vitest"),
     ).toMatchObject({
+      matrix: "[]",
+    });
+    expect(generateMatrixForDispatch("sandbox-rebuild-vitest")).toMatchObject({
       matrix: "[]",
     });
     expect(generateMatrixForDispatch("sandbox-survival-vitest")).toMatchObject({
@@ -362,6 +373,7 @@ jobs:
           "step 'Validate free-standing job selector' run script must include hermes-e2e-vitest",
           "step 'Validate free-standing job selector' run script must include skill-agent-vitest",
           "step 'Validate free-standing job selector' run script must include model-router-provider-routed-inference-vitest",
+          "step 'Validate free-standing job selector' run script must include sandbox-rebuild-vitest",
           "step 'Validate free-standing job selector' run script must include sandbox-survival-vitest",
           "step 'Validate free-standing job selector' run script must include Invalid jobs input; use comma-separated job ids",
           "step 'Validate free-standing job selector' run script must not include Invalid jobs input: ${JOBS}",
@@ -504,10 +516,12 @@ jobs:
           "double-onboard-vitest artifact upload retention-days must be 14",
           "workflow missing hermes-e2e-vitest job",
           "workflow missing skill-agent-vitest job",
+          "workflow missing sandbox-rebuild-vitest job",
           "workflow missing model-router-provider-routed-inference-vitest job",
           "report-to-pr job must wait for hermes-e2e-vitest",
           "report-to-pr job must wait for skill-agent-vitest",
           "report-to-pr job must wait for model-router-provider-routed-inference-vitest",
+          "report-to-pr job must wait for sandbox-rebuild-vitest",
           "report-to-pr job must wait for sandbox-survival-vitest",
           "openclaw-tui-chat-correlation-vitest job must depend on validate-jobs",
           "openclaw-tui-chat-correlation-vitest job must use the shared jobs selector condition",
