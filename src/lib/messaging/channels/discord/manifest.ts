@@ -186,6 +186,50 @@ export const discordManifest = {
   },
   hooks: [
     {
+      id: "discord-openclaw-bridge-health",
+      phase: "health-check",
+      handler: "common.staticOutputs",
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "openclawBridgeStartup",
+          kind: "health-check",
+          required: true,
+          value: {
+            type: "openclaw-bridge-startup",
+            configFile: "/sandbox/.openclaw/openclaw.json",
+            channelConfigPath: "channels.discord",
+            enabledPath: "enabled",
+            logFile: "/tmp/gateway.log",
+            maxLogLines: 400,
+            logLinePattern: "^\\[discord\\] |^\\[channels\\] \\[discord\\]",
+            warningPattern:
+              "credential placeholder|Bot API rejected|startup probe (?:failed|returned)|provider failed to start|bridge did not start within|invalid_auth|token_revoked|token_expired",
+            positivePattern: "\\bstarting provider\\b|\\bprovider ready\\b",
+          },
+        },
+      ],
+      onFailure: "abort",
+    },
+    {
+      id: "discord-openclaw-runtime-status",
+      phase: "status",
+      handler: "common.staticOutputs",
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "openclawRuntimeChannel",
+          kind: "status",
+          required: true,
+          value: {
+            type: "openclaw-runtime-channel",
+            configKeys: ["discord"],
+            logPatterns: ["discord"],
+          },
+        },
+      ],
+    },
+    {
       id: "discord-openclaw-package-install",
       phase: "agent-install",
       handler: "common.staticOutputs",

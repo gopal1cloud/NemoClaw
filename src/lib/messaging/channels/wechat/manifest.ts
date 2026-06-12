@@ -225,11 +225,56 @@ export const wechatManifest = {
       onFailure: "abort",
     },
     {
+      id: "wechat-runtime-preload",
+      phase: "runtime-preload",
+      handler: "common.staticOutputs",
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "wechatDiagnostics",
+          kind: "runtime-preload",
+          required: true,
+          value: {
+            preloads: [
+              {
+                source: "/usr/local/lib/nemoclaw/preloads/wechat-diagnostics.js",
+                target: "/tmp/nemoclaw-wechat-diagnostics.js",
+                nodeOptions: ["boot", "connect"],
+                optional: false,
+                installMessage:
+                  "[channels] Installing WeChat diagnostics (provider readiness + inference errors)",
+                installedMessage: "[channels] WeChat diagnostics installed (NODE_OPTIONS updated)",
+              },
+            ],
+          },
+        },
+      ],
+      onFailure: "abort",
+    },
+    {
       id: "wechat-health-check",
       phase: "health-check",
       handler: "wechat.healthCheck",
       inputs: ["wechatConfig.accountId"],
       onFailure: "abort",
+    },
+    {
+      id: "wechat-openclaw-runtime-status",
+      phase: "status",
+      handler: "common.staticOutputs",
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "openclawRuntimeChannel",
+          kind: "status",
+          required: true,
+          value: {
+            type: "openclaw-runtime-channel",
+            configKeys: ["openclaw-weixin"],
+            logPatterns: ["wechat", "openclaw-weixin"],
+          },
+        },
+      ],
     },
   ],
 } as const satisfies ChannelManifest;

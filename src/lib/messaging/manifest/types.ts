@@ -153,10 +153,12 @@ export interface ChannelRebuildHydrationSpec {
 export type ChannelHookPhase =
   | "enroll"
   | "reachability-check"
+  | "pre-enable"
   | "agent-install"
   | "render"
   | "apply"
   | "post-agent-install"
+  | "runtime-preload"
   | "health-check"
   | "diagnostic"
   | "status";
@@ -184,7 +186,10 @@ export interface ChannelHookOutputSpec {
     | "build-arg"
     | "build-file"
     | "package-install"
-    | "agent-render";
+    | "agent-render"
+    | "runtime-preload"
+    | "health-check"
+    | "status";
   readonly required?: boolean;
   readonly value?: MessagingSerializableValue;
 }

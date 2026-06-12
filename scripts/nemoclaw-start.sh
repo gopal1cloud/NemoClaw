@@ -1340,150 +1340,324 @@ PYPLACEHOLDERS
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
-# ── Slack runtime env normalization (Bolt-compatible placeholder) ──
-# OpenShell injects messaging-provider credentials into the sandbox process
-# environment as canonical resolve placeholders, e.g.
-#   SLACK_BOT_TOKEN=openshell:resolve:env:v51_SLACK_BOT_TOKEN
-# Unlike the canonical OpenClaw config values (handled by
-# refresh_openclaw_provider_placeholders), Slack Bolt validates token *shape*
-# at startup and rejects anything that does not begin with xoxb-/xapp-. After a
-# messaging-provider rebuild the gateway therefore inherits a placeholder it
-# cannot parse and Slack auth fails even though the provider attached
-# successfully (NVIDIA/NemoClaw#4274). The L7 egress proxy rewrites the
-# Bolt-aliased form (xoxb-/xapp-OPENSHELL-RESOLVE-ENV-*) at request time — the
-# same alias the config generator bakes into openclaw.json — so normalize the
-# runtime env to that alias before launching OpenClaw.
-#
-# This runs in the *main* shell (never a subshell / command substitution) so
-# the exported values are inherited by the gateway and any one-shot
-# "${NEMOCLAW_CMD[@]}" child. Real xoxb-/xapp- tokens and already-aliased values
-# are left untouched, so it is safe to call unconditionally and is idempotent.
-#
-# OpenShell injects self-referential placeholders (the SLACK_BOT_TOKEN env var
-# resolves to "openshell:resolve:env:SLACK_BOT_TOKEN" or its revision-scoped
-# form "openshell:resolve:env:v<rev>_SLACK_BOT_TOKEN"). The match is anchored to
-# exactly those two shapes so a placeholder that resolves some *other* key
-# (including a suffix collision like ...v1_NOT_SLACK_BOT_TOKEN) is left alone
-# rather than silently rebound to the Slack secret.
-normalize_slack_runtime_env() {
-  local bot_re='^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$'
-  local app_re='^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$'
+# ── Messaging runtime preloads from manifest hooks ───────────────
+# Channel-owned runtime-preload hooks are serialized into
+# NEMOCLAW_MESSAGING_PLAN_B64 at image build time. The entrypoint only consumes
+# generic declarations: envAliases, preloads, and secretScans.
+_MESSAGING_RUNTIME_PRELOAD_PLAN="/tmp/nemoclaw-messaging-runtime-preloads.json"
+_MESSAGING_CONNECT_PRELOADS_FILE="/tmp/nemoclaw-messaging-connect-preloads.list"
 
-  if [[ "${SLACK_BOT_TOKEN-}" =~ $bot_re ]]; then
-    export SLACK_BOT_TOKEN="xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN"
-    printf '[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias\n' >&2
-  fi
-
-  if [[ "${SLACK_APP_TOKEN-}" =~ $app_re ]]; then
-    export SLACK_APP_TOKEN="xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN"
-    printf '[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias\n' >&2
-  fi
-}
-
-# ── Slack secrets-on-disk tripwire ────────────────────────────────
-# Defense-in-depth: refuse to serve if a real Slack token (anything
-# starting with xoxb- or xapp- that is NOT the OPENSHELL-RESOLVE-ENV-
-# placeholder) ever appears in openclaw.json. This catches a regression
-# where someone re-introduces inline token mutation, or a bug in the
-# config generator that emits raw env values. Runs once at startup,
-# after configure_messaging_channels has finalized the config.
-verify_no_slack_secrets_on_disk() {
-  local config="/sandbox/.openclaw/openclaw.json"
-  [ -f "$config" ] || return 0
-  if python3 - "$config" <<'PYSLACKSECRET'; then
+write_messaging_runtime_preload_plan() {
+  python3 - <<'PYMESSAGINGRUNTIME' | emit_sandbox_sourced_file "$_MESSAGING_RUNTIME_PRELOAD_PLAN"
+import base64
+import json
+import os
 import re
 import sys
 
-with open(sys.argv[1], "r", encoding="utf-8", errors="ignore") as f:
-    content = f.read()
-sys.exit(0 if re.search(r"(?:xoxb|xapp)-(?!OPENSHELL-RESOLVE-ENV-)", content) else 1)
-PYSLACKSECRET
-    printf '[SECURITY] Slack token leaked into %s — refusing to serve\n' "$config" >&2
-    exit 78 # EX_CONFIG
+EMPTY = {"preloads": [], "envAliases": [], "secretScans": []}
+PRELOAD_SOURCE_PREFIX = "/usr/local/lib/nemoclaw/preloads/"
+PRELOAD_TARGET_PREFIX = "/tmp/nemoclaw-"
+ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+
+
+def fail(message):
+    print(f"[channels] Invalid messaging runtime preload plan: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def clean_string(value, field, *, allow_empty=False):
+    if not isinstance(value, str):
+        fail(f"{field} must be a string")
+    if not allow_empty and not value:
+        fail(f"{field} must not be empty")
+    if any(ch in value for ch in "\x00\r\n\t"):
+        fail(f"{field} contains a control character")
+    return value
+
+
+def clean_message(value, field):
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        fail(f"{field} must be a string")
+    if any(ch in value for ch in "\x00\r\n\t"):
+        fail(f"{field} contains a control character")
+    return value
+
+
+def clean_preload(entry, index):
+    if not isinstance(entry, dict):
+        fail(f"preloads[{index}] must be an object")
+    source = clean_string(entry.get("source"), f"preloads[{index}].source")
+    target = clean_string(entry.get("target"), f"preloads[{index}].target")
+    if not source.startswith(PRELOAD_SOURCE_PREFIX) or not source.endswith(".js"):
+        fail(f"preloads[{index}].source must be a preload JavaScript file under {PRELOAD_SOURCE_PREFIX}")
+    if not target.startswith(PRELOAD_TARGET_PREFIX) or not target.endswith(".js"):
+        fail(f"preloads[{index}].target must be a JavaScript file under {PRELOAD_TARGET_PREFIX}*")
+    node_options = entry.get("nodeOptions", [])
+    if not isinstance(node_options, list):
+        fail(f"preloads[{index}].nodeOptions must be a list")
+    normalized_options = []
+    for option in node_options:
+        if option not in ("boot", "connect"):
+            fail(f"preloads[{index}].nodeOptions contains unsupported value {option!r}")
+        if option not in normalized_options:
+            normalized_options.append(option)
+    optional = entry.get("optional", False)
+    if not isinstance(optional, bool):
+        fail(f"preloads[{index}].optional must be a boolean")
+    return {
+        "source": source,
+        "target": target,
+        "nodeOptions": normalized_options,
+        "optional": optional,
+        "installMessage": clean_message(entry.get("installMessage"), f"preloads[{index}].installMessage"),
+        "installedMessage": clean_message(entry.get("installedMessage"), f"preloads[{index}].installedMessage"),
+    }
+
+
+def clean_env_alias(entry, index):
+    if not isinstance(entry, dict):
+        fail(f"envAliases[{index}] must be an object")
+    env_key = clean_string(entry.get("envKey"), f"envAliases[{index}].envKey")
+    if not ENV_KEY_RE.match(env_key):
+        fail(f"envAliases[{index}].envKey is not a safe environment key")
+    pattern = clean_string(entry.get("match"), f"envAliases[{index}].match")
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        fail(f"envAliases[{index}].match is not a valid regex: {exc}")
+    return {
+        "envKey": env_key,
+        "match": pattern,
+        "value": clean_string(entry.get("value"), f"envAliases[{index}].value", allow_empty=True),
+        "message": clean_message(entry.get("message"), f"envAliases[{index}].message"),
+    }
+
+
+def clean_secret_scan(entry, index):
+    if not isinstance(entry, dict):
+        fail(f"secretScans[{index}] must be an object")
+    path = clean_string(entry.get("path"), f"secretScans[{index}].path")
+    if not path.startswith("/sandbox/"):
+        fail(f"secretScans[{index}].path must be under /sandbox")
+    pattern = clean_string(entry.get("pattern"), f"secretScans[{index}].pattern")
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        fail(f"secretScans[{index}].pattern is not a valid regex: {exc}")
+    exit_code = entry.get("exitCode", 78)
+    if not isinstance(exit_code, int) or exit_code < 1 or exit_code > 255:
+        fail(f"secretScans[{index}].exitCode must be an integer from 1 to 255")
+    return {
+        "path": path,
+        "pattern": pattern,
+        "message": clean_message(entry.get("message"), f"secretScans[{index}].message") or "[SECURITY] Runtime secret scan failed for {path}",
+        "exitCode": exit_code,
+    }
+
+
+raw_plan = os.environ.get("NEMOCLAW_MESSAGING_PLAN_B64", "").strip()
+if not raw_plan:
+    print(json.dumps(EMPTY, sort_keys=True))
+    raise SystemExit(0)
+
+try:
+    plan = json.loads(base64.b64decode(raw_plan, validate=True).decode("utf-8"))
+except Exception as exc:
+    fail(f"NEMOCLAW_MESSAGING_PLAN_B64 is not valid base64 JSON: {exc}")
+if not isinstance(plan, dict):
+    fail("decoded plan must be an object")
+
+preloads = []
+env_aliases = []
+secret_scans = []
+seen_preloads = set()
+seen_aliases = set()
+seen_scans = set()
+
+for channel in plan.get("channels", []):
+    if not isinstance(channel, dict):
+        continue
+    if channel.get("active") is not True or channel.get("disabled") is True:
+        continue
+    for hook in channel.get("hooks", []):
+        if not isinstance(hook, dict) or hook.get("phase") != "runtime-preload":
+            continue
+        for output in hook.get("outputs", []):
+            if not isinstance(output, dict) or output.get("kind") != "runtime-preload":
+                continue
+            value = output.get("value")
+            if not isinstance(value, dict):
+                fail(f"{channel.get('channelId', '<unknown>')}.{hook.get('id', '<unknown>')}.{output.get('id', '<unknown>')} value must be an object")
+            for entry in value.get("preloads", []):
+                preload = clean_preload(entry, len(preloads))
+                preload_key = (preload["source"], preload["target"])
+                if preload_key not in seen_preloads:
+                    seen_preloads.add(preload_key)
+                    preloads.append(preload)
+            for entry in value.get("envAliases", []):
+                alias = clean_env_alias(entry, len(env_aliases))
+                alias_key = (alias["envKey"], alias["match"], alias["value"])
+                if alias_key not in seen_aliases:
+                    seen_aliases.add(alias_key)
+                    env_aliases.append(alias)
+            for entry in value.get("secretScans", []):
+                scan = clean_secret_scan(entry, len(secret_scans))
+                scan_key = (scan["path"], scan["pattern"])
+                if scan_key not in seen_scans:
+                    seen_scans.add(scan_key)
+                    secret_scans.append(scan)
+
+print(json.dumps({"preloads": preloads, "envAliases": env_aliases, "secretScans": secret_scans}, sort_keys=True))
+PYMESSAGINGRUNTIME
+}
+
+apply_messaging_runtime_env_aliases() {
+  [ -f "$_MESSAGING_RUNTIME_PRELOAD_PLAN" ] || return 0
+  local _rows
+  _rows="$(
+    python3 - "$_MESSAGING_RUNTIME_PRELOAD_PLAN" <<'PYMESSAGINGALIASES'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    plan = json.load(handle)
+for alias in plan.get("envAliases", []):
+    print("\t".join([
+        alias["envKey"],
+        alias["match"],
+        alias["value"],
+        alias.get("message", ""),
+    ]))
+PYMESSAGINGALIASES
+  )" || return $?
+  [ -n "$_rows" ] || return 0
+
+  local _env_key _match _value _message _current
+  while IFS=$'\t' read -r _env_key _match _value _message; do
+    _current="$(printenv "$_env_key" 2>/dev/null || true)"
+    if [[ "$_current" =~ $_match ]]; then
+      export "$_env_key=$_value"
+      [ -n "$_message" ] && printf '%s\n' "$_message" >&2
+    fi
+  done <<<"$_rows"
+}
+
+install_messaging_runtime_preloads() {
+  [ -f "$_MESSAGING_RUNTIME_PRELOAD_PLAN" ] || return 0
+  local _rows
+  _rows="$(
+    python3 - "$_MESSAGING_RUNTIME_PRELOAD_PLAN" <<'PYMESSAGINGPRELOADS'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    plan = json.load(handle)
+for preload in plan.get("preloads", []):
+    print("\t".join([
+        preload["source"],
+        preload["target"],
+        ",".join(preload.get("nodeOptions", [])),
+        "1" if preload.get("optional") else "0",
+        preload.get("installMessage", ""),
+        preload.get("installedMessage", ""),
+    ]))
+PYMESSAGINGPRELOADS
+  )" || return $?
+
+  local _connect_preloads=()
+  if [ -n "$_rows" ]; then
+    local _source _target _node_options _optional _install_message _installed_message
+    while IFS=$'\t' read -r _source _target _node_options _optional _install_message _installed_message; do
+      if [ ! -f "$_source" ]; then
+        [ "$_optional" = "1" ] && continue
+        printf '[channels] Missing runtime preload source: %s\n' "$_source" >&2
+        return 1
+      fi
+      [ -n "$_install_message" ] && printf '%s\n' "$_install_message" >&2
+      emit_sandbox_sourced_file "$_target" <"$_source"
+      case ",$_node_options," in
+        *,boot,*)
+          export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_target"
+          ;;
+      esac
+      case ",$_node_options," in
+        *,connect,*)
+          _connect_preloads+=("$_target")
+          ;;
+      esac
+      [ -n "$_installed_message" ] && printf '%s\n' "$_installed_message" >&2
+    done <<<"$_rows"
+  fi
+
+  if [ "${#_connect_preloads[@]}" -gt 0 ]; then
+    printf '%s\n' "${_connect_preloads[@]}" | emit_sandbox_sourced_file "$_MESSAGING_CONNECT_PRELOADS_FILE"
+  else
+    : | emit_sandbox_sourced_file "$_MESSAGING_CONNECT_PRELOADS_FILE"
   fi
 }
 
-# ── Slack channel guard (unhandled-rejection safety net) ─────────
-# Prevents the gateway from crashing when a Slack channel fails to
-# initialize (e.g., invalid_auth, token_revoked, unresolved placeholder
-# tokens). Instead of modifying openclaw.json (which is Landlock
-# read-only at runtime), this injects a Node.js preload via
-# NODE_OPTIONS that catches unhandled promise rejections originating
-# from Slack channel initialization and logs them as warnings instead
-# of letting Node v22 treat them as fatal.
-#
-# Same pattern as the HTTP proxy fix (_PROXY_FIX_SCRIPT) and the
-# WebSocket CONNECT fix (_WS_FIX_SCRIPT).
-#
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/2340
-_SLACK_GUARD_SCRIPT="/tmp/nemoclaw-slack-channel-guard.js"
-_SLACK_GUARD_SOURCE="/usr/local/lib/nemoclaw/preloads/slack-channel-guard.js"
-
-install_slack_channel_guard() {
-  local config_file="/sandbox/.openclaw/openclaw.json"
-
-  # Only install if a Slack channel is configured
-  if ! grep -q '"slack"' "$config_file" 2>/dev/null; then
-    return 0
-  fi
-
-  printf '[channels] Installing Slack channel guard (unhandled-rejection safety net)\n' >&2
-
-  emit_sandbox_sourced_file "$_SLACK_GUARD_SCRIPT" <"$_SLACK_GUARD_SOURCE"
-
-  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT"
-  printf '[channels] Slack channel guard installed (NODE_OPTIONS updated)\n' >&2
+emit_messaging_connect_runtime_preload_exports() {
+  cat <<CONNECTPRELOADSEOF
+if [ -f "$_MESSAGING_CONNECT_PRELOADS_FILE" ]; then
+  while IFS= read -r _nemoclaw_preload; do
+    [ -n "\$_nemoclaw_preload" ] || continue
+    [ -f "\$_nemoclaw_preload" ] || continue
+    export NODE_OPTIONS="\${NODE_OPTIONS:+\$NODE_OPTIONS }--require \$_nemoclaw_preload"
+  done < "$_MESSAGING_CONNECT_PRELOADS_FILE"
+fi
+CONNECTPRELOADSEOF
 }
 
-# ── Telegram diagnostics (provider-ready + inference-failure clarity) ─
-_TELEGRAM_DIAGNOSTICS_SCRIPT="/tmp/nemoclaw-telegram-diagnostics.js"
-_TELEGRAM_DIAGNOSTICS_SOURCE="/usr/local/lib/nemoclaw/preloads/telegram-diagnostics.js"
+messaging_runtime_preload_targets() {
+  printf '%s\n' "$_MESSAGING_RUNTIME_PRELOAD_PLAN" "$_MESSAGING_CONNECT_PRELOADS_FILE"
+  [ -f "$_MESSAGING_RUNTIME_PRELOAD_PLAN" ] || return 0
+  python3 - "$_MESSAGING_RUNTIME_PRELOAD_PLAN" <<'PYMESSAGINGTARGETS'
+import json
+import sys
 
-install_telegram_diagnostics() {
-  local config_file="/sandbox/.openclaw/openclaw.json"
-
-  # Only install when Telegram is configured in the baked OpenClaw config.
-  if ! grep -q '"telegram"' "$config_file" 2>/dev/null; then
-    return 0
-  fi
-
-  printf '[channels] Installing Telegram diagnostics (provider readiness + inference errors)\n' >&2
-
-  emit_sandbox_sourced_file "$_TELEGRAM_DIAGNOSTICS_SCRIPT" <"$_TELEGRAM_DIAGNOSTICS_SOURCE"
-
-  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_TELEGRAM_DIAGNOSTICS_SCRIPT"
-  printf '[channels] Telegram diagnostics installed (NODE_OPTIONS updated)\n' >&2
+with open(sys.argv[1], encoding="utf-8") as handle:
+    plan = json.load(handle)
+for preload in plan.get("preloads", []):
+    target = preload.get("target")
+    if target:
+        print(target)
+PYMESSAGINGTARGETS
 }
 
-# ── WhatsApp compact-QR preload (scan-friendly in-sandbox pairing) ───
-# The upstream @openclaw/whatsapp QR renders at full size (~56 rows) and
-# overflows DGX Spark terminals (NemoClaw#4522). The plugin renders through
-# `renderQrTerminal()` → the `qrcode` package's toString(text,{type:"terminal"})
-# WITHOUT a `small` flag, so it defaults to full size. This preload patches the
-# qrcode package to force `{ small: true }` half-block rendering for terminal
-# output, roughly quartering the area without changing the payload.
-# It is NOT added to the global boot NODE_OPTIONS (the gateway never renders the
-# pairing QR); instead it is wired into the connect-session NODE_OPTIONS (so any
-# openclaw invocation in the session gets it, not just the openclaw() shell
-# function) and the openclaw() guard injects it as defense-in-depth.
-_WHATSAPP_QR_COMPACT_SCRIPT="/tmp/nemoclaw-whatsapp-qr-compact.js"
-_WHATSAPP_QR_COMPACT_SOURCE="/usr/local/lib/nemoclaw/preloads/whatsapp-qr-compact.js"
+validate_nemoclaw_tmp_permissions() {
+  local _dynamic_targets=()
+  local _target
+  while IFS= read -r _target; do
+    [ -n "$_target" ] && _dynamic_targets+=("$_target")
+  done < <(messaging_runtime_preload_targets)
 
-install_whatsapp_qr_compact() {
-  local config_file="/sandbox/.openclaw/openclaw.json"
+  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "${_dynamic_targets[@]}"
+}
 
-  # Only install when WhatsApp is configured in the baked OpenClaw config.
-  if ! grep -q '"whatsapp"' "$config_file" 2>/dev/null; then
-    return 0
-  fi
+verify_messaging_runtime_secret_scans() {
+  [ -f "$_MESSAGING_RUNTIME_PRELOAD_PLAN" ] || return 0
+  python3 - "$_MESSAGING_RUNTIME_PRELOAD_PLAN" <<'PYMESSAGINGSECRETS'
+import json
+import re
+import sys
 
-  # Source file is absent on older base images; skip rather than fail the boot.
-  if [ ! -f "$_WHATSAPP_QR_COMPACT_SOURCE" ]; then
-    return 0
-  fi
+with open(sys.argv[1], encoding="utf-8") as handle:
+    plan = json.load(handle)
 
-  printf '[channels] Installing WhatsApp compact-QR renderer (scan-friendly pairing)\n' >&2
-  emit_sandbox_sourced_file "$_WHATSAPP_QR_COMPACT_SCRIPT" <"$_WHATSAPP_QR_COMPACT_SOURCE"
+for scan in plan.get("secretScans", []):
+    path = scan["path"]
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+            content = handle.read()
+    except FileNotFoundError:
+        continue
+    if re.search(scan["pattern"], content):
+        print(scan["message"].replace("{path}", path), file=sys.stderr)
+        raise SystemExit(scan["exitCode"])
+PYMESSAGINGSECRETS
 }
 
 _read_gateway_token() {
@@ -2259,6 +2433,16 @@ _nemoclaw_restore_mutable_config_perms() {
   # rootless mode, where the root-only re-lock is skipped (#4538).
   chmod g-w "$_nemoclaw_oc_dir/openclaw.json.nemoclaw-baseline" 2>/dev/null || true
 }
+_nemoclaw_messaging_connect_node_options() {
+  local _nemoclaw_preload _nemoclaw_options=""
+  [ -f "/tmp/nemoclaw-messaging-connect-preloads.list" ] || return 0
+  while IFS= read -r _nemoclaw_preload; do
+    [ -n "$_nemoclaw_preload" ] || continue
+    [ -f "$_nemoclaw_preload" ] || continue
+    _nemoclaw_options="${_nemoclaw_options:+$_nemoclaw_options }--require $_nemoclaw_preload"
+  done < "/tmp/nemoclaw-messaging-connect-preloads.list"
+  printf '%s' "$_nemoclaw_options"
+}
 openclaw() {
   # NemoClaw#4462: keep user-initiated device approval usable from an
   # interactive sandbox shell until upstream OpenClaw can approve scope
@@ -2521,16 +2705,13 @@ PYAPPROVEAFTER
             esac
             echo "[whatsapp] Pairing via gateway ${OPENCLAW_GATEWAY_URL}." >&2
             echo "[whatsapp] On your phone: WhatsApp > Linked devices > Link a device, then scan the QR below." >&2
-            # Defense-in-depth: the connect-session NODE_OPTIONS already wires
-            # this preload in for every openclaw invocation; injecting it again
-            # here covers non-connect shells (e.g. `openshell sandbox exec`).
-            # The preload is idempotent, so a double --require is harmless.
-            # Literal path: this guard body is emitted inside a single-quoted
-            # heredoc, so shell variables are intentionally not expanded here.
-            # Keep in sync with _WHATSAPP_QR_COMPACT_SCRIPT above.
-            _whatsapp_qr_compact="/tmp/nemoclaw-whatsapp-qr-compact.js"
-            if [ -f "$_whatsapp_qr_compact" ]; then
-              NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_whatsapp_qr_compact" command openclaw "$@"
+            # Defense-in-depth: connect-session NODE_OPTIONS already wires
+            # manifest-declared connect preloads for every openclaw invocation;
+            # injecting them again here covers non-connect shells. Runtime
+            # preload modules are idempotent, so a double --require is harmless.
+            _nemoclaw_connect_node_options="$(_nemoclaw_messaging_connect_node_options)"
+            if [ -n "$_nemoclaw_connect_node_options" ]; then
+              NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$_nemoclaw_connect_node_options" command openclaw "$@"
             else
               command openclaw "$@"
             fi
@@ -2618,21 +2799,8 @@ GUARDENVEOF
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SECCOMP_GUARD_SCRIPT\""
     # ciao network guard for connect sessions.
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT\""
-    # Telegram diagnostics for connect sessions — same conditional pattern.
-    echo "[ -f \"$_TELEGRAM_DIAGNOSTICS_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_TELEGRAM_DIAGNOSTICS_SCRIPT\""
-    # Slack channel guard for connect sessions. The guard file is installed later
-    # by install_slack_channel_guard() — conditional on the file existing at
-    # source-time so connect sessions started before Slack is configured are safe.
-    echo "[ -f \"$_SLACK_GUARD_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT\""
-    # WhatsApp compact-QR preload for connect sessions (NemoClaw#4522). The
-    # in-sandbox `openclaw channels login --channel whatsapp` QR renders full
-    # size (~56 rows) and overflows the terminal. Wiring the preload into the
-    # connect-session NODE_OPTIONS forces compact rendering for ANY openclaw
-    # invocation in the session — not only the openclaw() shell-function path,
-    # which a direct binary call would bypass. The file is installed by
-    # install_whatsapp_qr_compact() only for WhatsApp sandboxes, so the
-    # source-time `[ -f ]` check leaves non-WhatsApp connect sessions untouched.
-    echo "[ -f \"$_WHATSAPP_QR_COMPACT_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_WHATSAPP_QR_COMPACT_SCRIPT\""
+    # Manifest-declared messaging preloads for connect sessions.
+    emit_messaging_connect_runtime_preload_exports
     # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
     echo '# Tool cache redirects — keep transient tool state under /tmp'
     for _redir in "${_TOOL_REDIRECTS[@]}"; do
@@ -3316,12 +3484,13 @@ if [ "$(id -u)" -ne 0 ]; then
   # actually runs with.
   write_openclaw_config_baseline
   export_gateway_token
+  write_messaging_runtime_preload_plan
   write_runtime_shell_env
   ensure_runtime_shell_env_shim
   lock_rc_files "$_SANDBOX_HOME" || true
-  # Normalize Slack provider placeholders before any child inherits the env —
-  # covers both the one-shot "${NEMOCLAW_CMD[@]}" exec and the gateway launch.
-  normalize_slack_runtime_env
+  # Apply manifest-declared runtime env aliases before any child inherits the
+  # env. This covers both one-shot commands and the gateway launch.
+  apply_messaging_runtime_env_aliases
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
     exec "${NEMOCLAW_CMD[@]}"
@@ -3331,10 +3500,8 @@ if [ "$(id -u)" -ne 0 ]; then
   refresh_openclaw_provider_placeholders
   ensure_mutable_openclaw_config_hash
   write_openclaw_config_baseline
-  install_telegram_diagnostics
-  install_slack_channel_guard
-  install_whatsapp_qr_compact
-  verify_no_slack_secrets_on_disk
+  install_messaging_runtime_preloads
+  verify_messaging_runtime_secret_scans
 
   # Ensure writable state directories exist and are owned by the current user.
   # The Docker build (Dockerfile) sets this up correctly, but the native curl
@@ -3378,7 +3545,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
   # (both are trust-boundary files; tampering would let the sandbox user
   # inject code into any Node process via NODE_OPTIONS).
-  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_WHATSAPP_QR_COMPACT_SCRIPT"
+  validate_nemoclaw_tmp_permissions
 
   # Start gateway in background, auto-pair, then wait. Mark the in-container
   # gateway path so the Docker HEALTHCHECK probes it rather than short-circuiting
@@ -3470,21 +3637,20 @@ prepare_gateway_token_for_current_command
 # actually runs with.
 write_openclaw_config_baseline
 export_gateway_token
+write_messaging_runtime_preload_plan
 write_runtime_shell_env
 ensure_runtime_shell_env_shim
 lock_rc_files "$_SANDBOX_HOME"
-# Normalize Slack provider placeholders before any child (the one-shot
+# Apply manifest-declared runtime env aliases before any child (the one-shot
 # "${NEMOCLAW_CMD[@]}" exec or the stepped-down gateway) inherits the env.
 # gosu/setpriv preserve the environment, so the export reaches the gateway user.
-normalize_slack_runtime_env
+apply_messaging_runtime_env_aliases
 
 # Messaging channel config was announced before placeholder refresh so the
 # baseline captures the same provider placeholders the gateway will use.
-# Install channel-specific preloads before starting OpenClaw.
-install_telegram_diagnostics
-install_slack_channel_guard
-install_whatsapp_qr_compact
-verify_no_slack_secrets_on_disk
+# Install manifest-declared runtime preloads before starting OpenClaw.
+install_messaging_runtime_preloads
+verify_messaging_runtime_secret_scans
 
 # Write auth profile as sandbox user and recursively re-tighten any
 # auth-profiles.json files under ~/.openclaw. See
@@ -3601,7 +3767,7 @@ seed_default_workspace_templates_as_sandbox
 # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
 # (both are trust-boundary files; tampering would let the sandbox user
 # inject code into any Node process via NODE_OPTIONS).
-validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_WHATSAPP_QR_COMPACT_SCRIPT"
+validate_nemoclaw_tmp_permissions
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs

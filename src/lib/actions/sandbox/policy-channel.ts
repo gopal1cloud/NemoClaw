@@ -13,10 +13,14 @@ import {
   createBuiltInChannelManifestRegistry,
   createBuiltInMessagingHookRegistry,
   createBuiltInRenderTemplateResolver,
+  createMessagingPreEnableHookInputs,
   getMessagingManifestAvailabilityContext,
   MessagingHostStateApplier,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
+  runMessagingHook,
+  type MessagingHookOutputValue,
+  type MessagingSerializableValue,
   type SandboxMessagingChannelPlan,
   type SandboxMessagingPlan,
   toMessagingAgentId,
@@ -27,6 +31,7 @@ const { isNonInteractive } = require("../../onboard") as { isNonInteractive: () 
 const onboardProviders = require("../../onboard/providers");
 
 import { filterSetupPolicyPresetsForAgent } from "../../onboard/agent-policy-presets";
+import { BASE_GATEWAY_NAME } from "../../onboard/gateway-binding";
 import * as policies from "../../policy";
 
 const onboardSession =
@@ -54,12 +59,33 @@ import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-f
 import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
-import { printTelegramDirectMessageAllowlistWarning } from "./telegram-channel-bridge-verification";
 
 type ChannelMutationOptions = {
   channel?: string;
   dryRun?: boolean;
   force?: boolean;
+};
+
+type BridgeStartupHealthSpec = {
+  type: "openclaw-bridge-startup";
+  configFile: string;
+  channelConfigPath: string;
+  enabledPath: string;
+  logFile: string;
+  maxLogLines: number;
+  logLinePattern: string;
+  warningPattern: string;
+  positivePattern: string;
+  allowlistWarning?: AllowlistHealthWarningSpec;
+};
+
+type AllowlistHealthWarningSpec = {
+  accountContainerPath: string;
+  preferredAccountKey?: string;
+  policyPath: string;
+  requiredPolicy: string;
+  allowListPath: string;
+  messages: readonly string[];
 };
 
 const messagingManifestRegistry = createBuiltInChannelManifestRegistry();
@@ -438,63 +464,77 @@ async function checkChannelAddConflict(
   return false;
 }
 
-// Gateway-scoped Slack Socket Mode conflict (#4953): even with a distinct Slack
-// app/token, only one sandbox per OpenShell gateway reliably receives Socket
-// Mode events. Runs AFTER `checkChannelAddConflict` so the credential axis —
-// which catches a *shared* token and stays accurate across gateways — is
-// reported first; this axis then catches the distinct-token, same-gateway case
-// instead of letting it become a silent black hole. Returns true to PROCEED,
-// false to abort. Fail-soft: a detection error must not crash the add or bypass
-// `--force`, so it is swallowed (the credential axis already ran its guarded
-// check). Only meaningful for Slack; other channels proceed unchanged.
-async function checkSlackSocketModeGatewayConflict(
+// Channel-owned pre-enable checks run after `checkChannelAddConflict` so the
+// shared credential axis is reported first. Registry read failures stay
+// fail-soft: they warn and proceed instead of crashing the add path.
+async function checkMessagingPreEnableHooks(
   sandboxName: string,
   channelName: string,
+  plan: SandboxMessagingPlan,
   force: boolean,
 ): Promise<boolean> {
-  if (channelName !== "slack") return true;
-  let conflictMessages: string[] = [];
+  const requests = MessagingSetupApplier.listHookRequests(plan, "pre-enable");
+  if (requests.length === 0) return true;
+
+  let registryEntries: ReturnType<typeof registry.listSandboxes>["sandboxes"];
   try {
-    const applier = require("../../messaging/applier") as typeof import("../../messaging/applier");
-    const { BASE_GATEWAY_NAME } =
-      require("../../onboard/gateway-binding") as typeof import("../../onboard/gateway-binding");
-    // `channels add` registers the Slack provider on the default `nemoclaw`
-    // gateway — applyChannelAddToGatewayAndRegistry → recoverNamedGatewayRuntime
-    // selects `nemoclaw` regardless of the sandbox's recorded gateway. Detect
-    // conflicts on the gateway the add actually mutates so the check matches the
-    // provider registration and cannot leave a false negative (#4953).
-    const gatewayName = BASE_GATEWAY_NAME;
-    conflictMessages = applier
-      .findSlackSocketModeGatewayConflicts(
-        sandboxName,
-        gatewayName,
-        registry.listSandboxes().sandboxes,
-      )
-      .map(({ sandbox }) => applier.formatSlackSocketModeConflictMessage(sandbox));
+    registryEntries = registry.listSandboxes().sandboxes;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.log(`  ${YW}⚠${R} Could not verify Slack Socket Mode gateway conflicts: ${message}`);
+    console.log(`  ${YW}⚠${R} Could not verify messaging pre-enable checks: ${message}`);
     return true;
   }
-  if (conflictMessages.length === 0) return true;
 
-  for (const message of conflictMessages) {
-    console.log(`  ${YW}⚠${R} ${message}`);
+  const hookRegistry = createBuiltInMessagingHookRegistry();
+  const additionalInputs = createMessagingPreEnableHookInputs({
+    currentSandbox: sandboxName,
+    currentGatewayName: BASE_GATEWAY_NAME,
+    registryEntries,
+  });
+
+  try {
+    await MessagingSetupApplier.applyHooksForPhase(plan, "pre-enable", {
+      additionalInputs,
+      runHook: (request) =>
+        runMessagingHook(
+          {
+            id: request.hookId,
+            phase: request.phase,
+            handler: request.handler,
+            inputs: request.inputKeys,
+            outputs: request.outputs,
+            onFailure: request.onFailure,
+          },
+          hookRegistry,
+          {
+            channelId: request.channelId,
+            isInteractive: !isNonInteractive(),
+            inputs: request.inputs,
+          },
+        ),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    for (const line of message.split("\n").filter((line) => line.trim().length > 0)) {
+      console.log(`  ${YW}⚠${R} ${line}`);
+    }
+    if (force) {
+      console.log("  --force: proceeding despite the messaging pre-enable conflict above.");
+      return true;
+    }
+    if (isNonInteractive()) {
+      console.error(
+        `  Aborting: resolve the messaging pre-enable conflict above, run \`${CLI_NAME} <sandbox> channels remove ${channelName}\` on the other sandbox, or re-run with --force.`,
+      );
+      process.exit(1);
+    }
+    const answer = (await askPrompt("  Continue anyway? [y/N]: ")).trim().toLowerCase();
+    if (answer === "y" || answer === "yes") return true;
+    console.log("  Aborting channel add.");
+    return false;
   }
-  if (force) {
-    console.log("  --force: proceeding despite the Slack Socket Mode gateway conflict above.");
-    return true;
-  }
-  if (isNonInteractive()) {
-    console.error(
-      `  Aborting: only one sandbox per gateway can receive Slack Socket Mode events. Run \`${CLI_NAME} <sandbox> channels remove slack\` on the other sandbox, onboard this sandbox on a separate gateway (set NEMOCLAW_GATEWAY_PORT), or re-run with --force.`,
-    );
-    process.exit(1);
-  }
-  const answer = (await askPrompt("  Continue anyway? [y/N]: ")).trim().toLowerCase();
-  if (answer === "y" || answer === "yes") return true;
-  console.log("  Aborting channel add.");
-  return false;
+
+  return true;
 }
 
 // Push channel tokens to the OpenShell gateway. Durable channel state is
@@ -652,86 +692,136 @@ async function promptAndRebuild(sandboxName: string, actionDesc: string): Promis
   return true;
 }
 
-// Channels that share the canonical OpenClaw `channels.<name>.enabled` shape
-// and emit `[<name>] [default]` startup breadcrumbs in /tmp/gateway.log.
-// WhatsApp is QR-only (no host-side bridge process at this point), and WeChat
-// is recorded under the `openclaw-weixin` channel id with its own per-account
-// metadata flow seeded by the manifest post-agent-install hook — neither match
-// the probe shape and would produce false-negative warnings here.
-const OPENCLAW_BRIDGE_VERIFIABLE_CHANNELS = new Set(["telegram", "discord", "slack"]);
+// Run post-rebuild messaging health checks through the manifest hook phase.
+// Failures remain best-effort warnings because the rebuild has already
+// succeeded; the phase surfaces likely channel startup issues without making
+// channel ownership leak back into this action.
+async function runMessagingHealthChecksAfterRebuild(
+  sandboxName: string,
+  plan: SandboxMessagingPlan,
+): Promise<void> {
+  if (MessagingSetupApplier.listHookRequests(plan, "health-check").length === 0) return;
 
-// Probe OpenClaw runtime state for a freshly added messaging channel. Runs
-// after `channels add <channel>` triggers a successful rebuild. Reads the
-// baked openclaw.json and tails the gateway log to confirm the bridge module
-// is enabled and emitted a startup breadcrumb. Failures here are best-effort
-// warnings — the rebuild has already succeeded; the goal is to surface
-// "bridge did not spawn" so the user does not discover it from radio silence
-// hours later (#4314, #4390). Restricted to the OpenClaw agent because Hermes
-// sandboxes use /sandbox/.hermes with a different config layout.
-function verifyChannelBridgeAfterRebuild(sandboxName: string, channelName: string): void {
-  if (!OPENCLAW_BRIDGE_VERIFIABLE_CHANNELS.has(channelName)) return;
-  const agent = resolveAgentForSandbox(sandboxName);
-  if (agent.name !== "openclaw") return;
+  const hookRegistry = createBuiltInMessagingHookRegistry();
+  let result: Awaited<ReturnType<typeof MessagingSetupApplier.applyHooksForPhase>>;
+  try {
+    result = await MessagingSetupApplier.applyHooksForPhase(plan, "health-check", {
+      runHook: (request) =>
+        runMessagingHook(
+          {
+            id: request.hookId,
+            phase: request.phase,
+            handler: request.handler,
+            inputs: request.inputKeys,
+            outputs: request.outputs,
+            onFailure: request.onFailure,
+          },
+          hookRegistry,
+          {
+            channelId: request.channelId,
+            isInteractive: !isNonInteractive(),
+            inputs: request.inputs,
+          },
+        ),
+    });
+  } catch (err) {
+    console.log(`  ${YW}⚠${R} Messaging health check failed: ${formatErrorMessage(err)}`);
+    return;
+  }
+
+  for (const hookResult of result.hookResults) {
+    const request = result.hookRequests.find(
+      (entry) => entry.hookId === hookResult.hookId && entry.handler === hookResult.handlerId,
+    );
+    if (!request) continue;
+    for (const [outputId, output] of Object.entries(hookResult.outputs)) {
+      if (output.kind !== "health-check") continue;
+      runDeclaredMessagingHealthCheck(sandboxName, request.channelId, outputId, output);
+    }
+  }
+}
+
+function runDeclaredMessagingHealthCheck(
+  sandboxName: string,
+  channelName: string,
+  outputId: string,
+  output: MessagingHookOutputValue,
+): void {
+  const spec = parseBridgeStartupHealthSpec(output.value);
+  if (!spec) {
+    console.log(
+      `  ${YW}⚠${R} Ignoring unsupported messaging health-check output '${outputId}' for '${channelName}'.`,
+    );
+    return;
+  }
+  verifyOpenClawBridgeStartupFromSpec(sandboxName, channelName, spec);
+}
+
+function verifyOpenClawBridgeStartupFromSpec(
+  sandboxName: string,
+  channelName: string,
+  spec: BridgeStartupHealthSpec,
+): void {
   const configProbe = executeSandboxExecCommand(
     sandboxName,
-    "cat /sandbox/.openclaw/openclaw.json 2>/dev/null || true",
+    `cat ${shellQuote(spec.configFile)} 2>/dev/null || true`,
     10000,
   );
   if (!configProbe || configProbe.status !== 0 || !configProbe.stdout) {
     console.log(
-      `  ${YW}⚠${R} Could not read /sandbox/.openclaw/openclaw.json to verify '${channelName}' bridge startup.`,
+      `  ${YW}⚠${R} Could not read ${spec.configFile} to verify '${channelName}' bridge startup.`,
     );
     console.log(
       `    Run '${CLI_NAME} ${sandboxName} status' to inspect the sandbox once it is fully running.`,
     );
     return;
   }
+
+  let channelBlock: unknown = null;
   let channelEnabled = false;
-  let channelBlock: any = null;
   try {
-    const cfg = JSON.parse(configProbe.stdout);
-    channelBlock = cfg?.channels?.[channelName];
-    channelEnabled = Boolean(channelBlock?.enabled);
+    const cfg = JSON.parse(String(configProbe.stdout));
+    channelBlock = getObjectPath(cfg, spec.channelConfigPath);
+    channelEnabled = Boolean(getObjectPath(channelBlock, spec.enabledPath));
   } catch {
-    // Malformed config — fall through to the log probe to capture context.
+    // Malformed config: continue to a clear disabled warning.
   }
+
   if (!channelEnabled) {
     console.log(
-      `  ${YW}⚠${R} '${channelName}' channel was not marked enabled in baked openclaw.json after rebuild.`,
+      `  ${YW}⚠${R} '${channelName}' channel was not marked enabled in baked ${spec.configFile} after rebuild.`,
     );
     console.log(
       `    The bridge will not start. Re-run '${CLI_NAME} ${sandboxName} rebuild' or 'channels remove ${channelName}' and add again.`,
     );
     return;
   }
-  // Match both the channel module's own breadcrumbs (`[<channel>] [default]`)
-  // and the channel-guard preloads' aggregated form (`[channels] [<channel>]`).
-  // The Slack guard writes "[channels] [slack] provider failed to start..."
-  // when a token is rejected; ignoring that line here would leave the user
-  // with a generic "no breadcrumb" warning instead of the actionable cause.
+
+  const logLineRegex = compileHealthRegex(spec.logLinePattern, "log line", channelName);
+  const warningRegex = compileHealthRegex(spec.warningPattern, "warning", channelName, "i");
+  const positiveRegex = compileHealthRegex(spec.positivePattern, "startup", channelName);
+  if (!logLineRegex || !warningRegex || !positiveRegex) return;
+
   const logProbe = executeSandboxExecCommand(
     sandboxName,
-    `tail -n 400 /tmp/gateway.log 2>/dev/null | grep -E "^\\[${channelName}\\] |^\\[channels\\] \\[${channelName}\\]" || true`,
+    `tail -n ${spec.maxLogLines} ${shellQuote(spec.logFile)} 2>/dev/null || true`,
     10000,
   );
-  const lines = (logProbe?.stdout || "")
+  const lines = String(logProbe?.stdout || "")
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter(Boolean);
+    .filter((line) => line.length > 0 && logLineRegex.test(line));
   if (lines.length === 0) {
     console.log(
-      `  ${YW}⚠${R} '${channelName}' bridge did not log a startup breadcrumb in /tmp/gateway.log yet.`,
+      `  ${YW}⚠${R} '${channelName}' bridge did not log a startup breadcrumb in ${spec.logFile} yet.`,
     );
     console.log(
-      `    Tail it with 'openshell sandbox exec --name ${sandboxName} -- tail -f /tmp/gateway.log' if the channel stays silent.`,
+      `    Tail it with 'openshell sandbox exec --name ${sandboxName} -- tail -f ${spec.logFile}' if the channel stays silent.`,
     );
     return;
   }
-  const credentialWarnings = lines.filter((line) =>
-    /credential placeholder|Bot API rejected|startup probe (?:failed|returned)|provider failed to start|bridge did not start within|invalid_auth|token_revoked|token_expired/i.test(
-      line,
-    ),
-  );
+
+  const credentialWarnings = lines.filter((line) => warningRegex.test(line));
   if (credentialWarnings.length > 0) {
     console.log(`  ${YW}⚠${R} '${channelName}' bridge logged credential/startup warnings:`);
     for (const line of credentialWarnings.slice(0, 3)) {
@@ -742,27 +832,167 @@ function verifyChannelBridgeAfterRebuild(sandboxName: string, channelName: strin
     );
     return;
   }
-  // Treat the channel as observably started only when we see a positive
-  // startup signal from the bridge module itself ("starting provider" /
-  // "provider ready"). Otherwise the grep above matched a tangential
-  // breadcrumb (e.g. a stale "no startup detected" line) and a green
-  // "startup detected" message would be misleading.
-  const positiveStartup = lines.some((line) =>
-    /\bstarting provider\b|\bprovider ready\b/.test(line),
-  );
-  if (positiveStartup) {
+
+  if (lines.some((line) => positiveRegex.test(line))) {
     console.log(`  ${G}✓${R} '${channelName}' bridge startup detected in sandbox runtime log.`);
-    if (channelName === "telegram") {
-      printTelegramDirectMessageAllowlistWarning(channelBlock, console.log, `${YW}⚠${R}`);
+    if (spec.allowlistWarning) {
+      printDeclaredAllowlistWarning(channelBlock, spec.allowlistWarning);
     }
     return;
   }
+
   console.log(
     `  ${YW}⚠${R} '${channelName}' bridge log lines found but no startup confirmation yet.`,
   );
   console.log(
-    `    Tail it with 'openshell sandbox exec --name ${sandboxName} -- tail -f /tmp/gateway.log' if the channel stays silent.`,
+    `    Tail it with 'openshell sandbox exec --name ${sandboxName} -- tail -f ${spec.logFile}' if the channel stays silent.`,
   );
+}
+
+function parseBridgeStartupHealthSpec(
+  value: MessagingSerializableValue,
+): BridgeStartupHealthSpec | null {
+  if (!isObjectRecord(value) || value.type !== "openclaw-bridge-startup") return null;
+  const configFile = getStringField(value, "configFile");
+  const channelConfigPath = getStringField(value, "channelConfigPath");
+  const enabledPath = getStringField(value, "enabledPath") ?? "enabled";
+  const logFile = getStringField(value, "logFile");
+  const logLinePattern = getStringField(value, "logLinePattern");
+  const warningPattern = getStringField(value, "warningPattern");
+  const positivePattern = getStringField(value, "positivePattern");
+  if (
+    !configFile ||
+    !channelConfigPath ||
+    !enabledPath ||
+    !logFile ||
+    !logLinePattern ||
+    !warningPattern ||
+    !positivePattern
+  ) {
+    return null;
+  }
+
+  return {
+    type: "openclaw-bridge-startup",
+    configFile,
+    channelConfigPath,
+    enabledPath,
+    logFile,
+    maxLogLines: normalizeMaxLogLines(value.maxLogLines),
+    logLinePattern,
+    warningPattern,
+    positivePattern,
+    allowlistWarning: parseAllowlistHealthWarning(value.allowlistWarning),
+  };
+}
+
+function parseAllowlistHealthWarning(value: unknown): AllowlistHealthWarningSpec | undefined {
+  if (!isObjectRecord(value)) return undefined;
+  const accountContainerPath = getStringField(value, "accountContainerPath");
+  const policyPath = getStringField(value, "policyPath");
+  const requiredPolicy = getStringField(value, "requiredPolicy");
+  const allowListPath = getStringField(value, "allowListPath");
+  const messages = Array.isArray(value.messages)
+    ? value.messages.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  if (
+    !accountContainerPath ||
+    !policyPath ||
+    !requiredPolicy ||
+    !allowListPath ||
+    messages.length === 0
+  ) {
+    return undefined;
+  }
+  const preferredAccountKey = getStringField(value, "preferredAccountKey");
+  return {
+    accountContainerPath,
+    preferredAccountKey,
+    policyPath,
+    requiredPolicy,
+    allowListPath,
+    messages,
+  };
+}
+
+function printDeclaredAllowlistWarning(
+  channelBlock: unknown,
+  spec: AllowlistHealthWarningSpec,
+): boolean {
+  const account = selectDeclaredAccount(channelBlock, spec);
+  const allowList = getObjectPath(account, spec.allowListPath);
+  const allowedCount = Array.isArray(allowList) ? allowList.length : 0;
+  if (getObjectPath(account, spec.policyPath) !== spec.requiredPolicy || allowedCount > 0) {
+    return false;
+  }
+
+  const [firstLine, ...rest] = spec.messages;
+  if (!firstLine) return false;
+  console.log(`  ${YW}⚠${R} ${firstLine}`);
+  for (const line of rest) {
+    console.log(`    ${line}`);
+  }
+  return true;
+}
+
+function selectDeclaredAccount(
+  channelBlock: unknown,
+  spec: AllowlistHealthWarningSpec,
+): Record<string, unknown> | null {
+  const accountContainer = getObjectPath(channelBlock, spec.accountContainerPath);
+  if (!isObjectRecord(accountContainer)) return null;
+  const preferredAccount = spec.preferredAccountKey
+    ? accountContainer[spec.preferredAccountKey]
+    : null;
+  if (isObjectRecord(preferredAccount)) {
+    return preferredAccount;
+  }
+  const firstKey = Object.keys(accountContainer)[0];
+  const firstAccount = firstKey ? accountContainer[firstKey] : null;
+  return isObjectRecord(firstAccount) ? firstAccount : null;
+}
+
+function compileHealthRegex(
+  pattern: string,
+  label: string,
+  channelName: string,
+  flags?: string,
+): RegExp | null {
+  try {
+    return new RegExp(pattern, flags);
+  } catch (err) {
+    console.log(
+      `  ${YW}⚠${R} Invalid ${label} health pattern for '${channelName}': ${formatErrorMessage(err)}`,
+    );
+    return null;
+  }
+}
+
+function getObjectPath(value: unknown, dottedPath: string): unknown {
+  let current = value;
+  for (const segment of dottedPath.split(".").filter(Boolean)) {
+    if (!isObjectRecord(current)) return undefined;
+    current = current[segment];
+  }
+  return current;
+}
+
+function getStringField(value: Record<string, unknown>, field: string): string | undefined {
+  const entry = value[field];
+  return typeof entry === "string" && entry.trim().length > 0 ? entry : undefined;
+}
+
+function normalizeMaxLogLines(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 400;
+  return Math.min(Math.max(Math.trunc(value), 1), 2000);
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function formatErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 async function planSandboxChannelAdd(
@@ -1023,9 +1253,9 @@ export async function addSandboxChannel(
   if (!(await checkChannelAddConflict(sandboxName, canonical, acquired, force))) {
     return; // user aborted; nothing registered or widened
   }
-  // Credential axis passed; now the gateway-scoped Slack Socket Mode axis (#4953)
-  // catches the distinct-token, same-gateway case the credential check cannot.
-  if (!(await checkSlackSocketModeGatewayConflict(sandboxName, canonical, force))) {
+  // Credential axis passed; now channel-owned pre-enable hooks can catch
+  // channel-specific conflicts before provider/policy mutation.
+  if (!(await checkMessagingPreEnableHooks(sandboxName, canonical, plan, force))) {
     return; // user aborted; nothing registered or widened
   }
   assertAddChannelPlanActive(sandboxName, manifest, plan);
@@ -1056,7 +1286,7 @@ export async function addSandboxChannel(
       console.log(`  ${line}`);
     }
     const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
-    if (rebuilt) verifyChannelBridgeAfterRebuild(sandboxName, canonical);
+    if (rebuilt) await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
     return;
   }
 
@@ -1102,7 +1332,7 @@ export async function addSandboxChannel(
   }
 
   const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
-  if (rebuilt) verifyChannelBridgeAfterRebuild(sandboxName, canonical);
+  if (rebuilt) await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
 }
 
 async function rollbackChannelAdd(

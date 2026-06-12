@@ -291,8 +291,17 @@ describe("ManifestCompiler", () => {
     expect(plan.healthChecks.every((check) => check.requiredBefore === "lifecycle-success")).toBe(
       true,
     );
+    expect(plan.healthChecks.find((check) => check.channelId === "telegram")?.hookIds).toEqual([
+      "telegram-openclaw-bridge-health",
+    ]);
+    expect(plan.healthChecks.find((check) => check.channelId === "discord")?.hookIds).toEqual([
+      "discord-openclaw-bridge-health",
+    ]);
     expect(plan.healthChecks.find((check) => check.channelId === "wechat")?.hookIds).toEqual([
       "wechat-health-check",
+    ]);
+    expect(plan.healthChecks.find((check) => check.channelId === "slack")?.hookIds).toEqual([
+      "slack-openclaw-bridge-health",
     ]);
     expect(
       plan.agentRender.find(
@@ -540,6 +549,10 @@ describe("ManifestCompiler", () => {
       "telegram-allowlist-aliases",
       "telegram-config-prompt",
       "telegram-get-me-reachability",
+      "telegram-runtime-preload",
+      "telegram-openclaw-bridge-health",
+      "telegram-openclaw-runtime-status",
+      "telegram-gateway-conflict-status",
     ]);
     expect(plan.credentialBindings.map((binding) => binding.channelId)).toEqual(["telegram"]);
     expect(plan.networkPolicy.entries.map((entry) => entry.channelId)).toEqual(["telegram"]);
@@ -772,6 +785,10 @@ describe("ManifestCompiler", () => {
       "telegram-allowlist-aliases",
       "telegram-config-prompt",
       "telegram-get-me-reachability",
+      "telegram-runtime-preload",
+      "telegram-openclaw-bridge-health",
+      "telegram-openclaw-runtime-status",
+      "telegram-gateway-conflict-status",
     ]);
   });
 

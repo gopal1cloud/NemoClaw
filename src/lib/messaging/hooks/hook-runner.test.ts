@@ -36,6 +36,7 @@ describe("MessagingHookRegistry", () => {
       "common.staticOutputs",
       "common.tokenPaste",
       "common.configPrompt",
+      "slack.socketModeGatewayConflict",
       "slack.validateCredentials",
       "telegram.allowlistAliases",
       "telegram.getMeReachability",

@@ -425,6 +425,11 @@ describe("MessagingSetupApplier", () => {
         (request) => `${request.channelId}:${request.hookId}`,
       ),
     ).toEqual([
+      "slack:slack-socket-mode-gateway-conflict",
+      "slack:slack-runtime-preload",
+      "slack:slack-openclaw-bridge-health",
+      "slack:slack-openclaw-runtime-status",
+      "slack:slack-socket-mode-gateway-status",
       "slack:slack-openclaw-package-install",
       "slack:slack-token-paste",
       "slack:slack-config-prompt",

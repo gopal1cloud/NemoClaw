@@ -21,6 +21,109 @@ function runtimeShellEnvBlock(src: string): string {
   return src.slice(start, end);
 }
 
+function messagingRuntimePreloadSection(
+  src: string,
+  options: {
+    planPath?: string;
+    connectPreloadsPath?: string;
+    sourcePrefix?: string;
+    targetPrefix?: string;
+    secretScanPrefix?: string;
+  } = {},
+): string {
+  const start = src.indexOf("# ── Messaging runtime preloads from manifest hooks");
+  const end = src.indexOf("_read_gateway_token()", start);
+  expect(start).toBeGreaterThan(-1);
+  expect(end).toBeGreaterThan(start);
+  let section = src.slice(start, end);
+  if (options.planPath) {
+    section = section.replace(
+      '_MESSAGING_RUNTIME_PRELOAD_PLAN="/tmp/nemoclaw-messaging-runtime-preloads.json"',
+      `_MESSAGING_RUNTIME_PRELOAD_PLAN=${JSON.stringify(options.planPath)}`,
+    );
+  }
+  if (options.connectPreloadsPath) {
+    section = section
+      .replace(
+        '_MESSAGING_CONNECT_PRELOADS_FILE="/tmp/nemoclaw-messaging-connect-preloads.list"',
+        `_MESSAGING_CONNECT_PRELOADS_FILE=${JSON.stringify(options.connectPreloadsPath)}`,
+      )
+      .replaceAll("/tmp/nemoclaw-messaging-connect-preloads.list", options.connectPreloadsPath);
+  }
+  if (options.sourcePrefix) {
+    section = section.replace(
+      'PRELOAD_SOURCE_PREFIX = "/usr/local/lib/nemoclaw/preloads/"',
+      `PRELOAD_SOURCE_PREFIX = ${JSON.stringify(options.sourcePrefix)}`,
+    );
+  }
+  if (options.targetPrefix) {
+    section = section.replace(
+      'PRELOAD_TARGET_PREFIX = "/tmp/nemoclaw-"',
+      `PRELOAD_TARGET_PREFIX = ${JSON.stringify(options.targetPrefix)}`,
+    );
+  }
+  if (options.secretScanPrefix) {
+    section = section.replace(
+      'if not path.startswith("/sandbox/"):',
+      `if not path.startswith(${JSON.stringify(options.secretScanPrefix)}):`,
+    );
+  }
+  return section;
+}
+
+function encodeRuntimePreloadPlan(
+  channelId: string,
+  value: Record<string, unknown>,
+  options: { active?: boolean } = {},
+): string {
+  const active = options.active ?? true;
+  return Buffer.from(
+    JSON.stringify({
+      schemaVersion: 1,
+      sandboxName: "test-sandbox",
+      agent: "openclaw",
+      workflow: "rebuild",
+      channels: [
+        {
+          channelId,
+          displayName: channelId,
+          authMode: "token-paste",
+          active,
+          selected: true,
+          configured: true,
+          disabled: !active,
+          inputs: [],
+          hooks: [
+            {
+              channelId,
+              id: `${channelId}-runtime-preload`,
+              phase: "runtime-preload",
+              handler: "common.staticOutputs",
+              agents: ["openclaw"],
+              outputs: [
+                {
+                  id: "runtimePreload",
+                  kind: "runtime-preload",
+                  required: true,
+                  value,
+                },
+              ],
+              onFailure: "abort",
+            },
+          ],
+        },
+      ],
+      disabledChannels: active ? [] : [channelId],
+      credentialBindings: [],
+      networkPolicy: { presets: [], entries: [] },
+      agentRender: [],
+      buildSteps: [],
+      stateUpdates: [],
+      healthChecks: [],
+    }),
+  ).toString("base64");
+}
+
 function nonRootFallbackBlock(src: string): string {
   const start = src.indexOf("# ── Non-root fallback");
   const end = src.indexOf("# ── Root path", start);
@@ -347,14 +450,14 @@ describe("nemoclaw-start non-root fallback", () => {
       'ensure_gateway_token_if_missing() { echo "SHOULD_NOT_ENSURE"; exit 76; }',
       "write_openclaw_config_baseline() { :; }",
       "export_gateway_token() { :; }",
+      "write_messaging_runtime_preload_plan() { :; }",
       "write_runtime_shell_env() { :; }",
       "ensure_runtime_shell_env_shim() { :; }",
       "lock_rc_files() { :; }",
-      "normalize_slack_runtime_env() { :; }",
+      "apply_messaging_runtime_env_aliases() { :; }",
       'configure_messaging_channels() { echo "SHOULD_NOT_CONFIGURE"; exit 70; }',
-      'install_telegram_diagnostics() { echo "SHOULD_NOT_INSTALL"; exit 71; }',
-      'install_slack_channel_guard() { echo "SHOULD_NOT_INSTALL"; exit 73; }',
-      'verify_no_slack_secrets_on_disk() { echo "SHOULD_NOT_VERIFY"; exit 74; }',
+      'install_messaging_runtime_preloads() { echo "SHOULD_NOT_INSTALL"; exit 71; }',
+      'verify_messaging_runtime_secret_scans() { echo "SHOULD_NOT_VERIFY"; exit 74; }',
       "seed_default_workspace_templates() { :; }",
       "_SANDBOX_HOME=/sandbox",
       "NEMOCLAW_CMD=(bash -c 'echo EXPLICIT_COMMAND; exit 23')",
@@ -586,7 +689,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
         '_NEMOTRON_FIX_SCRIPT="/tmp/nemotron-fix.js"',
         '_SECCOMP_GUARD_SCRIPT="/tmp/seccomp-guard.js"',
         '_CIAO_GUARD_SCRIPT="/tmp/ciao-guard.js"',
-        '_SLACK_GUARD_SCRIPT="/nonexistent/slack-guard.js"',
+        "emit_messaging_connect_runtime_preload_exports() { :; }",
         "_TOOL_REDIRECTS=()",
         "set +u",
         "export_gateway_token",
@@ -836,7 +939,7 @@ describe("nemoclaw-start configure guard behavior", () => {
       '_NEMOTRON_FIX_SCRIPT="/tmp/nemotron-fix.js"',
       '_SECCOMP_GUARD_SCRIPT="/tmp/seccomp-guard.js"',
       '_CIAO_GUARD_SCRIPT="/tmp/ciao-guard.js"',
-      '_SLACK_GUARD_SCRIPT="/nonexistent/slack-guard.js"',
+      "emit_messaging_connect_runtime_preload_exports() { :; }",
       'export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:18789"',
       'export OPENCLAW_GATEWAY_PORT="18789"',
       'export OPENCLAW_GATEWAY_TOKEN="test-gateway-token"',
@@ -1347,28 +1450,6 @@ describe("Slack channel guard — unhandled-rejection safety net (#2340)", () =>
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   const extractGuardScript = () => startScriptHeredoc(src, "SLACK_GUARD_EOF");
 
-  function slackGuardSection(guardPath: string, configPath: string): string {
-    const start = src.indexOf("# read-only at runtime), this injects a Node.js preload");
-    const end = src.indexOf("_read_gateway_token()", start);
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error("Expected Slack channel guard section in scripts/nemoclaw-start.sh");
-    }
-    return src
-      .slice(start, end)
-      .replace(
-        '_SLACK_GUARD_SCRIPT="/tmp/nemoclaw-slack-channel-guard.js"',
-        `_SLACK_GUARD_SCRIPT=${JSON.stringify(guardPath)}`,
-      )
-      .replace(
-        '_SLACK_GUARD_SOURCE="/usr/local/lib/nemoclaw/preloads/slack-channel-guard.js"',
-        `_SLACK_GUARD_SOURCE=${JSON.stringify(path.join(PRELOAD_SCRIPTS, "slack-channel-guard.js"))}`,
-      )
-      .replace(
-        'local config_file="/sandbox/.openclaw/openclaw.json"',
-        `local config_file=${JSON.stringify(configPath)}`,
-      );
-  }
-
   function runSlackGuardHarness(body: string): ReturnType<typeof spawnSync> {
     return spawnSync(
       process.execPath,
@@ -1384,21 +1465,48 @@ ${body}`,
 
   it("installs the guard only when Slack is configured", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-guard-"));
-    const configPath = path.join(tmpDir, "openclaw.json");
+    const sourcePrefix = path.join(tmpDir, "preloads") + path.sep;
+    const guardSource = path.join(sourcePrefix, "slack-channel-guard.js");
     const guardPath = path.join(tmpDir, "slack-channel-guard.js");
+    const planPath = path.join(tmpDir, "runtime-plan.json");
+    const connectPreloadsPath = path.join(tmpDir, "connect-preloads.list");
     const scriptPath = path.join(tmpDir, "run.sh");
-    const run = (config: string) => {
-      fs.writeFileSync(configPath, config);
+    fs.mkdirSync(sourcePrefix, { recursive: true });
+    fs.copyFileSync(path.join(PRELOAD_SCRIPTS, "slack-channel-guard.js"), guardSource);
+    const runtimeValue = {
+      preloads: [
+        {
+          source: guardSource,
+          target: guardPath,
+          nodeOptions: ["boot", "connect"],
+          optional: false,
+          installMessage:
+            "[channels] Installing Slack channel guard (unhandled-rejection safety net)",
+          installedMessage: "[channels] Slack channel guard installed (NODE_OPTIONS updated)",
+        },
+      ],
+    };
+    const run = (active: boolean) => {
       fs.rmSync(guardPath, { force: true });
+      fs.rmSync(planPath, { force: true });
+      fs.rmSync(connectPreloadsPath, { force: true });
       fs.writeFileSync(
         scriptPath,
         [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
+          'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
           'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
           "NODE_OPTIONS='--require /already-loaded.js'",
-          slackGuardSection(guardPath, configPath),
-          "install_slack_channel_guard",
+          `export NEMOCLAW_MESSAGING_PLAN_B64=${JSON.stringify(encodeRuntimePreloadPlan("slack", runtimeValue, { active }))}`,
+          messagingRuntimePreloadSection(src, {
+            planPath,
+            connectPreloadsPath,
+            sourcePrefix,
+            targetPrefix: tmpDir + path.sep,
+          }),
+          "write_messaging_runtime_preload_plan",
+          "install_messaging_runtime_preloads",
           'printf "NODE_OPTIONS=%s\\n" "$NODE_OPTIONS"',
         ].join("\n"),
         { mode: 0o700 },
@@ -1407,17 +1515,18 @@ ${body}`,
     };
 
     try {
-      const noSlack = run('{"channels":{}}\n');
+      const noSlack = run(false);
       expect(noSlack.status).toBe(0);
       expect(fs.existsSync(guardPath)).toBe(false);
       expect(noSlack.stdout).not.toContain(guardPath);
 
-      const withSlack = run('{"channels":{"slack":{"accounts":{"default":{}}}}}\n');
+      const withSlack = run(true);
       expect(withSlack.status).toBe(0);
       expect(fs.existsSync(guardPath)).toBe(true);
       expect((fs.statSync(guardPath).mode & 0o777).toString(8)).toBe("444");
       expect(withSlack.stdout).toContain("--require /already-loaded.js");
       expect(withSlack.stdout).toContain(`--require ${guardPath}`);
+      expect(fs.readFileSync(connectPreloadsPath, "utf-8")).toContain(guardPath);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -2927,29 +3036,39 @@ describe("seed_default_workspace_templates (#3240)", () => {
 describe("Slack secrets-on-disk tripwire (#2085)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
-  function extractFunction(name: string): string {
-    const match = src.match(new RegExp(`${name}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
-    if (!match) {
-      throw new Error(`Expected ${name} in scripts/nemoclaw-start.sh`);
-    }
-    return `${name}() {${match[1]}\n}`;
-  }
-
   it("refuses to serve when real Slack tokens leak to disk", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-secret-"));
     const configPath = path.join(tmpDir, "openclaw.json");
+    const planPath = path.join(tmpDir, "runtime-plan.json");
+    const runtimeValue = {
+      secretScans: [
+        {
+          path: configPath,
+          pattern: "(?:xoxb|xapp)-(?!OPENSHELL-RESOLVE-ENV-)",
+          message: "[SECURITY] Slack token leaked into {path} - refusing to serve",
+          exitCode: 78,
+        },
+      ],
+    };
     const scriptPath = path.join(tmpDir, "run.sh");
-    const fn = extractFunction("verify_no_slack_secrets_on_disk").replace(
-      'local config="/sandbox/.openclaw/openclaw.json"',
-      `local config=${JSON.stringify(configPath)}`,
-    );
     const run = (config: string) => {
       fs.writeFileSync(configPath, config);
+      fs.rmSync(planPath, { force: true });
       fs.writeFileSync(
         scriptPath,
-        ["#!/usr/bin/env bash", "set -euo pipefail", fn, "verify_no_slack_secrets_on_disk"].join(
-          "\n",
-        ),
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
+          'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
+          `export NEMOCLAW_MESSAGING_PLAN_B64=${JSON.stringify(encodeRuntimePreloadPlan("slack", runtimeValue))}`,
+          messagingRuntimePreloadSection(src, {
+            planPath,
+            secretScanPrefix: tmpDir + path.sep,
+          }),
+          "write_messaging_runtime_preload_plan",
+          "verify_messaging_runtime_secret_scans",
+        ].join("\n"),
         { mode: 0o700 },
       );
       return spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
@@ -3572,24 +3691,47 @@ describe("provider placeholder refresh (#4251)", () => {
 describe("Slack runtime env normalization (#4274)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
-  // Exercises normalize_slack_runtime_env() through the real shell function so
-  // we prove the *exported* process-env values the OpenClaw child inherits are
-  // Bolt-compatible, not the canonical "openshell:resolve:env:*" placeholder.
+  // Exercises apply_messaging_runtime_env_aliases() through the real shell
+  // function so we prove the exported process-env values the OpenClaw child
+  // inherits are Bolt-compatible, not the canonical "openshell:resolve:env:*"
+  // placeholder.
   function runNormalize(env: Record<string, string | undefined> = {}): {
     bot: string;
     app: string;
     result: ReturnType<typeof spawnSync>;
   } {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-runtime-env-"));
+    const planPath = path.join(tmpDir, "runtime-plan.json");
     const scriptPath = path.join(tmpDir, "run.sh");
-    const fn = extractShellFunctionFromSource(src, "normalize_slack_runtime_env");
+    const runtimeValue = {
+      envAliases: [
+        {
+          envKey: "SLACK_BOT_TOKEN",
+          match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+          value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+          message:
+            "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
+        },
+        {
+          envKey: "SLACK_APP_TOKEN",
+          match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
+          value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+          message:
+            "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",
+        },
+      ],
+    };
     fs.writeFileSync(
       scriptPath,
       [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
-        fn,
-        "normalize_slack_runtime_env",
+        'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
+        'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
+        `export NEMOCLAW_MESSAGING_PLAN_B64=${JSON.stringify(encodeRuntimePreloadPlan("slack", runtimeValue))}`,
+        messagingRuntimePreloadSection(src, { planPath }),
+        "write_messaging_runtime_preload_plan",
+        "apply_messaging_runtime_env_aliases",
         'printf "BOT=%s\\n" "${SLACK_BOT_TOKEN-__UNSET__}"',
         'printf "APP=%s\\n" "${SLACK_APP_TOKEN-__UNSET__}"',
       ].join("\n"),
@@ -3708,28 +3850,6 @@ describe("Telegram diagnostics (#2766)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   const telegramDiagnosticsScript = startScriptHeredoc(src, "TELEGRAM_DIAGNOSTICS_EOF");
 
-  function telegramDiagnosticsSection(preloadPath: string, configPath: string): string {
-    const start = src.indexOf("# ── Telegram diagnostics");
-    const end = src.indexOf("_read_gateway_token()", start);
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error("Expected Telegram diagnostics section in scripts/nemoclaw-start.sh");
-    }
-    return src
-      .slice(start, end)
-      .replace(
-        '_TELEGRAM_DIAGNOSTICS_SCRIPT="/tmp/nemoclaw-telegram-diagnostics.js"',
-        `_TELEGRAM_DIAGNOSTICS_SCRIPT=${JSON.stringify(preloadPath)}`,
-      )
-      .replace(
-        '_TELEGRAM_DIAGNOSTICS_SOURCE="/usr/local/lib/nemoclaw/preloads/telegram-diagnostics.js"',
-        `_TELEGRAM_DIAGNOSTICS_SOURCE=${JSON.stringify(path.join(PRELOAD_SCRIPTS, "telegram-diagnostics.js"))}`,
-      )
-      .replace(
-        'local config_file="/sandbox/.openclaw/openclaw.json"',
-        `local config_file=${JSON.stringify(configPath)}`,
-      );
-  }
-
   function preGatewaySetupBlock(
     kind: "non-root" | "root",
     gatewayLog: string,
@@ -3787,13 +3907,14 @@ describe("Telegram diagnostics (#2766)", () => {
         "ensure_gateway_token_if_missing() { :; }",
         "write_openclaw_config_baseline() { :; }",
         "export_gateway_token() { :; }",
+        "write_messaging_runtime_preload_plan() { :; }",
         "write_runtime_shell_env() { :; }",
         "ensure_runtime_shell_env_shim() { :; }",
         "lock_rc_files() { :; }",
-        "normalize_slack_runtime_env() { :; }",
+        "apply_messaging_runtime_env_aliases() { :; }",
         'configure_messaging_channels() { echo "ORDER:configure"; }',
-        "install_slack_channel_guard() { :; }",
-        "verify_no_slack_secrets_on_disk() { :; }",
+        `install_messaging_runtime_preloads() { : > ${JSON.stringify(preloadPath)}; chmod 444 ${JSON.stringify(preloadPath)}; }`,
+        "verify_messaging_runtime_secret_scans() { :; }",
         "seed_default_workspace_templates() { :; }",
         "seed_default_workspace_templates_as_sandbox() { seed_default_workspace_templates; }",
         "write_auth_profile() { :; }",
@@ -3820,9 +3941,8 @@ describe("Telegram diagnostics (#2766)", () => {
         `_NEMOTRON_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "nemotron-fix.js"))}`,
         `_SECCOMP_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "seccomp-guard.js"))}`,
         `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "ciao-guard.js"))}`,
-        `_SLACK_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "slack-guard.js"))}`,
+        `validate_nemoclaw_tmp_permissions() { validate_tmp_permissions ${JSON.stringify(preloadPath)}; }`,
         "NEMOCLAW_CMD=()",
-        telegramDiagnosticsSection(preloadPath, configPath),
         preGatewaySetupBlock(kind, gatewayLog, autoPairLog),
       ].join("\n"),
       { mode: 0o700 },
@@ -3848,21 +3968,48 @@ describe("Telegram diagnostics (#2766)", () => {
 
   it("installs a Telegram diagnostics preload only when Telegram is configured", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-install-"));
-    const configPath = path.join(tmpDir, "openclaw.json");
+    const sourcePrefix = path.join(tmpDir, "preloads") + path.sep;
+    const sourcePath = path.join(sourcePrefix, "telegram-diagnostics.js");
     const preloadPath = path.join(tmpDir, "telegram-diagnostics.js");
+    const planPath = path.join(tmpDir, "runtime-plan.json");
+    const connectPreloadsPath = path.join(tmpDir, "connect-preloads.list");
     const scriptPath = path.join(tmpDir, "run.sh");
-    const run = (config: string) => {
-      fs.writeFileSync(configPath, config);
+    fs.mkdirSync(sourcePrefix, { recursive: true });
+    fs.copyFileSync(path.join(PRELOAD_SCRIPTS, "telegram-diagnostics.js"), sourcePath);
+    const runtimeValue = {
+      preloads: [
+        {
+          source: sourcePath,
+          target: preloadPath,
+          nodeOptions: ["boot", "connect"],
+          optional: false,
+          installMessage:
+            "[channels] Installing Telegram diagnostics (provider readiness + inference errors)",
+          installedMessage: "[channels] Telegram diagnostics installed (NODE_OPTIONS updated)",
+        },
+      ],
+    };
+    const run = (active: boolean) => {
       fs.rmSync(preloadPath, { force: true });
+      fs.rmSync(planPath, { force: true });
+      fs.rmSync(connectPreloadsPath, { force: true });
       fs.writeFileSync(
         scriptPath,
         [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
+          'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
           'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
           "NODE_OPTIONS='--require /already-loaded.js'",
-          telegramDiagnosticsSection(preloadPath, configPath),
-          "install_telegram_diagnostics",
+          `export NEMOCLAW_MESSAGING_PLAN_B64=${JSON.stringify(encodeRuntimePreloadPlan("telegram", runtimeValue, { active }))}`,
+          messagingRuntimePreloadSection(src, {
+            planPath,
+            connectPreloadsPath,
+            sourcePrefix,
+            targetPrefix: tmpDir + path.sep,
+          }),
+          "write_messaging_runtime_preload_plan",
+          "install_messaging_runtime_preloads",
           'printf "NODE_OPTIONS=%s\\n" "$NODE_OPTIONS"',
         ].join("\n"),
         { mode: 0o700 },
@@ -3871,19 +4018,20 @@ describe("Telegram diagnostics (#2766)", () => {
     };
 
     try {
-      const noTelegram = run('{"channels":{}}\n');
+      const noTelegram = run(false);
       expect(noTelegram.status).toBe(0);
       expect(fs.existsSync(preloadPath)).toBe(false);
       expect(noTelegram.stdout).toContain("NODE_OPTIONS=--require /already-loaded.js");
       expect(noTelegram.stdout).not.toContain(preloadPath);
 
-      const withTelegram = run('{"channels":{"telegram":{}}}\n');
+      const withTelegram = run(true);
       expect(withTelegram.status).toBe(0);
       expect(fs.existsSync(preloadPath)).toBe(true);
       expect((fs.statSync(preloadPath).mode & 0o777).toString(8)).toBe("444");
       expect(withTelegram.stdout).toContain("--require /already-loaded.js");
       expect(withTelegram.stdout).toContain(`--require ${preloadPath}`);
       expect(withTelegram.stderr).toContain("Telegram diagnostics installed");
+      expect(fs.readFileSync(connectPreloadsPath, "utf-8")).toContain(preloadPath);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -4071,12 +4219,14 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-rc-"));
     const proxyEnv = path.join(tmpDir, "proxy-env.sh");
     const preloadPath = path.join(tmpDir, "telegram-diagnostics.js");
+    const connectPreloadsPath = path.join(tmpDir, "connect-preloads.list");
     const scriptPath = path.join(tmpDir, "write-env.sh");
     const runtimeBlock = `${runtimeShellEnvBlock(src)}\nwrite_runtime_shell_env`.replaceAll(
       "/tmp/nemoclaw-proxy-env.sh",
       proxyEnv,
     );
     fs.writeFileSync(preloadPath, "// diagnostics\n");
+    fs.writeFileSync(connectPreloadsPath, `${preloadPath}\n`);
     fs.writeFileSync(
       scriptPath,
       [
@@ -4092,8 +4242,8 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
         `_NEMOTRON_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "nemotron-fix.js"))}`,
         `_SECCOMP_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "seccomp-guard.js"))}`,
         `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "ciao-guard.js"))}`,
-        `_TELEGRAM_DIAGNOSTICS_SCRIPT=${JSON.stringify(preloadPath)}`,
-        `_SLACK_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "slack-guard.js"))}`,
+        `_MESSAGING_CONNECT_PRELOADS_FILE=${JSON.stringify(connectPreloadsPath)}`,
+        extractShellFunctionFromSource(src, "emit_messaging_connect_runtime_preload_exports"),
         "_TOOL_REDIRECTS=()",
         "set +u",
         runtimeBlock,
@@ -5173,9 +5323,7 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
         '_NEMOTRON_FIX_SCRIPT=""',
         '_SECCOMP_GUARD_SCRIPT=""',
         '_CIAO_GUARD_SCRIPT=""',
-        '_TELEGRAM_DIAGNOSTICS_SCRIPT=""',
-        '_SLACK_GUARD_SCRIPT=""',
-        '_WHATSAPP_QR_COMPACT_SCRIPT=""',
+        "emit_messaging_connect_runtime_preload_exports() { :; }",
         '_TOOL_REDIRECTS=("NEMOCLAW_TEST_REDIRECT=/tmp/nemoclaw-test")',
         'NODE_USE_ENV_PROXY=""',
         readToken,

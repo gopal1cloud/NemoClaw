@@ -213,5 +213,108 @@ export const telegramManifest = {
       inputs: ["botToken"],
       onFailure: "skip-channel",
     },
+    {
+      id: "telegram-runtime-preload",
+      phase: "runtime-preload",
+      handler: "common.staticOutputs",
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "telegramDiagnostics",
+          kind: "runtime-preload",
+          required: true,
+          value: {
+            preloads: [
+              {
+                source: "/usr/local/lib/nemoclaw/preloads/telegram-diagnostics.js",
+                target: "/tmp/nemoclaw-telegram-diagnostics.js",
+                nodeOptions: ["boot", "connect"],
+                optional: false,
+                installMessage:
+                  "[channels] Installing Telegram diagnostics (provider readiness + inference errors)",
+                installedMessage:
+                  "[channels] Telegram diagnostics installed (NODE_OPTIONS updated)",
+              },
+            ],
+          },
+        },
+      ],
+      onFailure: "abort",
+    },
+    {
+      id: "telegram-openclaw-bridge-health",
+      phase: "health-check",
+      handler: "common.staticOutputs",
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "openclawBridgeStartup",
+          kind: "health-check",
+          required: true,
+          value: {
+            type: "openclaw-bridge-startup",
+            configFile: "/sandbox/.openclaw/openclaw.json",
+            channelConfigPath: "channels.telegram",
+            enabledPath: "enabled",
+            logFile: "/tmp/gateway.log",
+            maxLogLines: 400,
+            logLinePattern: "^\\[telegram\\] |^\\[channels\\] \\[telegram\\]",
+            warningPattern:
+              "credential placeholder|Bot API rejected|startup probe (?:failed|returned)|provider failed to start|bridge did not start within|invalid_auth|token_revoked|token_expired",
+            positivePattern: "\\bstarting provider\\b|\\bprovider ready\\b",
+            allowlistWarning: {
+              accountContainerPath: "accounts",
+              preferredAccountKey: "default",
+              policyPath: "dmPolicy",
+              requiredPolicy: "allowlist",
+              allowListPath: "allowFrom",
+              messages: [
+                "Telegram direct-message allowlist is empty in baked openclaw.json.",
+                "Set TELEGRAM_ALLOWED_IDS before rebuild, or complete OpenClaw pairing before expecting DM replies.",
+                "Telegram Bot API sendMessage tests outbound delivery only; send from a Telegram client to test inbound agent replies.",
+              ],
+            },
+          },
+        },
+      ],
+      onFailure: "abort",
+    },
+    {
+      id: "telegram-openclaw-runtime-status",
+      phase: "status",
+      handler: "common.staticOutputs",
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "openclawRuntimeChannel",
+          kind: "status",
+          required: true,
+          value: {
+            type: "openclaw-runtime-channel",
+            configKeys: ["telegram"],
+            logPatterns: ["telegram"],
+          },
+        },
+      ],
+    },
+    {
+      id: "telegram-gateway-conflict-status",
+      phase: "status",
+      handler: "common.staticOutputs",
+      outputs: [
+        {
+          id: "gatewayConflictCounter",
+          kind: "status",
+          required: true,
+          value: {
+            type: "gateway-log-conflict-counter",
+            logFile: "/tmp/gateway.log",
+            maxLogLines: 200,
+            pattern: "getUpdates conflict|409\\s*:?\\s*Conflict",
+            flags: "i",
+          },
+        },
+      ],
+    },
   ],
 } as const satisfies ChannelManifest;

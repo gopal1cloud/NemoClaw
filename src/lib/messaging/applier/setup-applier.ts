@@ -3,11 +3,13 @@
 
 import { Buffer } from "node:buffer";
 
+import type { MessagingHookInputMap } from "../hooks";
 import type { ChannelHookPhase, SandboxMessagingPlan } from "../manifest";
 import {
   applyAgentConfigAtOpenShell as applyAgentConfigPlanAtOpenShell,
   listHookRequests as listPlanHookRequests,
 } from "./agent-config";
+import { applyMessagingHooksForPhase as applyPlanHooksForPhase } from "./hook-phases";
 import { applyCredentialsAtOpenShell as applyCredentialsPlanAtOpenShell } from "./openshell-provider";
 import { applyPolicyAtOpenShell as applyPolicyPlanAtOpenShell } from "./policy";
 import {
@@ -66,6 +68,18 @@ export class MessagingSetupApplier {
   ): MessagingHookApplyRequest[] {
     assertSandboxMessagingPlan(plan);
     return listPlanHookRequests(plan, phase);
+  }
+
+  static applyHooksForPhase(
+    plan: SandboxMessagingPlan,
+    phase: ChannelHookPhase,
+    options: {
+      readonly runHook?: MessagingHookApplyRunner;
+      readonly additionalInputs?: MessagingHookInputMap;
+    } = {},
+  ): ReturnType<typeof applyPlanHooksForPhase> {
+    assertSandboxMessagingPlan(plan);
+    return applyPlanHooksForPhase(plan, phase, options);
   }
 
   static async applyAgentConfigAtOpenShell(

@@ -8,11 +8,25 @@ import { resolveOpenshell } from "./adapters/openshell/resolve";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
 import { getNamedGatewayLifecycleState } from "./gateway-runtime-action";
 import { getLiveGatewayInference } from "./inference/live";
-import type { GatewayHealth, MessagingBridgeHealth, ShowStatusCommandDeps } from "./inventory";
-import { detectAllSlackSocketModeGatewayOverlaps, findAllOverlaps } from "./messaging/applier";
+import type {
+  GatewayHealth,
+  MessagingBridgeHealth,
+  MessagingOverlap,
+  ShowStatusCommandDeps,
+} from "./inventory";
+import { findAllOverlaps } from "./messaging/applier";
+import { getActiveChannelIdsFromPlan } from "./messaging/plan-validation";
+import {
+  collectBuiltInMessagingStatusOutputs,
+  type GatewayLogConflictCounterStatusOutput,
+  type SingleGatewayChannelOverlapStatusOutput,
+} from "./messaging/status-outputs";
+import { BASE_GATEWAY_NAME } from "./onboard/gateway-binding";
 import * as registry from "./state/registry";
 import { createSystemDeps, parseSshProcesses } from "./state/sandbox-session";
 import { getServiceStatuses, showStatus as showServiceStatus } from "./tunnel/services";
+
+const STATUS_OUTPUTS = collectBuiltInMessagingStatusOutputs();
 
 function captureOpenshell(
   rootDir: string,
@@ -35,26 +49,30 @@ function checkMessagingBridgeHealth(
   sandboxName: string,
   channels: string[],
 ): MessagingBridgeHealth[] {
-  // Only Telegram currently emits a recognizable conflict signature in the
-  // gateway log. Discord/Slack have similar single-consumer constraints but
-  // log differently; we can extend the regex when those patterns are known.
-  if (!Array.isArray(channels) || !channels.includes("telegram")) return [];
+  const channelSet = new Set(Array.isArray(channels) ? channels : []);
+  const specs = STATUS_OUTPUTS.filter(isGatewayLogConflictCounterStatusOutput).filter((spec) =>
+    channelSet.has(spec.channelId),
+  );
+  if (specs.length === 0) return [];
   const openshell = resolveOpenshell();
   if (!openshell) return [];
-  const script =
-    'tail -n 200 /tmp/gateway.log 2>/dev/null | grep -cE "getUpdates conflict|409[[:space:]:]+Conflict" || true';
-  try {
-    const result = spawnSync(
+
+  const results: MessagingBridgeHealth[] = [];
+  for (const spec of specs) {
+    const logTail = readSandboxFileTail(
+      rootDir,
       openshell,
-      ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-c", script],
-      { cwd: rootDir, encoding: "utf-8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] },
+      sandboxName,
+      spec.logFile,
+      spec.maxLogLines,
     );
-    const count = Number.parseInt((result.stdout || "").trim(), 10);
-    if (!Number.isFinite(count) || count === 0) return [];
-    return [{ channel: "telegram", conflicts: count }];
-  } catch {
-    return [];
+    if (logTail === null) continue;
+    const conflicts = countRegexMatchesByLine(logTail, spec.pattern, spec.flags);
+    if (conflicts > 0) {
+      results.push({ channel: spec.channelId, conflicts });
+    }
   }
+  return results;
 }
 
 function findMessagingOverlaps() {
@@ -63,25 +81,101 @@ function findMessagingOverlaps() {
   try {
     // Report both conflict axes independently and without deduping. They are
     // distinct, both-true facts: a shared messaging credential conflicts on any
-    // gateway (the gateway-independent, more actionable signal), while two Slack
-    // sandboxes on one gateway conflict even with distinct tokens (#4953). A
-    // pair that hits both genuinely has two problems, so surfacing both avoids
-    // masking the credential warning behind the gateway one.
-    const credentialOverlaps = findAllOverlaps(registry);
-    const slackGatewayOverlaps = detectAllSlackSocketModeGatewayOverlaps(
-      registry.listSandboxes().sandboxes,
-    );
-    return [
-      ...credentialOverlaps,
-      ...slackGatewayOverlaps.map((o) => ({
-        channel: "slack",
-        sandboxes: o.sandboxes,
-        reason: "slack-socket-mode-gateway" as const,
-      })),
-    ];
+    // gateway, while manifest-declared gateway exclusivity can conflict even
+    // with distinct credentials. A pair that hits both genuinely has two
+    // problems, so surfacing both avoids masking the credential warning behind
+    // the gateway one.
+    const { sandboxes } = registry.listSandboxes();
+    const credentialOverlaps = findAllOverlaps({
+      listSandboxes: () => ({ sandboxes }),
+    });
+    const singleGatewayOverlaps = STATUS_OUTPUTS.filter(
+      isSingleGatewayChannelOverlapStatusOutput,
+    ).flatMap((spec) => detectSingleGatewayChannelOverlaps(sandboxes, spec));
+    return [...credentialOverlaps, ...singleGatewayOverlaps];
   } catch {
     return [];
   }
+}
+
+function isGatewayLogConflictCounterStatusOutput(
+  output: (typeof STATUS_OUTPUTS)[number],
+): output is GatewayLogConflictCounterStatusOutput {
+  return output.type === "gateway-log-conflict-counter";
+}
+
+function isSingleGatewayChannelOverlapStatusOutput(
+  output: (typeof STATUS_OUTPUTS)[number],
+): output is SingleGatewayChannelOverlapStatusOutput {
+  return output.type === "single-gateway-channel-overlap";
+}
+
+function readSandboxFileTail(
+  rootDir: string,
+  openshell: string,
+  sandboxName: string,
+  path: string,
+  maxLines: number,
+): string | null {
+  const script = `tail -n ${maxLines} ${shellQuote(path)} 2>/dev/null || true`;
+  try {
+    const result = spawnSync(
+      openshell,
+      ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-c", script],
+      { cwd: rootDir, encoding: "utf-8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    return typeof result.stdout === "string" ? result.stdout : "";
+  } catch {
+    return null;
+  }
+}
+
+function countRegexMatchesByLine(logTail: string, pattern: string, flags: string): number {
+  let regex: RegExp;
+  try {
+    regex = new RegExp(pattern, flags.replaceAll("g", ""));
+  } catch {
+    return 0;
+  }
+  return logTail
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && regex.test(line)).length;
+}
+
+function detectSingleGatewayChannelOverlaps(
+  entries: readonly registry.SandboxEntry[],
+  spec: SingleGatewayChannelOverlapStatusOutput,
+): MessagingOverlap[] {
+  const byGateway = new Map<string, string[]>();
+  for (const entry of entries) {
+    if (!entry.messaging?.plan) continue;
+    if (!getActiveChannelIdsFromPlan(entry.messaging.plan).includes(spec.channelId)) continue;
+    const gatewayName = entry.gatewayName ?? BASE_GATEWAY_NAME;
+    const names = byGateway.get(gatewayName) ?? [];
+    names.push(entry.name);
+    byGateway.set(gatewayName, names);
+  }
+
+  const overlaps: MessagingOverlap[] = [];
+  for (const names of byGateway.values()) {
+    if (names.length < 2) continue;
+    for (let i = 0; i < names.length; i += 1) {
+      for (let j = i + 1; j < names.length; j += 1) {
+        overlaps.push({
+          channel: spec.channelId,
+          sandboxes: [names[i], names[j]],
+          reason: spec.reason,
+          message: spec.message,
+        });
+      }
+    }
+  }
+  return overlaps;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 function readGatewayLog(rootDir: string, sandboxName: string): string | null {
