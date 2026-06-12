@@ -614,6 +614,7 @@ jobs:
           "step 'Run double-onboard live Vitest test' run script must not interpolate dispatch inputs directly",
           "workflow missing hermes-e2e-vitest job",
           "workflow missing skill-agent-vitest job",
+          "workflow missing diagnostics-vitest job",
           "workflow missing model-router-provider-routed-inference-vitest job",
           "report-to-pr job must wait for live-scenarios",
           "report-to-pr step must pass jobs through JOBS env",
@@ -693,6 +694,55 @@ jobs:
       const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
       expect(errors).toContain(
         "runtime-overrides-vitest step 'Run runtime overrides live test' run script must not use docker login or inline secret interpolation",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects diagnostics workflow-boundary drift for secret and Docker auth handling", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        { env?: Record<string, unknown>; steps: Array<Record<string, unknown>> }
+      >;
+    };
+    const job = workflow.jobs["diagnostics-vitest"];
+    expect(job).toBeDefined();
+    expect(job.steps).toEqual(expect.any(Array));
+    job.env = {
+      ...job.env,
+      NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
+      GITHUB_TOKEN: "${{ github.token }}",
+    };
+    const runStep = job.steps.find((step) => step.name === "Run diagnostics live test");
+    expect(runStep).toBeDefined();
+    runStep!.run = `${runStep!.run}\necho "\${{ inputs.jobs }}"`;
+    const uploadStep = job.steps.find((step) => step.name === "Upload diagnostics artifacts");
+    expect(uploadStep).toBeDefined();
+    uploadStep!.with = {
+      ...((uploadStep!.with as Record<string, unknown>) ?? {}),
+      "include-hidden-files": true,
+      "retention-days": 1,
+    };
+    const cleanupStep = job.steps.find((step) => step.name === "Clean up Docker auth");
+    expect(cleanupStep).toBeDefined();
+    cleanupStep!.if = "success()";
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "diagnostics-vitest job env must not include NVIDIA_API_KEY",
+          "diagnostics-vitest job env must not include GITHUB_TOKEN",
+          "step 'Run diagnostics live test' run script must not interpolate dispatch inputs directly",
+          "diagnostics-vitest artifact upload must set include-hidden-files: false",
+          "diagnostics-vitest artifact upload retention-days must be 14",
+          "diagnostics-vitest Docker auth cleanup must always run",
+        ]),
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

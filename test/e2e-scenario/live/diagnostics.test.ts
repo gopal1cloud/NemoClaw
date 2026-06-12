@@ -366,7 +366,11 @@ runDiagnosticsTest(
       timeoutMs: 60_000,
     });
 
+    let credentialsResetExercised = false;
+    let postResetCredentialsListRedacted = false;
+    let providerCredentialAbsentBeforeReset = false;
     if (credentialsText.includes("nvidia-prod")) {
+      credentialsResetExercised = true;
       const reset = await host.command(
         "node",
         [CLI_ENTRYPOINT, "credentials", "reset", "nvidia-prod", "--yes"],
@@ -392,12 +396,21 @@ runDiagnosticsTest(
         /nvapi-[A-Za-z0-9_-]{10,}/.test(postResetText),
         "post-reset credentials list must not expose nvapi-shaped values",
       ).toBe(false);
+      postResetCredentialsListRedacted = !postResetText.includes(apiKey);
 
       await host.command("node", [CLI_ENTRYPOINT, "credentials", "list"], {
         artifactName: "diagnostics-credentials-list-after-reset",
         env,
         redactionValues: [apiKey],
         timeoutMs: 60_000,
+      });
+    } else {
+      providerCredentialAbsentBeforeReset = true;
+      await artifacts.writeJson("credentials-reset.skip.json", {
+        provider: "nvidia-prod",
+        reason:
+          "credentials list reported no nvidia-prod provider credential after install/onboard",
+        acceptedNoProviderStore: /No provider credentials registered/i.test(credentialsText),
       });
     }
 
@@ -415,6 +428,9 @@ runDiagnosticsTest(
         sandboxConfigReadable: config.exitCode === 0 && config.stdout.trim().length > 0,
         statusShowsModel: /Model/i.test(resultText(status)),
         credentialsListRedacted: !credentialsText.includes(apiKey),
+        credentialsResetExercised,
+        providerCredentialAbsentBeforeReset,
+        postResetCredentialsListRedacted,
       },
     });
   },
