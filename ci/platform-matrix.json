@@ -201,7 +201,7 @@
     {
       "name": "Snapshot and restore",
       "status": "tested",
-      "notes": "Create, list, and restore named snapshots of sandbox state via `$$nemoclaw <name> snapshot create|list|restore`. Credential stripping is enforced on capture. Unsafe symlinks are rejected on restore."
+      "notes": "Create, list, and restore named snapshots of sandbox state via the `$$nemoclaw <name> snapshot` subcommands (`create`, `list`, `restore`). Credential stripping is enforced on capture. Unsafe symlinks are rejected on restore."
     },
     {
       "name": "Agent skills",
