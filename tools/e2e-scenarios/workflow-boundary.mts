@@ -36,6 +36,7 @@ const ALLOWED_FREE_STANDING_JOBS = new Set([
   "double-onboard-vitest",
   "issue-4434-tui-unreachable-inference-vitest",
   "model-router-provider-routed-inference-vitest",
+  "sandbox-survival-vitest",
 ]);
 
 export interface WorkflowDispatchSelectorEvaluation {
@@ -244,6 +245,7 @@ function validateJobsSelector(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, validate, "openclaw-tui-chat-correlation-vitest");
   requireRunContains(errors, validate, "gateway-guard-recovery");
   requireRunContains(errors, validate, "model-router-provider-routed-inference-vitest");
+  requireRunContains(errors, validate, "sandbox-survival-vitest");
   requireRunContains(errors, validate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
   requireRunContains(errors, validate, "Invalid jobs input; use comma-separated job ids");
   requireRunDoesNotContain(errors, validate, "Invalid jobs input: ${JOBS}");
@@ -1730,6 +1732,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateFreeStandingJobSelector(errors, jobs, "gateway-guard-recovery");
   validateFreeStandingJobSelector(errors, jobs, "issue-4434-tui-unreachable-inference-vitest");
   validateModelRouterProviderRoutedInferenceVitestJob(errors, jobs);
+  validateFreeStandingJobSelector(errors, jobs, "sandbox-survival-vitest");
 
   const reportToPr = asRecord(jobs["report-to-pr"]);
   if (Object.keys(reportToPr).length === 0) {
@@ -1756,6 +1759,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
       "gateway-guard-recovery",
       "issue-4434-tui-unreachable-inference-vitest",
       "model-router-provider-routed-inference-vitest",
+      "sandbox-survival-vitest",
     ]) {
       if (!needs.includes(required)) errors.push(`report-to-pr job must wait for ${required}`);
     }
