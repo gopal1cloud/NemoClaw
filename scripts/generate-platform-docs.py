@@ -43,6 +43,69 @@ TABLES = [
             REPO_ROOT / "docs" / "inference" / "inference-options.mdx",
         ],
     ),
+    (
+        "platform-matrix-full",
+        "platforms_full",
+        [
+            REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
+        ],
+    ),
+    (
+        "provider-status-full",
+        "providers_full",
+        [
+            REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
+        ],
+    ),
+    (
+        "agent-status",
+        "agents",
+        [
+            REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
+        ],
+    ),
+    (
+        "integration-status",
+        "integrations",
+        [
+            REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
+        ],
+    ),
+    (
+        "deployment-status",
+        "deployment_paths",
+        [
+            REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
+        ],
+    ),
+    (
+        "capability-status",
+        "capabilities",
+        [
+            REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
+        ],
+    ),
+    (
+        "out-of-scope",
+        "out_of_scope",
+        [
+            REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
+        ],
+    ),
+    (
+        "project-status",
+        "project_status",
+        [
+            REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
+        ],
+    ),
+    (
+        "matrix-owners",
+        "owners",
+        [
+            REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
+        ],
+    ),
 ]
 
 
@@ -104,9 +167,140 @@ def generate_provider_table(providers: list[dict]) -> str:
     return "\n".join([header, separator, *rows])
 
 
+STATUS_LABELS = {
+    "tested": "Tested",
+    "caveated": "Tested with limitations",
+    "experimental": "Experimental",
+    "deferred": "Deferred",
+    "hermes only": "Hermes only",
+}
+
+
+def _label(status: str) -> str:
+    return STATUS_LABELS.get(status, status.capitalize())
+
+
+def generate_platform_table_full(platforms: list[dict]) -> str:
+    """Full platform table including deferred entries.
+
+    Used by the canonical launch claims page. Includes PRD priority and
+    CI columns and exposes deferred entries so the page reflects the
+    complete support surface, not just shippable rows. The CI column
+    distinguishes "Tested with limitations + in CI" from "Tested with
+    limitations + not in CI" — a caveat that the status label alone
+    does not carry.
+    """
+    header = "| OS | Container runtime | Status | PRD priority | CI | Notes |"
+    separator = "|----|-------------------|--------|--------------|----|-------|"
+    rows = []
+    for p in platforms:
+        runtimes = ", ".join(p["runtimes"])
+        priority = p.get("prd_priority", "—")
+        ci = "Yes" if p.get("ci_tested") else "No"
+        rows.append(
+            f"| {p['name']} | {runtimes} | {_label(p['status'])} | {priority} | {ci} | {p['notes']} |"
+        )
+    return "\n".join([header, separator, *rows])
+
+
+def generate_provider_table_full(providers: list[dict]) -> str:
+    """Full provider table including deferred entries.
+
+    Used by the canonical launch claims page.
+    """
+    header = "| Provider | Status | Endpoint type | Notes |"
+    separator = "|----------|--------|---------------|-------|"
+    rows = []
+    for p in providers:
+        rows.append(
+            f"| {p['name']} | {_label(p['status'])} | {p['endpoint_type']} | {p['notes']} |"
+        )
+    return "\n".join([header, separator, *rows])
+
+
+def generate_agent_table(agents: list[dict]) -> str:
+    header = "| Agent | Status | Default | Notes |"
+    separator = "|-------|--------|---------|-------|"
+    rows = []
+    for a in agents:
+        default = "Yes" if a.get("default") else "No"
+        rows.append(f"| {a['name']} | {_label(a['status'])} | {default} | {a['notes']} |")
+    return "\n".join([header, separator, *rows])
+
+
+def generate_integration_table(integrations: list[dict]) -> str:
+    header = "| Channel | Status | Notes |"
+    separator = "|---------|--------|-------|"
+    rows = []
+    for i in integrations:
+        rows.append(f"| {i['name']} | {_label(i['status'])} | {i['notes']} |")
+    return "\n".join([header, separator, *rows])
+
+
+def generate_deployment_table(deployment_paths: list[dict]) -> str:
+    header = "| Path | Status | Notes |"
+    separator = "|------|--------|-------|"
+    rows = []
+    for d in deployment_paths:
+        rows.append(f"| {d['name']} | {_label(d['status'])} | {d['notes']} |")
+    return "\n".join([header, separator, *rows])
+
+
+def generate_capability_table(capabilities: list[dict]) -> str:
+    header = "| Capability | Status | Notes |"
+    separator = "|------------|--------|-------|"
+    rows = []
+    for c in capabilities:
+        rows.append(f"| {c['name']} | {_label(c['status'])} | {c['notes']} |")
+    return "\n".join([header, separator, *rows])
+
+
+def generate_out_of_scope_table(out_of_scope: list[dict]) -> str:
+    header = "| Item | Status | Why |"
+    separator = "|------|--------|-----|"
+    rows = []
+    for o in out_of_scope:
+        rows.append(f"| {o['name']} | {_label(o['status'])} | {o['notes']} |")
+    return "\n".join([header, separator, *rows])
+
+
+def generate_project_status_block(status: dict) -> str:
+    lines = [
+        f"- **Stage:** {status['stage']}",
+        f"- **Label:** {status['label']}",
+        f"- **Since:** {status['since']}",
+        f"- **Notes:** {status['notes']}",
+    ]
+    return "\n".join(lines)
+
+
+def generate_owners_block(owners: dict) -> str:
+    lines = [
+        f"- **Engineering owner:** {owners['engineering']}",
+        f"- **Product owner:** {owners['product']}",
+    ]
+    return "\n".join(lines)
+
+
 TABLE_GENERATORS = {
     "platforms": generate_platform_table,
     "providers": generate_provider_table,
+    "platforms_full": generate_platform_table_full,
+    "providers_full": generate_provider_table_full,
+    "agents": generate_agent_table,
+    "integrations": generate_integration_table,
+    "deployment_paths": generate_deployment_table,
+    "capabilities": generate_capability_table,
+    "out_of_scope": generate_out_of_scope_table,
+    "project_status": generate_project_status_block,
+    "owners": generate_owners_block,
+}
+
+# The generator key isn't always the matrix dict key — the "full" tables
+# read the same JSON arrays as the partial views but render them differently.
+GENERATOR_MATRIX_KEY = {
+    "platforms_full": "platforms",
+    "providers_full": "providers",
 }
 
 
@@ -170,7 +364,8 @@ def main():
 
     for sentinel_name, data_key, target_files in TABLES:
         generator = TABLE_GENERATORS[data_key]
-        table = generator(matrix[data_key])
+        matrix_key = GENERATOR_MATRIX_KEY.get(data_key, data_key)
+        table = generator(matrix[matrix_key])
         for path in target_files:
             if not path.exists():
                 print(f"  MISS {path.relative_to(REPO_ROOT)}", file=sys.stderr)

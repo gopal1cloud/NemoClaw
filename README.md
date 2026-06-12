@@ -59,6 +59,7 @@ NemoClaw is an alpha project, so maintainers review issues, discussions, and pul
 | Reproducible bugs | [GitHub Issues](https://github.com/NVIDIA/NemoClaw/issues) |
 | Feature proposals | Start with [GitHub Discussions](https://github.com/NVIDIA/NemoClaw/discussions), then open an issue when the scope is clear |
 | Current priorities | [Current Priorities](#current-priorities) |
+| Supported platforms, providers, and integrations | [Platform Support and Launch Claims](docs/reference/platform-support.mdx) |
 | Contribution help | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Security vulnerabilities | Use the private channels in [SECURITY.md](SECURITY.md); do not open public issues |
 

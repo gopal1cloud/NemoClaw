@@ -150,6 +150,9 @@ navigation:
               - page: "Network Policies"
                 path: _build/agent-variants/reference/network-policies.openclaw.generated.mdx
                 slug: network-policies
+              - page: "Platform Support"
+                path: reference/platform-support.mdx
+                slug: platform-support
               - page: "Troubleshooting"
                 path: _build/agent-variants/reference/troubleshooting.openclaw.generated.mdx
                 slug: troubleshooting
@@ -287,6 +290,9 @@ navigation:
               - page: "Network Policies"
                 path: _build/agent-variants/reference/network-policies.hermes.generated.mdx
                 slug: network-policies
+              - page: "Platform Support"
+                path: reference/platform-support.mdx
+                slug: platform-support
               - page: "Troubleshooting"
                 path: _build/agent-variants/reference/troubleshooting.hermes.generated.mdx
                 slug: troubleshooting
