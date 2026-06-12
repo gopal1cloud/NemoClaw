@@ -650,6 +650,10 @@ jobs:
       if (step.uses === "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10") {
         step.with = { ...(step.with as Record<string, unknown>), "persist-credentials": true };
       }
+      if (step.name === "Configure isolated Docker auth directory") {
+        step.run =
+          'echo "DOCKER_CONFIG=${{ github.workspace }}/.docker-config-shared" >> "$GITHUB_ENV"';
+      }
       if (step.name === "Install root dependencies") step.run = "npm install";
       if (step.name === "Run snapshot commands live test") {
         step.run = String(step.run).replace(
@@ -673,7 +677,8 @@ jobs:
     try {
       expect(validateE2eVitestScenariosWorkflowBoundary(workflowPath)).toEqual(
         expect.arrayContaining([
-          "snapshot-commands-vitest job must use an isolated Docker auth directory",
+          "snapshot-commands-vitest job must not set DOCKER_CONFIG at job level",
+          'step \'Configure isolated Docker auth directory\' run script must include echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-snapshot-commands" >> "$GITHUB_ENV"',
           "snapshot-commands-vitest checkout step must set persist-credentials=false",
           "snapshot-commands-vitest artifact upload must set include-hidden-files: false",
           "artifact upload path must include e2e-artifacts/vitest/snapshot-commands/",

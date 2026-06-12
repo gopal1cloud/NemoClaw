@@ -1720,8 +1720,8 @@ function validateSnapshotCommandsVitestJob(errors: string[], jobs: WorkflowRecor
   validateFreeStandingJobSelector(errors, jobs, jobName, scenarioName);
 
   const jobEnv = asRecord(job.env);
-  if (jobEnv.DOCKER_CONFIG !== "${{ github.workspace }}/.docker-config-snapshot-commands") {
-    errors.push("snapshot-commands-vitest job must use an isolated Docker auth directory");
+  if ("DOCKER_CONFIG" in jobEnv) {
+    errors.push("snapshot-commands-vitest job must not set DOCKER_CONFIG at job level");
   }
   if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/vitest/snapshot-commands") {
     errors.push(
@@ -1771,6 +1771,19 @@ function validateSnapshotCommandsVitestJob(errors: string[], jobs: WorkflowRecor
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("snapshot-commands-vitest checkout step must set persist-credentials=false");
   }
+
+  const configureDockerAuth = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Configure isolated Docker auth directory",
+  );
+  requireRunContains(
+    errors,
+    configureDockerAuth,
+    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-snapshot-commands" >> "$GITHUB_ENV"',
+  );
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
 
   const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
   const dockerLoginEnv = asRecord(dockerLogin?.env);
