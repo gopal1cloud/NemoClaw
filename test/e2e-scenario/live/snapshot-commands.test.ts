@@ -16,7 +16,11 @@ import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
+import {
+  type SandboxClient,
+  trustedSandboxShellScript,
+  validateSandboxName,
+} from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -24,7 +28,12 @@ import { isTransientProviderValidationFailure } from "./network-policy-transient
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-snapshot";
-const BACKUP_DIR = path.join(os.homedir(), ".nemoclaw", "rebuild-backups", SANDBOX_NAME);
+validateSandboxName(SANDBOX_NAME);
+const BACKUP_ROOT = path.join(os.homedir(), ".nemoclaw", "rebuild-backups");
+const BACKUP_DIR = path.resolve(BACKUP_ROOT, SANDBOX_NAME);
+if (!BACKUP_DIR.startsWith(`${path.resolve(BACKUP_ROOT)}${path.sep}`)) {
+  throw new Error(`snapshot backup directory escaped rebuild-backups root: ${BACKUP_DIR}`);
+}
 const MARKER_FILE = "/sandbox/.openclaw/workspace/snapshot-marker.txt";
 const SECOND_MARKER = "/sandbox/.openclaw/workspace/snapshot-marker-2.txt";
 const LIVE_TIMEOUT_MS = 30 * 60_000;
