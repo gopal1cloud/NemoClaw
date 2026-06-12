@@ -8,14 +8,14 @@
 // generated-shell shape assertions live in
 // runtime-hermes-secret-boundary-shape.test.ts.
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  HERMES_SECRET_BOUNDARY_VALIDATOR_PATH,
   __testing,
+  HERMES_SECRET_BOUNDARY_VALIDATOR_PATH,
 } from "../../../dist/lib/agent/hermes-recovery-boundary";
 import { buildRecoveryScript } from "../../../dist/lib/agent/runtime";
 import { hermesAgent } from "./hermes-recovery-boundary-fixtures";
@@ -161,7 +161,9 @@ describe("Hermes secret-boundary guard — guard snippet behaviour", () => {
     expect(result.stderr).toContain("[gateway-recovery] WARNING");
   });
 
-  it("runtime-env guard exits 1 on python validator failure, kills processes, and logs [SECURITY]", () => {
+  it("runtime-env guard exits 1 on python validator failure, kills processes, and logs [SECURITY]", {
+    timeout: 20_000,
+  }, () => {
     const result = runGuard({
       guard: __testing.buildHermesRuntimeEnvBoundaryGuard(),
       pythonExit: 1,
@@ -436,7 +438,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
     } finally {
       fs.rmSync(harness.tmp, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it("refuses on runtime-env violation using the real validator against a proxy-env that exports a raw secret", () => {
     const harness = prepareRecoveryHarness("runtime-env-real");
@@ -481,5 +483,5 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
     } finally {
       fs.rmSync(harness.tmp, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });

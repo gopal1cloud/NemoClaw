@@ -9,9 +9,9 @@ import {
   slackBindings,
   slackChannel,
 } from "../../../../../../test/helpers/messaging-conflict-fixtures";
+import type { ConflictRegistryEntry } from "../../../applier/conflict-detection/types";
 import { MessagingHookRegistry, runMessagingHook } from "../../../hooks";
 import type { ChannelHookSpec, MessagingSerializableValue } from "../../../manifest";
-import type { ConflictRegistryEntry } from "../../../applier/conflict-detection/types";
 import {
   createSlackSocketModeGatewayConflictHookRegistration,
   SLACK_SOCKET_MODE_GATEWAY_CONFLICT_HOOK_HANDLER_ID,
@@ -86,6 +86,28 @@ describe("slack.socketModeGatewayConflict hook", () => {
         },
       }),
     ).rejects.toThrow("Slack Socket Mode is already enabled for sandbox 'alice'");
+  });
+
+  it("treats an empty serialized registry as valid no-conflict context", async () => {
+    const registry = new MessagingHookRegistry([
+      createSlackSocketModeGatewayConflictHookRegistration(),
+    ]);
+
+    await expect(
+      runMessagingHook(HOOK, registry, {
+        channelId: "slack",
+        inputs: {
+          currentSandbox: "bob",
+          currentGatewayName: "nemoclaw",
+          registryEntries: [],
+        },
+      }),
+    ).resolves.toEqual({
+      hookId: "slack-socket-mode-gateway-conflict",
+      handlerId: SLACK_SOCKET_MODE_GATEWAY_CONFLICT_HOOK_HANDLER_ID,
+      phase: "pre-enable",
+      outputs: {},
+    });
   });
 
   it("requires gateway and registry context when no options are injected", async () => {

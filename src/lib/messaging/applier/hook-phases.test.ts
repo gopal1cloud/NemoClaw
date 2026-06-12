@@ -3,19 +3,19 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { MessagingHookApplyRequest, MessagingHookApplyRunner } from "./types";
-import {
-  applyDiagnostics,
-  applyPreEnableChecks,
-  applyRuntimePreloads,
-  MessagingSetupApplier,
-} from "./index";
 import type {
   ChannelHookPhase,
   MessagingChannelId,
   SandboxMessagingChannelPlan,
   SandboxMessagingPlan,
 } from "../manifest";
+import {
+  applyDiagnostics,
+  applyPreEnableChecks,
+  applyRuntimePreloads,
+  MessagingSetupApplier,
+} from "./index";
+import type { MessagingHookApplyRequest, MessagingHookApplyRunner } from "./types";
 
 describe("messaging applier hook phases", () => {
   it("runs enabled channel hooks for the requested phase through the provided runner", async () => {
@@ -127,12 +127,11 @@ describe("messaging applier hook phases", () => {
       };
     };
 
-    const result = await MessagingSetupApplier.applyHooksForPhase(
+    const result = await MessagingSetupApplier.applyPreEnableChecks(
       makePlan({
         telegramOnFailure: "skip-channel",
         includeDiscordPreEnable: true,
       }),
-      "pre-enable",
       { runHook },
     );
 

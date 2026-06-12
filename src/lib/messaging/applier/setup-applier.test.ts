@@ -193,6 +193,35 @@ describe("MessagingSetupApplier", () => {
         handler: "wechat.seedOpenClawAccount",
       }),
     ]);
+
+    const slackPlan = await buildOnboardPlan(
+      {
+        SLACK_BOT_TOKEN: "xoxb-slack-token",
+        SLACK_APP_TOKEN: "xapp-slack-token",
+      },
+      ["slack"],
+    );
+    expect(MessagingSetupApplier.listPreEnableChecks(slackPlan)).toEqual([
+      expect.objectContaining({
+        channelId: "slack",
+        hookId: "slack-socket-mode-gateway-conflict",
+        phase: "pre-enable",
+      }),
+    ]);
+    expect(MessagingSetupApplier.listRuntimePreloads(slackPlan)).toEqual([
+      expect.objectContaining({
+        channelId: "slack",
+        hookId: "slack-runtime-preload",
+        phase: "runtime-preload",
+      }),
+    ]);
+    expect(MessagingSetupApplier.listHealthChecks(slackPlan)).toEqual([
+      expect.objectContaining({
+        channelId: "slack",
+        hookId: "slack-openclaw-bridge-health",
+        phase: "health-check",
+      }),
+    ]);
   });
 
   it("upserts OpenShell generic providers from plan credential bindings", async () => {

@@ -81,7 +81,7 @@ export const slackManifest = {
       placeholder: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
     },
   ],
-  policyPresets: ["slack"],
+  policyPresets: [{ name: "slack", requiredAtCreate: true }],
   render: [
     {
       id: "slack-openclaw-channel",

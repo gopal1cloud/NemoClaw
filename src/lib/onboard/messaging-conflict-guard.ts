@@ -120,7 +120,7 @@ async function enforceMessagingPreEnableHooks(
   deps: MessagingConflictGuardDeps,
   currentPlan: SandboxMessagingPlan,
 ): Promise<void> {
-  const requests = MessagingSetupApplier.listHookRequests(currentPlan, "pre-enable");
+  const requests = MessagingSetupApplier.listPreEnableChecks(currentPlan);
   if (requests.length === 0) return;
 
   const hookRegistry = createBuiltInMessagingHookRegistry();
@@ -131,7 +131,7 @@ async function enforceMessagingPreEnableHooks(
   });
 
   try {
-    await MessagingSetupApplier.applyHooksForPhase(currentPlan, "pre-enable", {
+    await MessagingSetupApplier.applyPreEnableChecks(currentPlan, {
       additionalInputs,
       runHook: (request) =>
         runMessagingHook(

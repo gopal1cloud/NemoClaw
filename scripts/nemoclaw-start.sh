@@ -1098,7 +1098,7 @@ PYCORS
 }
 
 # OpenShell provider snapshots can expose revision-scoped placeholders such as
-# openshell:resolve:env:v11_DISCORD_BOT_TOKEN in the child environment. Refresh
+# openshell:resolve:env:v11_<ENV_KEY> in the child environment. Refresh
 # baked canonical placeholders in openclaw.json after the integrity check so
 # token egress keeps working across provider attach/refresh generations without
 # ever writing a raw credential to disk.
@@ -1107,20 +1107,85 @@ refresh_openclaw_provider_placeholders() {
   local hash_file="/sandbox/.openclaw/.config-hash"
   [ -f "$config_file" ] || return 0
 
-  local keys="TELEGRAM_BOT_TOKEN DISCORD_BOT_TOKEN SLACK_BOT_TOKEN SLACK_APP_TOKEN BRAVE_API_KEY"
+  local keys
+  keys="$(
+    python3 - "$config_file" <<'PYPLACEHOLDERKEYS'
+import base64
+import json
+import os
+import re
+import sys
+
+config_file = sys.argv[1]
+prefix = "openshell:resolve:env:"
+alias_marker = "-OPENSHELL-RESOLVE-ENV-"
+env_key_re = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+revision_re = re.compile(r"^v[0-9]+_")
+keys = set()
+
+
+def add_key(value):
+    key = revision_re.sub("", value)
+    if env_key_re.match(key):
+        keys.add(key)
+
+
+def walk(value):
+    if isinstance(value, str):
+        if value.startswith(prefix):
+            add_key(value[len(prefix) :])
+        alias_index = value.find(alias_marker)
+        if alias_index > 0:
+            add_key(value[alias_index + len(alias_marker) :])
+        return
+    if isinstance(value, list):
+        for item in value:
+            walk(item)
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            walk(item)
+
+
+try:
+    with open(config_file, encoding="utf-8") as f:
+        walk(json.load(f))
+except Exception:
+    pass
+
+raw_plan = os.environ.get("NEMOCLAW_MESSAGING_PLAN_B64", "").strip()
+if raw_plan:
+    try:
+        plan = json.loads(base64.b64decode(raw_plan).decode("utf-8"))
+        for binding in plan.get("credentialBindings", []):
+            if isinstance(binding, dict) and isinstance(binding.get("providerEnvKey"), str):
+                add_key(binding["providerEnvKey"])
+    except Exception:
+        pass
+
+base_keys = {
+    key
+    for key in keys
+    if not any(key != candidate and key.startswith(f"{candidate}_") for candidate in keys)
+}
+print(" ".join(sorted(base_keys)))
+PYPLACEHOLDERKEYS
+  )"
+  local base_keys="$keys"
 
   # Append operator-registered extras from NEMOCLAW_EXTRA_PLACEHOLDER_KEYS so
   # the revision-strip walk also collapses suffixed placeholders such as
-  # openshell:resolve:env:v51_TELEGRAM_BOT_TOKEN_AGENT_A back to the canonical
+  # openshell:resolve:env:v51_<ENV_KEY>_AGENT_A back to the canonical
   # form. The host-side onboard parser at
   # src/lib/onboard/extra-placeholder-keys.ts already filters by an identical
   # regex, rejects canonical-channel collisions, and requires every entry to
   # extend a canonical channel envKey with a non-empty `_<suffix>`; this loop
-  # mirrors all three checks because the env var travels through one extra hop
-  # and a sandbox operator could clobber it independently. Keeping both
-  # parsers symmetrical means a host-side restriction (refusing GITHUB_TOKEN,
-  # NEMOCLAW_EXTRA_PLACEHOLDER_KEYS itself, etc.) cannot be bypassed by
-  # mutating the runtime env after sandbox boot.
+  # mirrors those checks against provider envKeys discovered from the messaging
+  # plan and current OpenClaw config because the env var travels through one
+  # extra hop and a sandbox operator could clobber it independently. Keeping the
+  # sandbox parser restrictive means a host-side refusal for unrelated secrets
+  # (GITHUB_TOKEN, NEMOCLAW_EXTRA_PLACEHOLDER_KEYS itself, etc.) cannot be
+  # bypassed by mutating the runtime env after sandbox boot.
   local extra_token
   local _extra_raw="${NEMOCLAW_EXTRA_PLACEHOLDER_KEYS-}"
   # Normalize commas to whitespace so callers can pass either form,
@@ -1129,29 +1194,43 @@ refresh_openclaw_provider_placeholders() {
   local _extras_accepted=0
   local _canon_prefix
   local _accepted_this_token
+  local _canonical_collision
+  local _example_key
+  local _accepted_extra_keys=""
   for extra_token in $_extra_raw; do
-    case "$extra_token" in
-      '' | TELEGRAM_BOT_TOKEN | DISCORD_BOT_TOKEN | SLACK_BOT_TOKEN | SLACK_APP_TOKEN | BRAVE_API_KEY | WECHAT_BOT_TOKEN)
-        continue
-        ;;
-    esac
+    [ -n "$extra_token" ] || continue
+    _canonical_collision=0
+    for _canon_prefix in $base_keys; do
+      if [ "$extra_token" = "$_canon_prefix" ]; then
+        _canonical_collision=1
+        break
+      fi
+    done
+    [ "$_canonical_collision" -eq 1 ] && continue
     if ! printf '%s' "$extra_token" | grep -Eq '^[A-Z][A-Z0-9_]{0,127}$'; then
       printf "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '%s' — must match /^[A-Z][A-Z0-9_]{0,127}\$/\n" \
         "$extra_token" >&2
       continue
     fi
     _accepted_this_token=0
-    for _canon_prefix in TELEGRAM_BOT_TOKEN_ DISCORD_BOT_TOKEN_ SLACK_BOT_TOKEN_ SLACK_APP_TOKEN_ WECHAT_BOT_TOKEN_ BRAVE_API_KEY_; do
+    _example_key=""
+    for _canon_prefix in $base_keys; do
+      [ -n "$_example_key" ] || _example_key="$_canon_prefix"
       case "$extra_token" in
-        "${_canon_prefix}"?*)
+        "${_canon_prefix}_"?*)
           _accepted_this_token=1
           break
           ;;
       esac
     done
     if [ "$_accepted_this_token" -ne 1 ]; then
-      printf "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '%s' — must extend a canonical channel envKey such as TELEGRAM_BOT_TOKEN_<suffix>\n" \
-        "$extra_token" >&2
+      if [ -n "$_example_key" ]; then
+        printf "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '%s' — must extend a discovered provider envKey such as %s_<suffix>\n" \
+          "$extra_token" "$_example_key" >&2
+      else
+        printf "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '%s' — must extend a discovered provider envKey from the messaging plan or OpenClaw config\n" \
+          "$extra_token" >&2
+      fi
       continue
     fi
     if [ "$_extras_accepted" -ge 32 ]; then
@@ -1159,6 +1238,7 @@ refresh_openclaw_provider_placeholders() {
       break
     fi
     keys="$keys $extra_token"
+    _accepted_extra_keys="${_accepted_extra_keys:+$_accepted_extra_keys }$extra_token"
     _extras_accepted=$((_extras_accepted + 1))
   done
   if [ "$_extras_accepted" -gt 0 ]; then
@@ -1167,9 +1247,8 @@ refresh_openclaw_provider_placeholders() {
     # revision-scoped placeholder has been staged yet (which is the steady
     # state for a fresh provider attach). Stripping the canonical baseline
     # prefix here keeps the log line about extras only.
-    local _accepted_extras="${keys#TELEGRAM_BOT_TOKEN DISCORD_BOT_TOKEN SLACK_BOT_TOKEN SLACK_APP_TOKEN BRAVE_API_KEY }"
     printf '[config] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted %d entry(ies): %s\n' \
-      "$_extras_accepted" "$_accepted_extras" >&2
+      "$_extras_accepted" "$_accepted_extra_keys" >&2
   fi
 
   if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
@@ -1191,6 +1270,7 @@ import sys
 
 config_file = sys.argv[1]
 prefix = "openshell:resolve:env:"
+alias_marker = "-OPENSHELL-RESOLVE-ENV-"
 keys = os.environ.get("NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS", "").split()
 replacements = {}
 warnings = []
@@ -1200,11 +1280,6 @@ for key in keys:
     if value.startswith(prefix) and value != f"{prefix}{key}":
         replacements[f"{prefix}{key}"] = (key, value)
 
-channel_credentials = {
-    "telegram": ("botToken", "TELEGRAM_BOT_TOKEN"),
-    "discord": ("token", "DISCORD_BOT_TOKEN"),
-    }
-
 with open(config_file, encoding="utf-8") as f:
     config = json.load(f)
 
@@ -1212,8 +1287,8 @@ refreshed = set()
 
 # Match each canonical placeholder only as an exact token. The OpenShell
 # placeholder grammar is "openshell:resolve:env:[A-Za-z_][A-Za-z0-9_]*",
-# so the negative-lookahead ensures replacing TELEGRAM_BOT_TOKEN does not
-# also mutate TELEGRAM_BOT_TOKEN_AGENT_A; sort longest-first so two keys
+# so the negative-lookahead ensures replacing one provider env key does not
+# also mutate a suffixed extra placeholder; sort longest-first so two keys
 # sharing a strict prefix still match the more specific one when both
 # replacements happen to apply to the same exact-token position (the
 # lookahead already guarantees disjoint matches in practice, but keeping
@@ -1240,63 +1315,54 @@ def rewrite(value):
 
 updated = rewrite(config)
 
-channels = updated.get("channels", {}) if isinstance(updated, dict) else {}
-if isinstance(channels, dict):
-    for channel, (field, env_key) in channel_credentials.items():
-        channel_cfg = channels.get(channel, {})
-        if not isinstance(channel_cfg, dict):
-            continue
-        accounts = channel_cfg.get("accounts", {})
-        if not isinstance(accounts, dict):
-            continue
-        env_value = os.environ.get(env_key, "")
-        for account_id, account in accounts.items():
-            if not isinstance(account, dict):
-                continue
-            token = account.get(field)
-            if not isinstance(token, str) or not token.startswith(prefix):
-                continue
-            label = f"{channel}.{account_id}.{field}"
-            if not env_value:
-                warnings.append(
-                    f"[channels] {label} is an OpenShell placeholder but {env_key} is missing from the runtime environment"
-                )
-            elif not env_value.startswith(prefix):
-                warnings.append(
-                    f"[channels] {label} left unchanged because {env_key} is not an OpenShell placeholder; refusing to write raw credentials to openclaw.json"
-                )
-            elif token != env_value:
-                warnings.append(
-                    f"[channels] {label} placeholder does not match the OpenShell runtime placeholder for {env_key}"
-                )
+def placeholder_suffix_matches_env_key(suffix, env_key):
+    if suffix == env_key:
+        return True
+    revision = re.match(r"^v[0-9]+_", suffix)
+    return bool(revision and suffix[len(revision.group(0)) :] == env_key)
 
-# Slack stores Bolt-compatible aliases (xoxb-/xapp-OPENSHELL-RESOLVE-ENV-*) on
-# disk rather than the canonical "openshell:resolve:env:*" placeholder, so the
-# loop above (which keys on the canonical prefix) never inspects it. Diagnose
-# the alias-vs-runtime-env consistency separately. The aliases themselves are
-# never rewritten on disk — the L7 egress proxy resolves them at request time —
-# so we only warn, never mutate. Ref: NVIDIA/NemoClaw#4274.
-slack_aliases = {
-    "botToken": ("SLACK_BOT_TOKEN", "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN", "xoxb-"),
-    "appToken": ("SLACK_APP_TOKEN", "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN", "xapp-"),
-    }
-if isinstance(channels, dict):
-    slack_cfg = channels.get("slack", {})
-    slack_accounts = slack_cfg.get("accounts", {}) if isinstance(slack_cfg, dict) else {}
-    if isinstance(slack_accounts, dict):
-        for account_id, account in slack_accounts.items():
-            if not isinstance(account, dict):
-                continue
-            for field, (env_key, alias, token_scheme) in slack_aliases.items():
-                if account.get(field) != alias:
+
+def path_label(path):
+    if len(path) >= 5 and path[0] == "channels" and path[2] == "accounts":
+        return f"{path[1]}.{path[3]}.{path[4]}"
+    return ".".join(path)
+
+
+def walk_for_warnings(value, path):
+    if isinstance(value, str):
+        if value.startswith(prefix):
+            suffix = value[len(prefix) :]
+            for env_key in keys:
+                if not placeholder_suffix_matches_env_key(suffix, env_key):
                     continue
-                label = f"slack.{account_id}.{field}"
                 env_value = os.environ.get(env_key, "")
-                # A valid runtime placeholder is the canonical self-referential
-                # form or its revision-scoped variant for *this* key; a
-                # placeholder for a different key (or a suffix collision) is not
-                # accepted and must be surfaced. A genuine xoxb-/xapp- token is
-                # accepted by Bolt as-is.
+                label = path_label(path)
+                if not env_value:
+                    warnings.append(
+                        f"[channels] {label} is an OpenShell placeholder but {env_key} is missing from the runtime environment"
+                    )
+                elif not env_value.startswith(prefix):
+                    warnings.append(
+                        f"[channels] {label} left unchanged because {env_key} is not an OpenShell placeholder; refusing to write raw credentials to openclaw.json"
+                    )
+                elif not placeholder_suffix_matches_env_key(env_value[len(prefix) :], env_key):
+                    warnings.append(
+                        f"[channels] {label} placeholder does not match the OpenShell runtime placeholder for {env_key}"
+                    )
+                elif value != env_value:
+                    warnings.append(
+                        f"[channels] {label} placeholder does not match the OpenShell runtime placeholder for {env_key}"
+                    )
+                break
+        alias_index = value.find(alias_marker)
+        if alias_index > 0:
+            alias_env_key = value[alias_index + len(alias_marker) :]
+            token_scheme = value[:alias_index] + "-"
+            for env_key in keys:
+                if env_key != alias_env_key:
+                    continue
+                label = path_label(path)
+                env_value = os.environ.get(env_key, "")
                 placeholder_re = re.compile(
                     rf"^{re.escape(prefix)}(v[0-9]+_)?{re.escape(env_key)}$"
                 )
@@ -1306,8 +1372,20 @@ if isinstance(channels, dict):
                     )
                 elif not placeholder_re.match(env_value) and not env_value.startswith(token_scheme):
                     warnings.append(
-                        f"[channels] {label} runtime {env_key} is neither the {env_key} OpenShell placeholder nor a {token_scheme} Slack token; Slack Bolt may reject it"
+                        f"[channels] {label} runtime {env_key} is neither the {env_key} OpenShell placeholder nor a {token_scheme} token; runtime may reject it"
                     )
+                break
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            walk_for_warnings(item, path + [str(index)])
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            walk_for_warnings(item, path + [str(key)])
+
+
+walk_for_warnings(updated, [])
 
 if updated != config:
     with open(config_file, "w", encoding="utf-8") as f:
@@ -2664,8 +2742,8 @@ PYAPPROVEAFTER
             echo "Changes inside the sandbox do not persist across rebuilds." >&2
             echo "" >&2
             echo "To add or remove messaging channels, exit the sandbox and run:" >&2
-            echo "  nemoclaw <sandbox> channels add <telegram|discord|slack|wechat|whatsapp>" >&2
-            echo "  nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>" >&2
+            echo "  nemoclaw <sandbox> channels add <channel>" >&2
+            echo "  nemoclaw <sandbox> channels remove <channel>" >&2
             echo "" >&2
             echo "WhatsApp pairs entirely inside the sandbox; complete pairing via:" >&2
             echo "  openclaw channels login --channel whatsapp" >&2
@@ -2732,8 +2810,8 @@ PYAPPROVEAFTER
           echo "Changes inside the sandbox do not persist across rebuilds." >&2
           echo "" >&2
           echo "To add or remove messaging channels, exit the sandbox and run:" >&2
-          echo "  nemoclaw <sandbox> channels add <telegram|discord|slack|wechat|whatsapp>" >&2
-          echo "  nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>" >&2
+          echo "  nemoclaw <sandbox> channels add <channel>" >&2
+          echo "  nemoclaw <sandbox> channels remove <channel>" >&2
           echo "" >&2
           echo "These stage the change and rebuild the sandbox to apply it." >&2
           echo "WhatsApp pairs entirely inside the sandbox; complete pairing via:" >&2
@@ -2800,7 +2878,9 @@ GUARDENVEOF
     # ciao network guard for connect sessions.
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT\""
     # Manifest-declared messaging preloads for connect sessions.
-    emit_messaging_connect_runtime_preload_exports
+    if type emit_messaging_connect_runtime_preload_exports >/dev/null 2>&1; then
+      emit_messaging_connect_runtime_preload_exports
+    fi
     # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
     echo '# Tool cache redirects — keep transient tool state under /tmp'
     for _redir in "${_TOOL_REDIRECTS[@]}"; do

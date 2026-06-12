@@ -777,11 +777,41 @@ harden_config_symlinks() {
 # of config files is not possible — Landlock enforces read-only at
 # the kernel level.
 configure_messaging_channels() {
-  [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || [ -n "${DISCORD_BOT_TOKEN:-}" ] || [ -n "${SLACK_BOT_TOKEN:-}" ] || return 0
+  local channels
+  channels="$(read_messaging_plan_channels || true)"
+  [ -n "$channels" ] || return 0
 
   echo "[channels] Messaging channels active (baked at build time):" >&2
-  [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && echo "[channels]   telegram" >&2
-  [ -n "${DISCORD_BOT_TOKEN:-}" ] && echo "[channels]   discord" >&2
-  [ -n "${SLACK_BOT_TOKEN:-}" ] && echo "[channels]   slack" >&2
+  while IFS= read -r channel; do
+    [ -n "$channel" ] || continue
+    echo "[channels]   $channel" >&2
+  done <<EOF
+$channels
+EOF
   return 0
+}
+
+read_messaging_plan_channels() {
+  [ -n "${NEMOCLAW_MESSAGING_PLAN_B64:-}" ] || return 0
+  python3 - <<'PY'
+import base64
+import json
+import os
+
+raw = os.environ.get("NEMOCLAW_MESSAGING_PLAN_B64", "").strip()
+if not raw:
+    raise SystemExit(0)
+try:
+    plan = json.loads(base64.b64decode(raw).decode("utf-8"))
+except Exception:
+    raise SystemExit(0)
+seen = set()
+for item in plan.get("channels", []):
+    channel = str(item.get("channelId") or "").strip().lower()
+    if not channel or channel in seen:
+        continue
+    if item.get("active") is True and item.get("disabled") is not True:
+        seen.add(channel)
+        print(channel)
+PY
 }

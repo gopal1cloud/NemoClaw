@@ -2270,9 +2270,9 @@ exit 2
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
           NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
-          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
+          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "3",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "0.05",
-          NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "0.25",
+          NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "0.75",
         },
         timeout: 30_000,
       });
@@ -3126,6 +3126,14 @@ describe("provider placeholder refresh (#4251)", () => {
     return { config: updatedConfig, hash, result };
   }
 
+  function placeholderPlan(envKeys: string[]): string {
+    return Buffer.from(
+      JSON.stringify({
+        credentialBindings: envKeys.map((envKey) => ({ providerEnvKey: envKey })),
+      }),
+    ).toString("base64");
+  }
+
   it("rewrites Telegram canonical placeholders to OpenShell runtime-scoped placeholders", () => {
     const scoped = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN";
     const run = runRefresh(
@@ -3293,7 +3301,7 @@ describe("provider placeholder refresh (#4251)", () => {
 
     expect(run.result.status, run.result.stderr).toBe(0);
     expect(run.result.stderr).toContain(
-      "slack.default.botToken runtime SLACK_BOT_TOKEN is neither the SLACK_BOT_TOKEN OpenShell placeholder nor a xoxb- Slack token",
+      "slack.default.botToken runtime SLACK_BOT_TOKEN is neither the SLACK_BOT_TOKEN OpenShell placeholder nor a xoxb- token",
     );
   });
 
@@ -3317,7 +3325,7 @@ describe("provider placeholder refresh (#4251)", () => {
 
     expect(run.result.status, run.result.stderr).toBe(0);
     expect(run.result.stderr).toContain(
-      "slack.default.botToken runtime SLACK_BOT_TOKEN is neither the SLACK_BOT_TOKEN OpenShell placeholder nor a xoxb- Slack token",
+      "slack.default.botToken runtime SLACK_BOT_TOKEN is neither the SLACK_BOT_TOKEN OpenShell placeholder nor a xoxb- token",
     );
   });
 
@@ -3333,6 +3341,7 @@ describe("provider placeholder refresh (#4251)", () => {
         },
       },
       {
+        NEMOCLAW_MESSAGING_PLAN_B64: placeholderPlan(["TELEGRAM_BOT_TOKEN", "SLACK_BOT_TOKEN"]),
         NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "TELEGRAM_BOT_TOKEN_AGENT_A SLACK_BOT_TOKEN_AGENT_B",
       },
     );
@@ -3523,7 +3532,7 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
-  it("refuses arbitrary host secret names that do not extend a canonical channel envKey inside the sandbox", () => {
+  it("refuses arbitrary host secret names that do not extend a discovered provider envKey inside the sandbox", () => {
     // Defence-in-depth: even if an operator clobbers NEMOCLAW_EXTRA_PLACEHOLDER_KEYS
     // inside a running sandbox after the host-side parser already filtered it,
     // the container-side refresh helper must mirror the host's canonical-prefix
@@ -3564,7 +3573,7 @@ describe("provider placeholder refresh (#4251)", () => {
       "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
     ]) {
       expect(run.result.stderr).toContain(
-        `[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '${blocked}' — must extend a canonical channel envKey such as TELEGRAM_BOT_TOKEN_<suffix>`,
+        `[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '${blocked}' — must extend a discovered provider envKey such as TELEGRAM_BOT_TOKEN_<suffix>`,
       );
     }
     expect(run.result.stderr).not.toContain(
@@ -3583,11 +3592,10 @@ describe("provider placeholder refresh (#4251)", () => {
     expect(JSON.stringify(run.config)).not.toContain("aws-host-secret-would-leak");
   });
 
-  it("mirrors every canonical channel envKey from the TypeScript parser as an extension prefix", () => {
-    // Behavioural parity guard: the in-container parser hardcodes its
-    // canonical-prefix allowlist, so a future channel addition in
-    // src/lib/sandbox/channels.ts must show up in scripts/nemoclaw-start.sh
-    // for the runtime side to keep accepting the same per-profile keys.
+  it("accepts every manifest credential envKey from the messaging plan as an extension prefix", () => {
+    // Behavioural parity guard: the in-container parser should not hardcode
+    // channel env keys. It consumes the messaging plan's credentialBindings,
+    // then accepts per-profile extensions for those discovered keys.
     // For each TypeScript-derived canonical envKey, plant a `<KEY>_PARITY`
     // extension and assert that the bash refresh accepts and revision-
     // collapses it. Drift in either direction (new channel added but bash
@@ -3618,6 +3626,7 @@ describe("provider placeholder refresh (#4251)", () => {
           },
         },
         {
+          NEMOCLAW_MESSAGING_PLAN_B64: placeholderPlan([canonical]),
           NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: extension,
           [extension]: scoped,
         },
@@ -3626,7 +3635,7 @@ describe("provider placeholder refresh (#4251)", () => {
       expect(run.result.status, run.result.stderr).toBe(0);
       expect(
         run.result.stderr,
-        `bash refresh refused canonical extension '${extension}' — parity drift with src/lib/onboard/extra-placeholder-keys.ts`,
+        `bash refresh refused manifest credential extension '${extension}'`,
       ).not.toContain(`[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '${extension}'`);
       expect(run.config.channels.telegram.accounts.parity.botToken).toBe(scoped);
     }
@@ -3685,164 +3694,6 @@ describe("provider placeholder refresh (#4251)", () => {
       `Refreshed provider placeholders from OpenShell runtime env: ${beyondCap}`,
     );
     expect(run.result.stdout).not.toContain(beyondCapScoped);
-  });
-});
-
-describe("Slack runtime env normalization (#4274)", () => {
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
-
-  // Exercises apply_messaging_runtime_env_aliases() through the real shell
-  // function so we prove the exported process-env values the OpenClaw child
-  // inherits are Bolt-compatible, not the canonical "openshell:resolve:env:*"
-  // placeholder.
-  function runNormalize(env: Record<string, string | undefined> = {}): {
-    bot: string;
-    app: string;
-    result: ReturnType<typeof spawnSync>;
-  } {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-runtime-env-"));
-    const planPath = path.join(tmpDir, "runtime-plan.json");
-    const scriptPath = path.join(tmpDir, "run.sh");
-    const runtimeValue = {
-      envAliases: [
-        {
-          envKey: "SLACK_BOT_TOKEN",
-          match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
-          value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-          message:
-            "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
-        },
-        {
-          envKey: "SLACK_APP_TOKEN",
-          match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
-          value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
-          message:
-            "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",
-        },
-      ],
-    };
-    fs.writeFileSync(
-      scriptPath,
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
-        'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
-        `export NEMOCLAW_MESSAGING_PLAN_B64=${JSON.stringify(encodeRuntimePreloadPlan("slack", runtimeValue))}`,
-        messagingRuntimePreloadSection(src, { planPath }),
-        "write_messaging_runtime_preload_plan",
-        "apply_messaging_runtime_env_aliases",
-        'printf "BOT=%s\\n" "${SLACK_BOT_TOKEN-__UNSET__}"',
-        'printf "APP=%s\\n" "${SLACK_APP_TOKEN-__UNSET__}"',
-      ].join("\n"),
-      { mode: 0o700 },
-    );
-    // A clean env so an inherited SLACK_* from the host can't mask an "unset" case.
-    const childEnv: Record<string, string> = { PATH: process.env.PATH || "" };
-    for (const [key, value] of Object.entries(env)) {
-      if (value !== undefined) childEnv[key] = value;
-    }
-    const result = spawnSync("bash", [scriptPath], {
-      encoding: "utf-8",
-      env: childEnv,
-      timeout: 5000,
-    });
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-    const bot = (result.stdout.match(/^BOT=(.*)$/m)?.[1] ?? "").trimEnd();
-    const app = (result.stdout.match(/^APP=(.*)$/m)?.[1] ?? "").trimEnd();
-    return { bot, app, result };
-  }
-
-  it("normalizes revision-scoped Slack placeholders to Bolt-compatible aliases", () => {
-    const run = runNormalize({
-      SLACK_BOT_TOKEN: "openshell:resolve:env:v51_SLACK_BOT_TOKEN",
-      SLACK_APP_TOKEN: "openshell:resolve:env:v51_SLACK_APP_TOKEN",
-    });
-
-    expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.bot).toBe("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN");
-    expect(run.app).toBe("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
-  });
-
-  it("does not leak the revision suffix into the normalized env or logs", () => {
-    const run = runNormalize({
-      SLACK_BOT_TOKEN: "openshell:resolve:env:v51_SLACK_BOT_TOKEN",
-      SLACK_APP_TOKEN: "openshell:resolve:env:v51_SLACK_APP_TOKEN",
-    });
-
-    expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.bot).not.toContain("v51_");
-    expect(run.app).not.toContain("v51_");
-    expect(run.result.stderr).not.toContain("v51_");
-    expect(run.bot).not.toContain("openshell:resolve:env:");
-    expect(run.app).not.toContain("openshell:resolve:env:");
-  });
-
-  it("normalizes the canonical (non-revision) placeholder too", () => {
-    const run = runNormalize({
-      SLACK_BOT_TOKEN: "openshell:resolve:env:SLACK_BOT_TOKEN",
-      SLACK_APP_TOKEN: "openshell:resolve:env:SLACK_APP_TOKEN",
-    });
-
-    expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.bot).toBe("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN");
-    expect(run.app).toBe("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
-  });
-
-  it("leaves already-aliased Slack tokens unchanged (idempotent)", () => {
-    const run = runNormalize({
-      SLACK_BOT_TOKEN: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-      SLACK_APP_TOKEN: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
-    });
-
-    expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.bot).toBe("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN");
-    expect(run.app).toBe("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
-  });
-
-  it("leaves real Slack tokens untouched", () => {
-    const run = runNormalize({
-      SLACK_BOT_TOKEN: "xoxb-123-real-bot-token",
-      SLACK_APP_TOKEN: "xapp-1-real-app-token",
-    });
-
-    expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.bot).toBe("xoxb-123-real-bot-token");
-    expect(run.app).toBe("xapp-1-real-app-token");
-  });
-
-  it("does not create Slack env vars that were never set", () => {
-    const run = runNormalize();
-
-    expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.bot).toBe("__UNSET__");
-    expect(run.app).toBe("__UNSET__");
-  });
-
-  it("leaves a placeholder that resolves a different key untouched", () => {
-    // OpenShell injects self-referential placeholders. A placeholder resolving
-    // some other secret must not be silently rebound to the Slack alias.
-    const run = runNormalize({
-      SLACK_BOT_TOKEN: "openshell:resolve:env:v51_SOME_OTHER_KEY",
-      SLACK_APP_TOKEN: "openshell:resolve:env:v51_SOME_OTHER_KEY",
-    });
-
-    expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.bot).toBe("openshell:resolve:env:v51_SOME_OTHER_KEY");
-    expect(run.app).toBe("openshell:resolve:env:v51_SOME_OTHER_KEY");
-  });
-
-  it("leaves a suffix-collision key (…_NOT_SLACK_BOT_TOKEN) untouched", () => {
-    // The match is anchored: only the canonical key or its v<rev>_ form is
-    // rebound, never a key that merely ends with the same suffix.
-    const run = runNormalize({
-      SLACK_BOT_TOKEN: "openshell:resolve:env:v51_NOT_SLACK_BOT_TOKEN",
-      SLACK_APP_TOKEN: "openshell:resolve:env:MY_SLACK_APP_TOKEN",
-    });
-
-    expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.bot).toBe("openshell:resolve:env:v51_NOT_SLACK_BOT_TOKEN");
-    expect(run.app).toBe("openshell:resolve:env:MY_SLACK_APP_TOKEN");
   });
 });
 

@@ -15,16 +15,17 @@ import {
   createBuiltInRenderTemplateResolver,
   createMessagingPreEnableHookInputs,
   getMessagingManifestAvailabilityContext,
+  type MessagingHookOutputValue,
   MessagingHostStateApplier,
+  type MessagingSerializableValue,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
   runMessagingHook,
-  type MessagingHookOutputValue,
-  type MessagingSerializableValue,
   type SandboxMessagingChannelPlan,
   type SandboxMessagingPlan,
   toMessagingAgentId,
 } from "../../messaging";
+import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { hashCredential } from "../../security/credential-hash";
 
 const { isNonInteractive } = require("../../onboard") as { isNonInteractive: () => boolean };
@@ -32,6 +33,7 @@ const onboardProviders = require("../../onboard/providers");
 
 import { filterSetupPolicyPresetsForAgent } from "../../onboard/agent-policy-presets";
 import { BASE_GATEWAY_NAME } from "../../onboard/gateway-binding";
+import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import * as policies from "../../policy";
 
 const onboardSession =
@@ -473,7 +475,7 @@ async function checkMessagingPreEnableHooks(
   plan: SandboxMessagingPlan,
   force: boolean,
 ): Promise<boolean> {
-  const requests = MessagingSetupApplier.listHookRequests(plan, "pre-enable");
+  const requests = MessagingSetupApplier.listPreEnableChecks(plan);
   if (requests.length === 0) return true;
 
   let registryEntries: ReturnType<typeof registry.listSandboxes>["sandboxes"];
@@ -493,7 +495,7 @@ async function checkMessagingPreEnableHooks(
   });
 
   try {
-    await MessagingSetupApplier.applyHooksForPhase(plan, "pre-enable", {
+    await MessagingSetupApplier.applyPreEnableChecks(plan, {
       additionalInputs,
       runHook: (request) =>
         runMessagingHook(
@@ -700,12 +702,12 @@ async function runMessagingHealthChecksAfterRebuild(
   sandboxName: string,
   plan: SandboxMessagingPlan,
 ): Promise<void> {
-  if (MessagingSetupApplier.listHookRequests(plan, "health-check").length === 0) return;
+  if (MessagingSetupApplier.listHealthChecks(plan).length === 0) return;
 
   const hookRegistry = createBuiltInMessagingHookRegistry();
-  let result: Awaited<ReturnType<typeof MessagingSetupApplier.applyHooksForPhase>>;
+  let result: Awaited<ReturnType<typeof MessagingSetupApplier.applyHealthChecks>>;
   try {
-    result = await MessagingSetupApplier.applyHooksForPhase(plan, "health-check", {
+    result = await MessagingSetupApplier.applyHealthChecks(plan, {
       runHook: (request) =>
         runMessagingHook(
           {
@@ -1008,7 +1010,7 @@ async function planSandboxChannelAdd(
   const availableChannels = availableManifestChannelsForAgent(agent);
   const supportedChannelIds = availableChannels.map((manifest) => manifest.id);
 
-  hydrateAddChannelEnvFromSession(sandboxName, channelId);
+  hydrateAddChannelEnvFromStoredState(sandboxName);
 
   try {
     const plan = await planner.buildChannelAddPlanFromSandboxEntry({
@@ -1139,50 +1141,9 @@ function formatMissingInput(input: SandboxMessagingChannelPlan["inputs"][number]
   return input.sourceEnv ? `${input.inputId} (${input.sourceEnv})` : input.inputId;
 }
 
-function hydrateAddChannelEnvFromSession(sandboxName: string, channelId: string): void {
-  if (channelId !== "wechat") return;
+function hydrateAddChannelEnvFromStoredState(sandboxName: string): void {
   const savedSession = safeLoadOnboardSession();
-  const savedWechat =
-    savedSession?.sandboxName === sandboxName ? (savedSession.wechatConfig ?? null) : null;
-  if (!savedWechat) return;
-  if (savedWechat.accountId && !process.env.WECHAT_ACCOUNT_ID) {
-    process.env.WECHAT_ACCOUNT_ID = savedWechat.accountId;
-  }
-  if (savedWechat.baseUrl && !process.env.WECHAT_BASE_URL) {
-    process.env.WECHAT_BASE_URL = savedWechat.baseUrl;
-  }
-  if (savedWechat.userId && !process.env.WECHAT_USER_ID) {
-    process.env.WECHAT_USER_ID = savedWechat.userId;
-  }
-}
-
-function persistManifestAddState(sandboxName: string, manifest: ChannelManifest): void {
-  if (manifest.id === "wechat") persistWechatConfigFromEnv(sandboxName);
-}
-
-function persistWechatConfigFromEnv(sandboxName: string): void {
-  const captured = {
-    accountId: normalizeEnvValue(process.env.WECHAT_ACCOUNT_ID),
-    baseUrl: normalizeEnvValue(process.env.WECHAT_BASE_URL),
-    userId: normalizeEnvValue(process.env.WECHAT_USER_ID),
-  };
-  if (!captured.accountId && !captured.baseUrl && !captured.userId) return;
-  const session = safeLoadOnboardSession();
-  if (session?.sandboxName !== sandboxName) return;
-  try {
-    onboardSession.updateSession((current) => {
-      const prior = current.wechatConfig;
-      current.wechatConfig = {
-        accountId: captured.accountId || prior?.accountId,
-        baseUrl: captured.baseUrl || prior?.baseUrl,
-        userId: captured.userId || prior?.userId,
-      };
-      return current;
-    });
-  } catch {
-    // The channel remains usable for an immediate rebuild; deferred rebuilds
-    // can be recovered by re-running channels add for the same sandbox.
-  }
+  hydrateMessagingChannelConfig(getStoredMessagingChannelConfig(sandboxName, savedSession));
 }
 
 function safeLoadOnboardSession(): ReturnType<typeof onboardSession.loadSession> {
@@ -1191,11 +1152,6 @@ function safeLoadOnboardSession(): ReturnType<typeof onboardSession.loadSession>
   } catch {
     return null;
   }
-}
-
-function normalizeEnvValue(value: string | undefined): string | undefined {
-  const normalized = value?.replace(/\r/g, "").trim();
-  return normalized || undefined;
 }
 
 export async function addSandboxChannel(
@@ -1268,7 +1224,6 @@ export async function addSandboxChannel(
       process.exit(1);
     }
     await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, {});
-    persistManifestAddState(sandboxName, manifest);
     if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan)) {
       console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
       process.exit(1);
@@ -1322,7 +1277,6 @@ export async function addSandboxChannel(
     process.exit(1);
   }
 
-  persistManifestAddState(sandboxName, manifest);
   if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan)) {
     console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
     console.error(

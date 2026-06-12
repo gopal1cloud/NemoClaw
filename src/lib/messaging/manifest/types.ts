@@ -54,6 +54,8 @@ export interface ChannelPolicyPresetSpec {
   readonly name: string;
   readonly policyKeys?: readonly string[];
   readonly agentPolicyKeys?: Partial<Record<MessagingAgentId, readonly string[]>>;
+  readonly requiredAtCreate?: boolean;
+  readonly validationWarningLines?: readonly string[];
 }
 
 /** How a channel obtains credential or session material. */
@@ -81,6 +83,7 @@ interface ChannelInputBaseSpec {
   readonly validValues?: readonly string[];
   readonly formatPattern?: string;
   readonly formatHint?: string;
+  readonly envAliases?: readonly string[];
 }
 
 /** Secret input metadata; values must be referenced, not stored in manifests or plans. */

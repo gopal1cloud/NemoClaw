@@ -82,8 +82,8 @@ describe("onboard policy preset suggestions", () => {
         "pypi",
         "npm",
         "openclaw-pricing",
-        "slack",
         "discord",
+        "slack",
       ]);
       expect(getSuggestedPolicyPresets({ enabledChannels: ["whatsapp"] })).toEqual([
         "pypi",

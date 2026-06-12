@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { MessagingChannelConfig } from "../messaging-channel-config";
-import type { MessagingAgentId, MessagingChannelId, SandboxMessagingPlan } from "./manifest";
+import type {
+  MessagingAgentId,
+  MessagingChannelId,
+  MessagingSerializableValue,
+  SandboxMessagingPlan,
+} from "./manifest";
 
 export interface SandboxMessagingPlanParseOptions {
   sandboxName?: string | null;
@@ -91,13 +96,50 @@ export function getMessagingChannelConfigFromPlan(
 ): MessagingChannelConfig | null {
   if (!plan) return null;
   const config: MessagingChannelConfig = {};
+  const stateValues = getMessagingPlanStateValues(plan);
+
+  for (const update of plan.stateUpdates) {
+    if (update.kind !== "rebuild-hydration") continue;
+    const value = stringifyPlanStateValue(stateValues[update.statePath]);
+    if (value) config[update.env] = value;
+  }
+
   for (const channel of plan.channels) {
     for (const input of channel.inputs) {
       if (input.kind !== "config" || !input.sourceEnv || input.value == null) continue;
-      config[input.sourceEnv] = String(input.value);
+      if (config[input.sourceEnv]) continue;
+      const value = stringifyPlanStateValue(input.value);
+      if (value) config[input.sourceEnv] = value;
     }
   }
   return Object.keys(config).length > 0 ? config : null;
+}
+
+export function getMessagingPlanStateValues(
+  plan: SandboxMessagingPlan | null | undefined,
+): Record<string, MessagingSerializableValue> {
+  if (!plan) return {};
+  const values: Record<string, MessagingSerializableValue> = {};
+  for (const channel of plan.channels) {
+    for (const input of channel.inputs) {
+      if (input.kind !== "config" || !input.statePath || input.value == null) continue;
+      values[input.statePath] = input.value;
+    }
+  }
+  return values;
+}
+
+function stringifyPlanStateValue(value: MessagingSerializableValue | undefined): string | null {
+  if (value == null) return null;
+  if (Array.isArray(value)) {
+    const csv = value
+      .map((entry) => String(entry).trim())
+      .filter(Boolean)
+      .join(",");
+    return csv || null;
+  }
+  const text = String(value).trim();
+  return text.length > 0 ? text : null;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

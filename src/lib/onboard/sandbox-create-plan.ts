@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { listMessagingCredentialMetadata } from "../messaging/channels";
 import type { InitialSandboxPolicy } from "./initial-policy";
 import type { MessagingChannel } from "./messaging-state";
 import { resolveQrSelectedChannels } from "./messaging-state";
@@ -87,9 +88,7 @@ function resolveActiveMessagingChannels({
   | "messagingTokenDefs"
   | "reusableMessagingChannels"
 >): string[] {
-  const tokensByEnvKey = Object.fromEntries(
-    messagingTokenDefs.map(({ envKey, token }) => [envKey, token]),
-  );
+  const primaryCredentialEnvKeys = getPrimaryCredentialEnvKeys();
   const qrSelectedChannels = resolveQrSelectedChannels(
     channels,
     enabledChannels,
@@ -101,17 +100,23 @@ function resolveActiveMessagingChannels({
         .filter(({ token }) => !!token)
         .flatMap(({ envKey }) => {
           const channel = getMessagingChannelForEnvKey(envKey);
-          if (channel) return [channel];
-          // SLACK_APP_TOKEN alone does not enable slack; bot token is required.
-          if (envKey === "SLACK_APP_TOKEN") {
-            return tokensByEnvKey["SLACK_BOT_TOKEN"] ? ["slack"] : [];
-          }
-          return [];
+          return channel && primaryCredentialEnvKeys.has(envKey) ? [channel] : [];
         }),
       ...reusableMessagingChannels,
       ...qrSelectedChannels,
     ]),
   ];
+}
+
+function getPrimaryCredentialEnvKeys(): Set<string> {
+  const seenChannels = new Set<string>();
+  const envKeys = new Set<string>();
+  for (const credential of listMessagingCredentialMetadata()) {
+    if (seenChannels.has(credential.channelId)) continue;
+    seenChannels.add(credential.channelId);
+    envKeys.add(credential.providerEnvKey);
+  }
+  return envKeys;
 }
 
 export function prepareSandboxCreatePlan({

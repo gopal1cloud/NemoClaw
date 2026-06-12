@@ -494,8 +494,8 @@ Primary migrations:
 - `channels add` calls `applyPreEnableChecks`
 - `channels start` calls `applyPreEnableChecks`
 - create/rebuild finalization calls `applyHealthChecks`
-- status commands call `applyStatusChecks`
-- doctor/deep diagnostics call `applyDiagnostics`
+- status commands consume common manifest-derived status outputs
+- doctor/deep diagnostics consume common manifest-derived diagnostic specs
 - sandbox build/start path consumes `applyRuntimePreloads` outputs
 
 Validation:
@@ -598,12 +598,17 @@ Completed:
 - Added `pre-enable` and `runtime-preload` to `ChannelHookPhase`.
 - Added `MessagingSetupApplier.applyHooksForPhase()` and phase helpers that run
   manifest-declared hooks through the existing hook runner contract.
+- Added named `MessagingSetupApplier` phase methods for core-owned phase
+  orchestration:
+  - `listPreEnableChecks()` / `applyPreEnableChecks()`
+  - `listRuntimePreloads()` / `applyRuntimePreloads()`
+  - `listHealthChecks()` / `applyHealthChecks()`
 - Kept `enforceMessagingChannelConflicts` as shared guard behavior. Do not move
   the common credential conflict axis into a hook.
 - Added Slack `pre-enable` hook `slack.socketModeGatewayConflict` for the
   Socket Mode gateway axis and declared it in the Slack manifest.
 - Migrated `channels add` from direct Slack Socket Mode helper calls to
-  `MessagingSetupApplier.applyHooksForPhase(plan, "pre-enable", ...)`.
+  `MessagingSetupApplier.applyPreEnableChecks()`.
 - Migrated onboard's `enforceMessagingChannelConflicts` Slack gateway axis to
   the same Slack `pre-enable` hook while keeping the shared credential-conflict
   guard in place.
@@ -618,9 +623,8 @@ Completed:
 - Declared static OpenClaw bridge startup health outputs for Telegram, Slack,
   and Discord, including Telegram DM allowlist warning metadata.
 - Migrated `channels add` post-rebuild checks to
-  `MessagingSetupApplier.applyHooksForPhase(plan, "health-check", ...)` and a
-  generic health-check output consumer. The old Telegram action helper was
-  removed.
+  `MessagingSetupApplier.applyHealthChecks()` and a generic health-check output
+  consumer. The old Telegram action helper was removed.
 - Declared static status outputs for:
   - OpenClaw runtime config aliases and gateway-log patterns for Telegram,
     Slack, Discord, WeChat, and WhatsApp
@@ -637,6 +641,55 @@ Completed:
   manifest helper.
 - Migrated `doctor` messaging diagnostics to use common manifest-derived
   deep-probe hints and manifest-derived gateway-overlap status outputs.
+- Migrated remaining core `pre-enable` and `health-check` hook execution call
+  sites from raw `applyHooksForPhase(..., "<phase>")` calls to the named applier
+  phase methods.
+- Added common plan-state replay helpers that derive persisted state values from
+  `SandboxMessagingPlan.channels[].inputs` and replay env config through
+  manifest-declared `stateUpdates` / `rebuild-hydration`.
+- Migrated resume drift detection to the common manifest-derived messaging
+  config comparison for Telegram, WeChat, Slack, and Discord. The old
+  Telegram/WeChat-specific drift checks were removed.
+- Migrated `channels add` and sandbox `rebuild` config hydration to plan-backed
+  `getStoredMessagingChannelConfig()` plus `hydrateMessagingChannelConfig()`.
+- Stopped writing new `session.telegramConfig` / `session.wechatConfig` values
+  from the build-patch and channel-add paths. Those old fields remain read-only
+  compatibility fallback when no plan config exists.
+- Removed the obsolete WeChat host-side state helper from `src/lib/onboard`.
+- Added manifest-backed channel metadata helpers for:
+  - available channel IDs by agent
+  - credential env keys and env-key-to-channel lookup
+  - provider name suffixes and sandbox-scoped provider names
+  - config env keys and manifest-declared env aliases
+  - policy preset-to-policy-key aliases
+  - OpenClaw runtime channel config/log keys
+  - package install hook outputs
+- Moved Discord config env aliases into the Discord manifest.
+- Replaced `src/lib/sandbox/channels.ts` with a compatibility adapter over
+  built-in manifests while preserving its public exports.
+- Routed the conflict-detection metadata shim, onboard env-key channel lookup,
+  and credentials bridge-provider suffix detection through the manifest-backed
+  metadata helpers.
+- Migrated remaining Step 8 metadata lists to manifest-backed helpers:
+  - create-time messaging token provider definitions in `messaging-prep`
+  - reusable provider names in `messaging-reuse`
+  - policy preset suggestions, Hermes policy-key aliases, required create-time
+    presets, and messaging preset validation notes
+  - sandbox snapshot/provider cleanup suffixes
+  - credential-store known env keys and redaction env assignment keys
+  - messaging config env aliases
+- Moved Slack's create-time required policy preset flag into the Slack
+  manifest.
+- Moved Discord's policy validation warning text into the Discord manifest.
+- Moved Telegram's OpenClaw/Hermes policy key difference into the Telegram
+  manifest.
+- Migrated `scripts/lib/sandbox-init.sh` active-channel logging from concrete
+  token env checks to `NEMOCLAW_MESSAGING_PLAN_B64`.
+- Migrated `scripts/nemoclaw-start.sh` provider-placeholder refresh from
+  concrete credential/channel maps to provider env keys discovered from the
+  messaging plan and current OpenClaw config.
+- Replaced the install help's concrete messaging env list with a generic
+  messaging credential note.
 
 Pending:
 

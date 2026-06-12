@@ -3,13 +3,18 @@
 
 import { Buffer } from "node:buffer";
 
-import type { MessagingHookInputMap } from "../hooks";
 import type { ChannelHookPhase, SandboxMessagingPlan } from "../manifest";
 import {
   applyAgentConfigAtOpenShell as applyAgentConfigPlanAtOpenShell,
   listHookRequests as listPlanHookRequests,
 } from "./agent-config";
-import { applyMessagingHooksForPhase as applyPlanHooksForPhase } from "./hook-phases";
+import {
+  applyHealthChecks as applyPlanHealthChecks,
+  applyMessagingHooksForPhase as applyPlanHooksForPhase,
+  applyPreEnableChecks as applyPlanPreEnableChecks,
+  applyRuntimePreloads as applyPlanRuntimePreloads,
+  type MessagingHookPhaseOptions,
+} from "./hook-phases";
 import { applyCredentialsAtOpenShell as applyCredentialsPlanAtOpenShell } from "./openshell-provider";
 import { applyPolicyAtOpenShell as applyPolicyPlanAtOpenShell } from "./policy";
 import {
@@ -70,16 +75,52 @@ export class MessagingSetupApplier {
     return listPlanHookRequests(plan, phase);
   }
 
+  static listPreEnableChecks(plan: SandboxMessagingPlan): MessagingHookApplyRequest[] {
+    assertSandboxMessagingPlan(plan);
+    return listPlanHookRequests(plan, "pre-enable");
+  }
+
+  static listRuntimePreloads(plan: SandboxMessagingPlan): MessagingHookApplyRequest[] {
+    assertSandboxMessagingPlan(plan);
+    return listPlanHookRequests(plan, "runtime-preload");
+  }
+
+  static listHealthChecks(plan: SandboxMessagingPlan): MessagingHookApplyRequest[] {
+    assertSandboxMessagingPlan(plan);
+    return listPlanHookRequests(plan, "health-check");
+  }
+
   static applyHooksForPhase(
     plan: SandboxMessagingPlan,
     phase: ChannelHookPhase,
-    options: {
-      readonly runHook?: MessagingHookApplyRunner;
-      readonly additionalInputs?: MessagingHookInputMap;
-    } = {},
+    options: MessagingHookPhaseOptions = {},
   ): ReturnType<typeof applyPlanHooksForPhase> {
     assertSandboxMessagingPlan(plan);
     return applyPlanHooksForPhase(plan, phase, options);
+  }
+
+  static applyPreEnableChecks(
+    plan: SandboxMessagingPlan,
+    options: MessagingHookPhaseOptions = {},
+  ): ReturnType<typeof applyPlanPreEnableChecks> {
+    assertSandboxMessagingPlan(plan);
+    return applyPlanPreEnableChecks(plan, options);
+  }
+
+  static applyRuntimePreloads(
+    plan: SandboxMessagingPlan,
+    options: MessagingHookPhaseOptions = {},
+  ): ReturnType<typeof applyPlanRuntimePreloads> {
+    assertSandboxMessagingPlan(plan);
+    return applyPlanRuntimePreloads(plan, options);
+  }
+
+  static applyHealthChecks(
+    plan: SandboxMessagingPlan,
+    options: MessagingHookPhaseOptions = {},
+  ): ReturnType<typeof applyPlanHealthChecks> {
+    assertSandboxMessagingPlan(plan);
+    return applyPlanHealthChecks(plan, options);
   }
 
   static async applyAgentConfigAtOpenShell(

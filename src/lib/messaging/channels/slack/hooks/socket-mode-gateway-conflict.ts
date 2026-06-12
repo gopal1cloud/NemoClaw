@@ -7,12 +7,12 @@ import {
   type SlackGatewayConflict,
 } from "../../../applier/conflict-detection/slack-socket-mode";
 import type { ConflictRegistryEntry } from "../../../applier/conflict-detection/types";
-import type { MessagingSerializableValue } from "../../../manifest";
 import type {
   MessagingHookContext,
   MessagingHookHandler,
   MessagingHookRegistration,
 } from "../../../hooks/types";
+import type { MessagingSerializableValue } from "../../../manifest";
 
 export const SLACK_SOCKET_MODE_GATEWAY_CONFLICT_HOOK_HANDLER_ID = "slack.socketModeGatewayConflict";
 
@@ -115,7 +115,7 @@ function parseRegistryEntries(
       },
     ];
   });
-  return entries.length > 0 ? entries : null;
+  return entries;
 }
 
 function normalizeNullableString(value: unknown): string | null {

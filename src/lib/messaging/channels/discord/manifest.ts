@@ -28,6 +28,7 @@ export const discordManifest = {
       kind: "config",
       required: false,
       envKey: "DISCORD_SERVER_ID",
+      envAliases: ["DISCORD_SERVER_IDS"],
       statePath: "discordGuilds.serverId",
       prompt: {
         label: "Discord Server ID (for guild workspace access)",
@@ -53,6 +54,7 @@ export const discordManifest = {
       kind: "config",
       required: false,
       envKey: "DISCORD_USER_ID",
+      envAliases: ["DISCORD_ALLOWED_IDS"],
       statePath: "discordGuilds.userIds",
       promptWhenInput: "serverId",
       prompt: {
@@ -71,7 +73,19 @@ export const discordManifest = {
       placeholder: "openshell:resolve:env:DISCORD_BOT_TOKEN",
     },
   ],
-  policyPresets: ["discord"],
+  policyPresets: [
+    {
+      name: "discord",
+      validationWarningLines: [
+        "For Discord preset validation, do not use curl as the success signal:",
+        "curl is not in the preset binary allowlist, so curl probes can fail even",
+        "when the policy is working. Use Node HTTPS against",
+        "https://discord.com/api/v10/gateway or validate the configured",
+        'messaging bridge/gateway path. DNS-only checks such as dns.resolve("gateway.discord.gg")',
+        "can also be inconclusive behind a proxy.",
+      ],
+    },
+  ],
   render: [
     {
       id: "discord-openclaw-channel",

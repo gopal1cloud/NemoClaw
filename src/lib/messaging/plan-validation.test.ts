@@ -9,6 +9,7 @@ import {
   getConfiguredChannelIdsFromPlan,
   getDisabledChannelIdsFromPlan,
   getMessagingChannelConfigFromPlan,
+  getMessagingPlanStateValues,
   parseSandboxMessagingPlan,
 } from "./plan-validation";
 
@@ -94,5 +95,179 @@ describe("plan channel derivation", () => {
     expect(getActiveChannelIdsFromPlan(plan)).toEqual([]);
     expect(getDisabledChannelIdsFromPlan(plan)).toEqual(["telegram"]);
     expect(getMessagingChannelConfigFromPlan(plan)).toEqual({ TELEGRAM_ALLOWED_IDS: "123" });
+  });
+
+  it("replays manifest-declared state hydration env values from plan inputs", () => {
+    const plan = makePlan({
+      channels: [
+        {
+          ...makePlan().channels[0],
+          inputs: [
+            {
+              channelId: "telegram",
+              inputId: "requireMention",
+              kind: "config",
+              required: false,
+              sourceEnv: "TELEGRAM_REQUIRE_MENTION",
+              statePath: "telegramConfig.requireMention",
+              value: "1",
+            },
+          ],
+        },
+        {
+          channelId: "wechat",
+          displayName: "WeChat",
+          authMode: "host-qr",
+          active: true,
+          selected: true,
+          configured: true,
+          disabled: false,
+          inputs: [
+            {
+              channelId: "wechat",
+              inputId: "accountId",
+              kind: "config",
+              required: true,
+              sourceEnv: "WECHAT_ACCOUNT_ID",
+              statePath: "wechatConfig.accountId",
+              value: "wechat-account",
+            },
+            {
+              channelId: "wechat",
+              inputId: "baseUrl",
+              kind: "config",
+              required: false,
+              sourceEnv: "WECHAT_BASE_URL",
+              statePath: "wechatConfig.baseUrl",
+              value: "https://wechat.example",
+            },
+          ],
+          hooks: [],
+        },
+        {
+          channelId: "slack",
+          displayName: "Slack",
+          authMode: "token-paste",
+          active: true,
+          selected: true,
+          configured: true,
+          disabled: false,
+          inputs: [
+            {
+              channelId: "slack",
+              inputId: "allowedUsers",
+              kind: "config",
+              required: false,
+              sourceEnv: "SLACK_ALLOWED_USERS",
+              statePath: "allowedIds.slack",
+              value: "U01ABC2DEF3",
+            },
+            {
+              channelId: "slack",
+              inputId: "allowedChannels",
+              kind: "config",
+              required: false,
+              sourceEnv: "SLACK_ALLOWED_CHANNELS",
+              statePath: "slackConfig.allowedChannels",
+              value: "C012AB3CD",
+            },
+          ],
+          hooks: [],
+        },
+        {
+          channelId: "discord",
+          displayName: "Discord",
+          authMode: "token-paste",
+          active: true,
+          selected: true,
+          configured: true,
+          disabled: false,
+          inputs: [
+            {
+              channelId: "discord",
+              inputId: "serverId",
+              kind: "config",
+              required: false,
+              sourceEnv: "DISCORD_SERVER_ID",
+              statePath: "discordGuilds.serverId",
+              value: "guild-1",
+            },
+            {
+              channelId: "discord",
+              inputId: "userId",
+              kind: "config",
+              required: false,
+              sourceEnv: "DISCORD_USER_ID",
+              statePath: "discordGuilds.userIds",
+              value: "user-1",
+            },
+          ],
+          hooks: [],
+        },
+      ],
+      stateUpdates: [
+        {
+          channelId: "telegram",
+          kind: "rebuild-hydration",
+          statePath: "telegramConfig.requireMention",
+          env: "TELEGRAM_REQUIRE_MENTION",
+        },
+        {
+          channelId: "wechat",
+          kind: "rebuild-hydration",
+          statePath: "wechatConfig.accountId",
+          env: "WECHAT_ACCOUNT_ID",
+        },
+        {
+          channelId: "wechat",
+          kind: "rebuild-hydration",
+          statePath: "wechatConfig.baseUrl",
+          env: "WECHAT_BASE_URL",
+        },
+        {
+          channelId: "slack",
+          kind: "rebuild-hydration",
+          statePath: "allowedIds.slack",
+          env: "SLACK_ALLOWED_USERS",
+        },
+        {
+          channelId: "slack",
+          kind: "rebuild-hydration",
+          statePath: "slackConfig.allowedChannels",
+          env: "SLACK_ALLOWED_CHANNELS",
+        },
+        {
+          channelId: "discord",
+          kind: "rebuild-hydration",
+          statePath: "discordGuilds.serverId",
+          env: "DISCORD_SERVER_ID",
+        },
+        {
+          channelId: "discord",
+          kind: "rebuild-hydration",
+          statePath: "discordGuilds.userIds",
+          env: "DISCORD_USER_ID",
+        },
+      ],
+    });
+
+    expect(getMessagingPlanStateValues(plan)).toMatchObject({
+      "telegramConfig.requireMention": "1",
+      "wechatConfig.accountId": "wechat-account",
+      "wechatConfig.baseUrl": "https://wechat.example",
+      "allowedIds.slack": "U01ABC2DEF3",
+      "slackConfig.allowedChannels": "C012AB3CD",
+      "discordGuilds.serverId": "guild-1",
+      "discordGuilds.userIds": "user-1",
+    });
+    expect(getMessagingChannelConfigFromPlan(plan)).toEqual({
+      TELEGRAM_REQUIRE_MENTION: "1",
+      WECHAT_ACCOUNT_ID: "wechat-account",
+      WECHAT_BASE_URL: "https://wechat.example",
+      SLACK_ALLOWED_USERS: "U01ABC2DEF3",
+      SLACK_ALLOWED_CHANNELS: "C012AB3CD",
+      DISCORD_SERVER_ID: "guild-1",
+      DISCORD_USER_ID: "user-1",
+    });
   });
 });
