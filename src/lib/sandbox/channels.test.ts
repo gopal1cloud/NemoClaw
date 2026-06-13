@@ -30,7 +30,7 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
   it("classifies channels by login method", () => {
     // Token-paste is the default and stays implicit (undefined). WeChat
     // captures a static token via a host-side QR handshake
-    // (src/ext/wechat/login.ts). WhatsApp pairs entirely inside the sandbox
+    // (src/lib/messaging/channels/wechat/login.ts). WhatsApp pairs entirely inside the sandbox
     // because the bot library owns the live Signal-style session — a
     // host-side capture would yield a stale blob the moment the bot mutates
     // its on-disk state. Onboarding branches on this flag, so flipping any

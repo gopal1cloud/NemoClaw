@@ -244,7 +244,7 @@ describe("built-in channel manifests", () => {
       "state/registry",
       "adapters/openshell",
       "host-qr-handlers",
-      "ext/wechat",
+      "../ext/",
       "node:fs",
       "node:child_process",
     ];
