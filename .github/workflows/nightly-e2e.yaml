@@ -1544,18 +1544,11 @@ jobs:
 
       - name: Run credential migration Vitest test
         # Trusted-code boundary: this job runs the checked-out target ref with
-        # NVIDIA_INFERENCE_API_KEY because it validates live credential
-        # migration into the OpenShell gateway. The hosted service behind this
-        # repo-scoped secret is inference-api.nvidia.com, not Build/NVIDIA
-        # Endpoints, so the test stages it as the custom provider's
-        # COMPATIBLE_API_KEY. Keep checkout credentials disabled, do not pass
+        # NVIDIA_INFERENCE_API_KEY because it validates live credential migration into the
+        # OpenShell gateway. Keep checkout credentials disabled, do not pass
         # GITHUB_TOKEN, and rely on reviewed/maintainer-dispatched refs.
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-          NEMOCLAW_PROVIDER: custom
-          NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
-          NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
-          NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/credential-migration
           NEMOCLAW_RUN_E2E_SCENARIOS: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-cred-migration"
