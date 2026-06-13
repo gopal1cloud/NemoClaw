@@ -78,7 +78,7 @@ INSTALL_TIMEOUT_SECONDS="${NEMOCLAW_E2E_INSTALL_TIMEOUT_SECONDS:-1800}"
 
 AUTO_PAIR_FAST_DEADLINE_DEFAULT="3"
 AUTO_PAIR_DEADLINE_DEFAULT="30"
-AUTO_PAIR_SLOW_INTERVAL_DEFAULT="600"
+AUTO_PAIR_SLOW_INTERVAL_DEFAULT="5"
 AUTO_PAIR_RUN_TIMEOUT_DEFAULT="10"
 if [ "$TEST_MODE" = "legacy-repro" ]; then
   AUTO_PAIR_FAST_DEADLINE_DEFAULT="1"
@@ -858,7 +858,7 @@ info "$summary"
 initial_request_id=$(printf '%s' "$state" | select_cli_request new 2>/dev/null) || initial_request_id=""
 if [ -n "$initial_request_id" ]; then
   pass "pending low-scope CLI pairing request exists (${initial_request_id})"
-  approve_request "$initial_request_id" "initial CLI pairing" || exit 1
+  approve_request "$initial_request_id" "initial CLI pairing" 1 || exit 1
 else
   paired_without_write=$(printf '%s' "$state" | select_cli_paired_without_write 2>/dev/null) || paired_without_write=""
   if [ -n "$paired_without_write" ]; then
@@ -1049,12 +1049,15 @@ section "Phase 6: Verify watcher emits slow-mode fast-reentry instrumentation"
 # for several quiet polls) it transitions to slow-mode keepalive. A late
 # allowlisted scope upgrade arriving after that point must drop polling
 # back to a bounded fast-reentry window so the OpenClaw client does not
-# time out and fall back to embedded mode. Phases 3-5 have already left
-# at least one paired device in the sandbox, so the watcher should have
-# logged a slow-mode transition; the fast-reentry marker is emitted on
-# the first allowlisted approval attempt the watcher itself performs and
-# is therefore best-effort here (the test's explicit approve_request may
-# win the race against the watcher poll cadence).
+# time out and fall back to embedded mode. Phases 3-5 leave at least one
+# paired device in the sandbox and the in-sandbox watcher runs with a
+# tight SLOW_INTERVAL (AUTO_PAIR_SLOW_INTERVAL_DEFAULT), so the watcher
+# is expected to observe one of the pending allowlisted requests before
+# the explicit approve_request wins the race and to record the
+# fast-reentry marker. Both the slow-mode transition and the marker are
+# asserted strictly here. The explicit approve_request calls earlier in
+# the test tolerate watcher-wins via allow_already_approved=1, so the
+# watcher catching the request first does not destabilise prior phases.
 
 auto_pair_log_snapshot=$(sandbox_exec_sh_script 20 '
 set -u
@@ -1079,7 +1082,7 @@ fi
 if grep -F '[auto-pair] fast-reentry bumped' <<<"$auto_pair_log_snapshot" >/dev/null; then
   pass "watcher logged fast-reentry marker on at least one allowlisted approval attempt"
 else
-  info "fast-reentry marker not observed (explicit approve_request likely won the race against the watcher poll cadence; the user-facing path is gated by Phase 5)"
+  fail "watcher did not log any fast-reentry marker during the test window"
 fi
 
 section "Summary"
