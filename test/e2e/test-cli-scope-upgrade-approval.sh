@@ -1052,12 +1052,16 @@ section "Phase 6: Verify watcher emits slow-mode fast-reentry instrumentation"
 # time out and fall back to embedded mode. Phases 3-5 leave at least one
 # paired device in the sandbox and the in-sandbox watcher runs with a
 # tight SLOW_INTERVAL (AUTO_PAIR_SLOW_INTERVAL_DEFAULT), so the watcher
-# is expected to observe one of the pending allowlisted requests before
-# the explicit approve_request wins the race and to record the
-# fast-reentry marker. Both the slow-mode transition and the marker are
-# asserted strictly here. The explicit approve_request calls earlier in
-# the test tolerate watcher-wins via allow_already_approved=1, so the
-# watcher catching the request first does not destabilise prior phases.
+# normally observes one of the pending allowlisted requests and records
+# the fast-reentry marker before the explicit approve_request wins the
+# race; the prior explicit approve calls tolerate watcher-wins via
+# allow_already_approved=1. The slow-mode transition is asserted
+# strictly. The fast-reentry marker is informational only: when the
+# explicit approve_request wins the race the watcher never attempts an
+# approve for that requestId and the marker is never emitted, yet the
+# user-facing path still works correctly (gated end-to-end by the agent
+# success and fallback-marker checks in Phase 5, and deterministically
+# by the unit test under test/nemoclaw-start.test.ts).
 
 auto_pair_log_snapshot=$(sandbox_exec_sh_script 20 '
 set -u
@@ -1082,7 +1086,7 @@ fi
 if grep -F '[auto-pair] fast-reentry bumped' <<<"$auto_pair_log_snapshot" >/dev/null; then
   pass "watcher logged fast-reentry marker on at least one allowlisted approval attempt"
 else
-  fail "watcher did not log any fast-reentry marker during the test window"
+  info "watcher did not log a fast-reentry marker (explicit approve_request won the race against the watcher poll cadence; the user-facing path is gated by Phase 5 and unit test/nemoclaw-start.test.ts)"
 fi
 
 section "Summary"
