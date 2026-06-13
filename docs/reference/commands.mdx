@@ -547,7 +547,7 @@ $$nemoclaw my-assistant agent --session-id review-42 -m "Any new findings?"
 $$nemoclaw my-assistant agent --json -m 'ping'
 ```
 
-The exit code is the remote command's exit code, so host-side pipelines can branch on it. Streaming follows whatever `openclaw agent` already emits on stdout; no additional buffering is added.
+The exit code is the remote command's exit code, so host-side pipelines can branch on it. Streaming follows whatever `openclaw agent` already emits on `stdout`; no additional buffering is added.
 
 Common upstream flags include `-m <text>`, `--session-id <id>`, `--agent <id>`, `--model <id>`, `--thinking <level>`, `--json`, `--deliver`, `--reply-channel <channel>`, and `--timeout <seconds>`. Run `$$nemoclaw <name> agent --help` for the wrapper-level summary, or invoke `$$nemoclaw <name> exec -- openclaw agent --help` to view the upstream OpenClaw help text directly.
 

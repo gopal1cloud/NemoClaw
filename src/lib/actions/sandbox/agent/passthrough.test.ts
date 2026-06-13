@@ -44,7 +44,7 @@ describe("runAgentPassthrough", () => {
     expect(writes.join("")).toMatch(/port 8642/);
   });
 
-  it("forwards extraArgs verbatim to `openclaw agent` for OpenClaw sandboxes", async () => {
+  it("forwards extraArgs verbatim to `openclaw agent` for OpenClaw sandboxes with --no-tty enforced", async () => {
     execMock.mockClear();
     ensureLiveMock.mockClear();
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
@@ -52,30 +52,45 @@ describe("runAgentPassthrough", () => {
       extraArgs: ["--agent", "work", "--session-id", "s-1", "-m", "ping", "--json"],
     });
     expect(ensureLiveMock).toHaveBeenCalledWith("alpha", { allowNonReadyPhase: true });
-    expect(execMock).toHaveBeenCalledWith("alpha", [
-      "openclaw",
-      "agent",
-      "--agent",
-      "work",
-      "--session-id",
-      "s-1",
-      "-m",
-      "ping",
-      "--json",
-    ]);
+    expect(execMock).toHaveBeenCalledWith(
+      "alpha",
+      ["openclaw", "agent", "--agent", "work", "--session-id", "s-1", "-m", "ping", "--json"],
+      { tty: false },
+    );
   });
 
-  it("treats an unknown sandbox as OpenClaw (registry miss should not block)", async () => {
+  it("treats a clean registry miss as OpenClaw (preserves bootstrap and recovery paths)", async () => {
     execMock.mockClear();
     getSandboxMock.mockReturnValueOnce(null);
     await runAgentPassthrough("ghost", { extraArgs: ["-m", "hi"] });
-    expect(execMock).toHaveBeenCalledWith("ghost", ["openclaw", "agent", "-m", "hi"]);
+    expect(execMock).toHaveBeenCalledWith("ghost", ["openclaw", "agent", "-m", "hi"], {
+      tty: false,
+    });
   });
 
-  it("works with no extraArgs (prints upstream openclaw agent help inside the sandbox)", async () => {
+  it("fails closed when the registry read throws and never spawns OpenShell exec", async () => {
+    execMock.mockClear();
+    ensureLiveMock.mockClear();
+    getSandboxMock.mockImplementationOnce(() => {
+      throw new Error("EACCES: permission denied, open '~/.config/nemoclaw/sandboxes.json'");
+    });
+    const { writes, exit, proc } = makeProcMock();
+    await expect(
+      runAgentPassthrough("alpha", { extraArgs: ["-m", "hi"] }, { process: proc }),
+    ).rejects.toThrow("__exit:2");
+    expect(execMock).not.toHaveBeenCalled();
+    expect(ensureLiveMock).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(2);
+    const all = writes.join("");
+    expect(all).toMatch(/Could not read the local sandbox registry/);
+    expect(all).toMatch(/Refusing to forward/);
+    expect(all).toMatch(/EACCES/);
+  });
+
+  it("works with no extraArgs and still enforces --no-tty", async () => {
     execMock.mockClear();
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
     await runAgentPassthrough("alpha");
-    expect(execMock).toHaveBeenCalledWith("alpha", ["openclaw", "agent"]);
+    expect(execMock).toHaveBeenCalledWith("alpha", ["openclaw", "agent"], { tty: false });
   });
 });

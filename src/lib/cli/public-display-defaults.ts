@@ -253,7 +253,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
   "sandbox:agent": [
     {
       group: "Sandbox Management",
-      order: 4.6,
+      order: 4.55,
       flags: "[openclaw-agent-flags...]",
     },
   ],
