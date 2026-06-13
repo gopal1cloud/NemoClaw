@@ -530,6 +530,50 @@ The exit code is the remote command's exit code.
 | `--tty` / `--no-tty` | Allocate a pseudo-terminal; defaults to auto-detection (on when stdin and stdout are terminals) |
 | `--timeout <seconds>` | Timeout in seconds (`0` means no timeout) |
 
+### `$$nemoclaw <name> prompt`
+
+Send a single prompt to the agent running inside a sandbox and stream the response to stdout.
+The prompt runs non-interactively over the same OpenShell exec transport as `exec`, with `HOME=/sandbox` so the addressed agent profile resolves the same way as `connect`.
+Use this when driving the sandbox programmatically from another process (CI job, multi-agent platform, evaluation harness) rather than from an interactive terminal.
+
+<AgentOnly variant="openclaw">
+
+The prompt is forwarded to `openclaw agent --agent <profile> -m <text>` inside the sandbox, where `<profile>` defaults to `main` and can be overridden with `--agent`.
+
+```bash
+$$nemoclaw my-assistant prompt "Summarise README.md"
+$$nemoclaw my-assistant prompt --agent chess-bot "Best opening for Black?"
+$$nemoclaw my-assistant prompt --prompt-file ./question.txt
+echo "What is 2+2?" | $$nemoclaw my-assistant prompt --prompt-file -
+```
+
+Supply the prompt body in one of two ways: as a positional argument (one quoted string), or via `--prompt-file <path>` where `-` reads from stdin. Passing both at once is an error; passing neither is an error.
+
+Streaming follows whatever `openclaw agent` already emits on stdout; no additional buffering is added. The exit code is the remote command's exit code, so pipelines can branch on it.
+
+| Flag | Description |
+|------|-------------|
+| `--agent <profile>` | OpenClaw agent profile to address (default: `main`) |
+| `--workdir <dir>` | Working directory inside the sandbox |
+| `--timeout <seconds>` | Timeout in seconds (`0` means no timeout) |
+| `--prompt-file <path\|->` | Read the prompt body from a file path, or `-` for stdin |
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+`prompt` is currently supported only on OpenClaw sandboxes. Hermes already exposes an OpenAI-compatible HTTP API on port `8642` inside the sandbox, so non-interactive use does not need a wrapper command.
+
+Forward the port and POST chat completions directly:
+
+```bash
+openshell forward start --background 8642 my-hermes
+curl -sN http://127.0.0.1:8642/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"<onboarded-model>","messages":[{"role":"user","content":"What is 2+2?"}],"stream":true}'
+```
+
+</AgentOnly>
+
 ### Advanced Sandbox Maintenance Commands
 
 The following commands are available for targeted host-side maintenance, but they are not part of the top-level public command list.

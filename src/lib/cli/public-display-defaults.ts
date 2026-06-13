@@ -250,6 +250,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]",
     },
   ],
+  "sandbox:prompt": [
+    {
+      group: "Sandbox Management",
+      order: 4.6,
+      flags: "[--agent <profile>] [--workdir <dir>] [--timeout <s>] [--prompt-file <path|->] [<text>]",
+    },
+  ],
   "sandbox:upload": [
     {
       group: "Sandbox Management",
