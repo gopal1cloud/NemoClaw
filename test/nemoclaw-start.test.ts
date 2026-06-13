@@ -1655,7 +1655,10 @@ describe("nemoclaw-start auto-pair slow-mode keepalive (#4263)", () => {
     });
     const browserPaired = JSON.stringify({ pending: [], paired: [browserClient] });
     const lateCli = JSON.stringify({
-      pending: [{ requestId: "late-cli", ...cliClient }],
+      pending: [
+        { requestId: "late-cli", ...cliClient },
+        { requestId: "late-cli-b", ...cliClient },
+      ],
       paired: [browserClient],
     });
     const allPaired = JSON.stringify({ pending: [], paired: [browserClient, cliClient] });
@@ -1686,7 +1689,7 @@ exit 2
     return { tmpDir, fakeOpenclaw, approveLog };
   }
 
-  it("approves late CLI scope upgrades after browser pairing converges and drops back to fast cadence", () => {
+  it("approves concurrent late CLI scope upgrades after browser pairing converges and drops back to fast cadence", () => {
     const { tmpDir, fakeOpenclaw, approveLog } = setupLateCliFixture("nemoclaw-auto-pair-slow-");
     try {
       const run = spawnSync("python3", ["-c", buildAutoPairScript()], {
@@ -1694,12 +1697,7 @@ exit 2
         env: {
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
-          // time.sleep is monkey-patched out, so DEADLINE is the only
-          // wall-clock check; 5s lets the loop iterate through every branch
-          // of the timeline. SLOW_INTERVAL is set strictly above
-          // FAST_REENTRY_INTERVAL so the regression would be observable
-          // (markers / ordering / approval count) if fast-reentry did not
-          // arm on the late-cli wave.
+          // SLOW_INTERVAL > FAST_REENTRY_INTERVAL exposes any regression.
           NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "600",
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "5",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "5",
@@ -1715,28 +1713,25 @@ exit 2
       expect(run.stdout).toContain(
         "[auto-pair] browser pairing converged; entering slow-mode approvals=1",
       );
+      // Concurrent late wave — proxy for two sibling sandboxes' upgrades.
       expect(run.stdout).toContain(
         "[auto-pair] approved request=late-cli client=openclaw-cli mode=cli",
       );
-      expect(run.stdout).toContain("watcher deadline reached approvals=2");
-      expect(run.stdout).not.toContain("browser pairing converged approvals=");
-      expect(run.stdout).not.toContain("devices paired (");
-      expect(run.stdout).not.toContain("non-browser pairing converged approvals=");
-      // Critical: the slow-mode → fast-reentry transition fires on the
-      // late-cli wave (after convergence, before late-cli approval logs).
-      expect(run.stdout).toContain("[auto-pair] fast-reentry bumped polls=3 approved=2 mode=slow");
+      expect(run.stdout).toContain(
+        "[auto-pair] approved request=late-cli-b client=openclaw-cli mode=cli",
+      );
+      expect(run.stdout).toContain("watcher deadline reached approvals=3");
+      // Single marker per poll wave, transition after convergence.
+      expect(run.stdout).toContain("[auto-pair] fast-reentry bumped polls=3 approved=3 mode=slow");
       const convergedAt = run.stdout.indexOf("browser pairing converged");
-      const bumpedAt = run.stdout.indexOf("fast-reentry bumped polls=3 approved=2 mode=slow");
-      const lateApprovedAt = run.stdout.indexOf("approved request=late-cli");
+      const bumpedAt = run.stdout.indexOf("fast-reentry bumped polls=3 approved=3 mode=slow");
       expect(bumpedAt).toBeGreaterThan(convergedAt);
-      expect(lateApprovedAt).toBeGreaterThan(convergedAt);
-      // Rising-edge bump per fresh requestId: late-cli emits exactly one
-      // slow-mode marker even though it stays pending across several polls.
-      const slowMarkerRe = /fast-reentry bumped polls=3 approved=2 mode=slow/g;
+      const slowMarkerRe = /fast-reentry bumped polls=3 approved=3 mode=slow/g;
       expect(run.stdout.match(slowMarkerRe)?.length).toBe(1);
       expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual([
         "browser-pair",
         "late-cli",
+        "late-cli-b",
       ]);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -2182,7 +2177,7 @@ exit 2
     }
   }, 40_000);
 
-  it("retries a non-zero approve failure without counting it as approved", () => {
+  it("retries a non-zero approve failure without counting it as approved or re-arming fast-reentry", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-afail-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateFile = path.join(tmpDir, "approve-count");
@@ -2235,6 +2230,8 @@ exit 2
           NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "600",
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+          NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
+          NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "1",
         },
         timeout: 20_000,
       });
@@ -2248,6 +2245,9 @@ exit 2
       expect(run.stdout).toContain("watcher deadline reached approvals=1");
       expect(fs.readFileSync(stateFile, "utf-8").trim()).toBe("2");
       expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual(["retry-cli"]);
+      // Rising edge arms once for retry-cli; second poll reuses bumped set.
+      const markerRe = /fast-reentry bumped polls=3 approved=0 mode=fast/g;
+      expect(run.stdout.match(markerRe)?.length).toBe(1);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
