@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { ChannelManifest } from "../manifest";
+import type { ChannelManifest, ChannelPolicyPresetReference } from "../manifest";
 import {
   getMessagingChannelForCredentialEnvKey,
   getMessagingConfigEnvAliases,
@@ -173,10 +173,7 @@ describe("built-in messaging channel metadata", () => {
   });
 });
 
-function manifestWithPreset(
-  id: string,
-  preset: NonNullable<ChannelManifest["policyPresets"]>[number],
-): ChannelManifest {
+function manifestWithPreset(id: string, preset: ChannelPolicyPresetReference): ChannelManifest {
   return {
     schemaVersion: 1,
     id,

@@ -7,7 +7,6 @@ import type {
   ChannelPolicyPresetReference,
   ChannelPolicyPresetSpec,
   MessagingAgentId,
-  MessagingSerializableValue,
 } from "../manifest";
 import { BUILT_IN_CHANNEL_MANIFESTS } from "./built-ins";
 
@@ -323,12 +322,6 @@ function packageInstallValue(
     spec: value.spec,
     ...(typeof value.pin === "boolean" ? { pin: value.pin } : {}),
   };
-}
-
-function stringArray(value: MessagingSerializableValue | undefined): string[] {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === "string")
-    : [];
 }
 
 function uniqueStrings(values: readonly string[]): string[] {
