@@ -306,6 +306,9 @@ const {
   rejectUnsupportedWindowsHostOllama,
   shouldFrontOllamaWithProxy,
 }: typeof import("./onboard/local-inference-topology") = require("./onboard/local-inference-topology");
+const {
+  waitForGatewayHealth,
+}: typeof import("./onboard/gateway-health-wait") = require("./onboard/gateway-health-wait");
 const { resolveOpenshell } = require("./adapters/openshell/resolve");
 const credentials: typeof import("./credentials/store") = require("./credentials/store");
 const {
@@ -472,6 +475,8 @@ const {
   preflightDashboardPortRangeAvailability,
   resolveCreateSandboxDashboardPort,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
+const { assertDashboardPortNotReserved, buildRequiredPreflightPorts } =
+  require("./onboard/preflight-ports") as typeof import("./onboard/preflight-ports");
 const { tryCleanupOrphanedDashboardForward } =
   require("./onboard/orphaned-dashboard-forward") as typeof import("./onboard/orphaned-dashboard-forward");
 const { destroyGatewayForReuse } =
@@ -1741,22 +1746,14 @@ async function preflight(
   // skip the dashboard port check entirely — ensureDashboardForward will
   // find a free port.
   const dashboardPortToCheck = _preflightDashboardPort ?? null;
-  const requiredPorts = [
-    {
-      port: GATEWAY_PORT,
-      label: "OpenShell gateway",
-      envVar: "NEMOCLAW_GATEWAY_PORT",
-    },
-    ...(dashboardPortToCheck !== null
-      ? [
-          {
-            port: dashboardPortToCheck,
-            label: `${cliDisplayName()} dashboard`,
-            envVar: "NEMOCLAW_DASHBOARD_PORT",
-          },
-        ]
-      : []),
-  ];
+  // #4984 — fail fast on an explicit reserved dashboard port; deferred paths
+  // (CHAT_UI_URL / persisted) are caught at createSandbox.
+  assertDashboardPortNotReserved(dashboardPortToCheck);
+  const requiredPorts = buildRequiredPreflightPorts({
+    gatewayPort: GATEWAY_PORT,
+    dashboardPort: dashboardPortToCheck,
+    dashboardLabel: `${cliDisplayName()} dashboard`,
+  });
   for (const { port, label, envVar } of requiredPorts) {
     const portCheckOptions =
       port === GATEWAY_PORT ? dockerDriverGatewayEnv.getGatewayPortCheckOptions() : undefined;
@@ -2031,31 +2028,21 @@ async function startGatewayWithOptions(
           );
         }
 
-        const healthPollCount = healthWait.count;
-        const healthPollInterval = healthWait.interval;
-        for (let i = 0; i < healthPollCount; i++) {
-          const repairResult = repairGatewayBootstrapSecrets();
-          if (repairResult.repaired) {
-            attachGatewayMetadataIfNeeded({ forceRefresh: true });
-          } else if (gatewayClusterHealthcheckPassed()) {
-            attachGatewayMetadataIfNeeded();
-          }
-          // Ensure the gateway remains selected before each probe.
-          runCaptureOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
-          const status = runCaptureOpenshell(["status"], { ignoreError: true });
-          const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
-            ignoreError: true,
-          });
-          const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-          // Require BOTH the openshell CLI metadata to report healthy AND the
-          // host HTTP endpoint to be serving — the CLI metadata can report
-          // healthy from the previous run while the upstream is still warming
-          // up after a Docker daemon restart, leading to "Connection refused"
-          // in step 4. See #3258.
-          if (isGatewayHealthy(status, namedInfo, currentInfo) && (await isGatewayHttpReady())) {
-            return; // success
-          }
-          if (i < healthPollCount - 1) sleepSeconds(healthPollInterval);
+        if (
+          await waitForGatewayHealth({
+            attachGatewayMetadataIfNeeded,
+            gatewayClusterHealthcheckPassed,
+            gatewayName: GATEWAY_NAME,
+            healthPollCount: healthWait.count,
+            healthPollIntervalSeconds: healthWait.interval,
+            isGatewayHealthy,
+            isGatewayHttpReady,
+            repairGatewayBootstrapSecrets,
+            runCaptureOpenshell,
+            sleepSeconds,
+          })
+        ) {
+          return;
         }
 
         throw new Error("Gateway failed to start");
@@ -2333,8 +2320,14 @@ async function startGateway(
   return startGatewayWithOptions(_gpu, { exitOnFailure: true, gpuPassthrough });
 }
 
-async function startGatewayForRecovery(_gpu: ReturnType<typeof nim.detectGpu>): Promise<void> {
-  return startGatewayWithOptions(_gpu, { exitOnFailure: false });
+async function startGatewayForRecovery(options = {}): Promise<void> {
+  return require("./onboard/gateway-recovery").startGatewayForRecovery(options, {
+    getGatewayStartEnv,
+    runCaptureOpenshell,
+    runOpenshell,
+    startGatewayWithOptions,
+    isLinuxDockerDriverGatewayEnabled,
+  });
 }
 
 function getGatewayStartEnv(): Record<string, string> {
@@ -2354,17 +2347,7 @@ function getGatewayStartEnv(): Record<string, string> {
   return gatewayEnv;
 }
 
-/**
- * Memoizes `applyOverlayfsAutoFix` per upstream image for the lifetime of
- * the process. The expensive work (host assessment + image inspect / pull /
- * build) only needs to happen once per onboard invocation; both
- * `startGatewayWithOptions` and `recoverGatewayRuntime` go through
- * `getGatewayStartEnv()`, and without this cache the recovery path would
- * re-run the full assessment.
- *
- * Reset on a per-process basis only — env-var changes mid-process are
- * not modelled here and shouldn't happen in the CLI's normal flow.
- */
+/** Cache the overlayfs auto-fix result per upstream image for this onboard process. */
 const overlayFixResultCache = new Map<string, string | null>();
 
 /**
@@ -3647,17 +3630,16 @@ async function setupNim(
         hydrateCredentialEnv(credentialEnv);
 
         if (selected.key === "build") {
-          // Allow NEMOCLAW_PROVIDER_KEY as a fallback for NVIDIA_API_KEY.
-          // Check raw process.env first — NEMOCLAW_PROVIDER_KEY is a user-facing
-          // override that should take precedence before resolving from credentials.json.
+          // Let NEMOCLAW_PROVIDER_KEY fill the NVIDIA key without overriding explicit env.
           const _nvProviderKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-          // check-direct-credential-env-ignore -- intentional: checking if env is already set before applying NEMOCLAW_PROVIDER_KEY override
-          const existingNvidiaKey = normalizeCredentialValue(process.env.NVIDIA_API_KEY ?? "");
+          const existingNvidiaKey = ["NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY"]
+            .map((envName) => normalizeCredentialValue(process.env[envName] ?? ""))
+            .find(Boolean);
           if (_nvProviderKey && !existingNvidiaKey) {
-            process.env.NVIDIA_API_KEY = _nvProviderKey;
+            process.env.NVIDIA_INFERENCE_API_KEY = _nvProviderKey;
           }
           if (isNonInteractive()) {
-            const resolvedNvidiaKey = resolveProviderCredential("NVIDIA_API_KEY");
+            const resolvedNvidiaKey = resolveProviderCredential("NVIDIA_INFERENCE_API_KEY");
             if (resolvedNvidiaKey) {
               const keyError = validateNvidiaApiKeyValue(resolvedNvidiaKey);
               if (keyError) {
@@ -4016,7 +3998,8 @@ async function setupNim(
             // answer falls through to startNimContainerByName's warning so
             // we don't double-fail in non-interactive callers.
             ngcApiKey =
-              hydrateCredentialEnv("NGC_API_KEY") || hydrateCredentialEnv("NVIDIA_API_KEY");
+              hydrateCredentialEnv("NGC_API_KEY") ||
+              hydrateCredentialEnv("NVIDIA_INFERENCE_API_KEY");
             if (!ngcApiKey && !isNonInteractive()) {
               console.log("");
               console.log("  NGC API Key required to download NIM model weights at runtime.");
@@ -4799,11 +4782,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   if (!noticeAccepted) {
     process.exit(1);
   }
-  // Validate NEMOCLAW_PROVIDER early so invalid values fail before
-  // preflight (Docker/OpenShell checks). Without this, users see a
+  // Validate NEMOCLAW_PROVIDER and NEMOCLAW_VLLM_MODEL early so invalid values
+  // fail before preflight (Docker/OpenShell checks). Without this, users see a
   // misleading 'Docker is not reachable' error instead of the real
-  // problem: an unsupported provider value.
-  getRequestedProviderHint();
+  // problem: an unsupported provider value or unrecognised vLLM model slug.
+  resumeConfig.preflightEarlyOnboardEnv();
   const lockResult = onboardSession.acquireOnboardLock(
     `nemoclaw onboard${resume ? " --resume" : ""}${fresh ? " --fresh" : ""}${isNonInteractive() ? " --non-interactive" : ""}${requestedFromDockerfile ? ` --from ${requestedFromDockerfile}` : ""}`,
   );

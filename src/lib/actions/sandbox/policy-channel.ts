@@ -8,6 +8,7 @@ import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt, getCredential } from "../../credentials/store";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
+import { getSandboxTargetGatewayName } from "./gateway-target";
 import {
   type ChannelManifest,
   createBuiltInChannelManifestRegistry,
@@ -31,7 +32,6 @@ const { isNonInteractive } = require("../../onboard") as { isNonInteractive: () 
 const onboardProviders = require("../../onboard/providers");
 
 import { filterSetupPolicyPresetsForAgent } from "../../onboard/agent-policy-presets";
-import { BASE_GATEWAY_NAME } from "../../onboard/gateway-binding";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import * as policies from "../../policy";
 
@@ -465,8 +465,7 @@ async function checkMessagingPreEnableHooks(
   }
 
   const hookRegistry = createBuiltInMessagingHookRegistry();
-  const currentGatewayName =
-    registryEntries.find((entry) => entry.name === sandboxName)?.gatewayName || BASE_GATEWAY_NAME;
+  const currentGatewayName = getSandboxTargetGatewayName(sandboxName);
   const additionalInputs = createMessagingPreEnableHookInputs({
     currentSandbox: sandboxName,
     currentGatewayName,
@@ -532,13 +531,14 @@ async function applyChannelAddToGatewayAndRegistry(
     token,
   }));
   if (tokenDefs.length > 0) {
-    const recovery = await recoverNamedGatewayRuntime();
+    const gatewayName = getSandboxTargetGatewayName(sandboxName);
+    const recovery = await recoverNamedGatewayRuntime({ gatewayName });
     if (!recovery.recovered) {
       console.error(
         `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway. Tokens were staged`,
       );
       console.error("  in env for this run only — re-run after starting the gateway, or run");
-      console.error("  'openshell gateway start --name nemoclaw' manually.");
+      console.error(`  'openshell gateway start --name ${gatewayName}' manually.`);
       process.exit(1);
     }
     // upsertMessagingProviders handles create-or-update and process.exits on
@@ -560,13 +560,14 @@ async function applyChannelRemoveToGatewayAndRegistry(
   let gatewayReachable = true;
 
   if (channelTokenKeys.length > 0) {
-    const recovery = await recoverNamedGatewayRuntime();
+    const gatewayName = getSandboxTargetGatewayName(sandboxName);
+    const recovery = await recoverNamedGatewayRuntime({ gatewayName });
     if (!recovery.recovered) {
       console.error(
         `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway to delete the bridge.`,
       );
       console.error(
-        "  Re-run after starting the gateway, or run 'openshell gateway start --name nemoclaw'.",
+        `  Re-run after starting the gateway, or run 'openshell gateway start --name ${gatewayName}'.`,
       );
       if (!bestEffort) process.exit(1);
       gatewayReachable = false;

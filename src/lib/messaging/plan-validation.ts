@@ -29,7 +29,7 @@ export function parseSandboxMessagingPlan(
     !Array.isArray(value.disabledChannels) ||
     !Array.isArray(value.credentialBindings) ||
     !isObject(value.networkPolicy) ||
-    !Array.isArray(value.agentRender) ||
+    (Object.hasOwn(value, "agentRender") && !Array.isArray(value.agentRender)) ||
     !Array.isArray(value.buildSteps) ||
     !isRuntimeSetup(value.runtimeSetup) ||
     !Array.isArray(value.stateUpdates) ||
@@ -51,6 +51,7 @@ export function parseSandboxMessagingPlan(
     if (typeof channel.active !== "boolean") return null;
     if (typeof channel.disabled !== "boolean") return null;
     if (!Array.isArray(channel.inputs)) return null;
+    if (Object.hasOwn(channel, "hooks") && !Array.isArray(channel.hooks)) return null;
     if (supported && !supported.has(channel.channelId)) return null;
     if (
       value.channels.findIndex(
@@ -62,7 +63,9 @@ export function parseSandboxMessagingPlan(
   }
   if (!value.disabledChannels.every((channelId) => typeof channelId === "string")) return null;
 
-  return cloneSandboxMessagingPlan(value as unknown as SandboxMessagingPlan);
+  return cloneSandboxMessagingPlan(
+    normalizePersistedSandboxMessagingPlanShape(value as unknown as MaybeCompactMessagingPlan),
+  );
 }
 
 export function cloneSandboxMessagingPlan(plan: SandboxMessagingPlan): SandboxMessagingPlan {
@@ -141,6 +144,28 @@ function stringifyPlanStateValue(value: MessagingSerializableValue | undefined):
   }
   const text = String(value).trim();
   return text.length > 0 ? text : null;
+}
+
+type MaybeCompactMessagingChannelPlan = Omit<SandboxMessagingPlan["channels"][number], "hooks"> & {
+  readonly hooks?: SandboxMessagingPlan["channels"][number]["hooks"];
+};
+
+type MaybeCompactMessagingPlan = Omit<SandboxMessagingPlan, "agentRender" | "channels"> & {
+  readonly agentRender?: SandboxMessagingPlan["agentRender"];
+  readonly channels: readonly MaybeCompactMessagingChannelPlan[];
+};
+
+function normalizePersistedSandboxMessagingPlanShape(
+  plan: MaybeCompactMessagingPlan,
+): SandboxMessagingPlan {
+  return {
+    ...plan,
+    agentRender: Array.isArray(plan.agentRender) ? [...plan.agentRender] : [],
+    channels: plan.channels.map((channel) => ({
+      ...channel,
+      hooks: Array.isArray(channel.hooks) ? [...channel.hooks] : [],
+    })),
+  };
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

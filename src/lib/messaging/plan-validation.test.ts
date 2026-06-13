@@ -12,6 +12,7 @@ import {
   getMessagingPlanStateValues,
   parseSandboxMessagingPlan,
 } from "./plan-validation";
+import { compactSandboxMessagingPlanForPersistence } from "./persistence";
 
 function makePlan(overrides: Partial<SandboxMessagingPlan> = {}): SandboxMessagingPlan {
   return {
@@ -63,6 +64,18 @@ describe("parseSandboxMessagingPlan", () => {
 
     expect(parsed).toEqual(source);
     expect(parsed).not.toBe(source);
+  });
+
+  it("accepts compact persisted plans without render or channel hooks", () => {
+    const source = makePlan();
+    const compact = compactSandboxMessagingPlanForPersistence(source);
+    const parsed = parseSandboxMessagingPlan(compact);
+
+    expect(parsed).toEqual({
+      ...source,
+      agentRender: [],
+      channels: source.channels.map((channel) => ({ ...channel, hooks: [] })),
+    });
   });
 
   it("rejects mismatched selectors, duplicate channels, and unsupported channels", () => {

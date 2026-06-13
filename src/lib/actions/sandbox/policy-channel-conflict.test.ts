@@ -687,7 +687,13 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(upsertMock).not.toHaveBeenCalled(); // aborted before registering
   });
 
-  it("slack: uses the current sandbox gateway when checking Socket Mode conflicts", async () => {
+  it("slack: a second sandbox on the SAME non-default gateway is blocked", async () => {
+    // Both sandboxes are bound to `nemoclaw-8090`. The credential axis would
+    // not flag distinct tokens, but the channel-owned pre-enable gateway axis
+    // must check the same target gateway the provider mutation uses.
+    const slackBot = "xoxb-alpha-bot-token";
+    const slackApp = "xapp-alpha-app-token";
+    const alpha = { name: "alpha", gatewayName: "nemoclaw-8090", gatewayPort: 8090 } as never;
     const bob = makePlanEntry("bob", "slack", [
       {
         providerEnvKey: "SLACK_BOT_TOKEN",
@@ -698,23 +704,20 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
         credentialHash: hashCredential("xapp-bob-app") as string,
       },
     ]);
-    (bob as { gatewayName?: string }).gatewayName = "nemoclaw-9090";
-    arrangeRegistry({
-      current: { name: "alpha", gatewayName: "nemoclaw-9090" } as SandboxEntry,
-      others: [bob],
-    });
+    (bob as { gatewayName?: string; gatewayPort?: number }).gatewayName = "nemoclaw-8090";
+    (bob as { gatewayName?: string; gatewayPort?: number }).gatewayPort = 8090;
+    arrangeRegistry({ current: alpha, others: [bob] });
     getCredentialMock.mockImplementation((key: string) =>
-      key === "SLACK_BOT_TOKEN"
-        ? "xoxb-alpha-bot"
-        : key === "SLACK_APP_TOKEN"
-          ? "xapp-alpha-app"
-          : null,
+      key === "SLACK_BOT_TOKEN" ? slackBot : key === "SLACK_APP_TOKEN" ? slackApp : null,
     );
     promptMock.mockResolvedValue("n");
 
     await addSandboxChannel("alpha", { channel: "slack" });
 
-    expect(loggedText()).toContain("Slack Socket Mode is already enabled for sandbox 'bob'");
+    const text = loggedText();
+    expect(text).toContain("Slack Socket Mode is already enabled for sandbox 'bob'");
+    expect(text).not.toContain(slackBot);
+    expect(text).not.toContain(slackApp);
     expect(conflictPromptShown()).toBe(true);
     expect(upsertMock).not.toHaveBeenCalled();
   });
