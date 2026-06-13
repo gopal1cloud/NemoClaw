@@ -205,16 +205,12 @@ describe("ManifestCompiler", () => {
       {
         channelId: "discord",
         kind: "package-install",
-        hookId: "discord-openclaw-package-install",
-        handler: "common.staticOutputs",
         outputId: "openclawPluginPackage",
         required: true,
       },
       {
         channelId: "wechat",
         kind: "package-install",
-        hookId: "wechat-openclaw-package-install",
-        handler: "common.staticOutputs",
         outputId: "openclawPluginPackage",
         required: true,
       },
@@ -245,16 +241,12 @@ describe("ManifestCompiler", () => {
       {
         channelId: "slack",
         kind: "package-install",
-        hookId: "slack-openclaw-package-install",
-        handler: "common.staticOutputs",
         outputId: "openclawPluginPackage",
         required: true,
       },
       {
         channelId: "whatsapp",
         kind: "package-install",
-        hookId: "whatsapp-openclaw-package-install",
-        handler: "common.staticOutputs",
         outputId: "openclawPluginPackage",
         required: true,
       },
@@ -287,21 +279,31 @@ describe("ManifestCompiler", () => {
       statePath: "wechatConfig.accountId",
       env: "WECHAT_ACCOUNT_ID",
     });
-    expect(plan.healthChecks).toHaveLength(ALL_CHANNELS.length);
-    expect(plan.healthChecks.every((check) => check.requiredBefore === "lifecycle-success")).toBe(
-      true,
-    );
-    expect(plan.healthChecks.find((check) => check.channelId === "telegram")?.hookIds).toEqual([
-      "telegram-openclaw-bridge-health",
-    ]);
-    expect(plan.healthChecks.find((check) => check.channelId === "discord")?.hookIds).toEqual([
-      "discord-openclaw-bridge-health",
-    ]);
-    expect(plan.healthChecks.find((check) => check.channelId === "wechat")?.hookIds).toEqual([
-      "wechat-health-check",
-    ]);
-    expect(plan.healthChecks.find((check) => check.channelId === "slack")?.hookIds).toEqual([
-      "slack-openclaw-bridge-health",
+    expect(plan.healthChecks).toEqual([
+      {
+        channelId: "telegram",
+        phase: "health-check",
+        requiredBefore: "lifecycle-success",
+        hookIds: ["telegram-openclaw-bridge-health"],
+      },
+      {
+        channelId: "discord",
+        phase: "health-check",
+        requiredBefore: "lifecycle-success",
+        hookIds: ["discord-openclaw-bridge-health"],
+      },
+      {
+        channelId: "wechat",
+        phase: "health-check",
+        requiredBefore: "lifecycle-success",
+        hookIds: ["wechat-health-check"],
+      },
+      {
+        channelId: "slack",
+        phase: "health-check",
+        requiredBefore: "lifecycle-success",
+        hookIds: ["slack-openclaw-bridge-health"],
+      },
     ]);
     expect(
       plan.agentRender.find(
@@ -549,11 +551,10 @@ describe("ManifestCompiler", () => {
       "telegram-allowlist-aliases",
       "telegram-config-prompt",
       "telegram-get-me-reachability",
-      "telegram-runtime-preload",
       "telegram-openclaw-bridge-health",
-      "telegram-openclaw-runtime-status",
       "telegram-gateway-conflict-status",
     ]);
+    expect(plan.runtimeSetup).toEqual({ nodePreloads: [], envAliases: [], secretScans: [] });
     expect(plan.credentialBindings.map((binding) => binding.channelId)).toEqual(["telegram"]);
     expect(plan.networkPolicy.entries.map((entry) => entry.channelId)).toEqual(["telegram"]);
     expect(plan.agentRender.map((render) => render.channelId)).toEqual(["telegram", "telegram"]);
@@ -746,6 +747,7 @@ describe("ManifestCompiler", () => {
       "networkPolicy",
       "agentRender",
       "buildSteps",
+      "runtimeSetup",
       "stateUpdates",
       "healthChecks",
     ] satisfies Array<keyof SandboxMessagingPlan>);
@@ -785,11 +787,10 @@ describe("ManifestCompiler", () => {
       "telegram-allowlist-aliases",
       "telegram-config-prompt",
       "telegram-get-me-reachability",
-      "telegram-runtime-preload",
       "telegram-openclaw-bridge-health",
-      "telegram-openclaw-runtime-status",
       "telegram-gateway-conflict-status",
     ]);
+    expect(plan.runtimeSetup).toEqual({ nodePreloads: [], envAliases: [], secretScans: [] });
   });
 
   it("compiles a non-built-in channel manifest through the same generic path", async () => {

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Unit tests for nemoclaw-blueprint/scripts/wechat-diagnostics.js.
+// Unit tests for src/lib/messaging/channels/wechat/runtime/wechat-diagnostics.js.
 //
 // The script is a self-contained IIFE that mutates process.stderr.write,
 // http.request, http.get, https.request, and https.get globally on require —
@@ -11,17 +11,21 @@
 // it (HTTP request, stderr write, etc.), and emits structured JSON we can
 // assert on.
 
-import { describe, it, expect } from "vitest";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { describe, expect, it } from "vitest";
 
 const DIAGNOSTICS_PATH = path.join(
   import.meta.dirname,
   "..",
-  "nemoclaw-blueprint",
-  "scripts",
+  "src",
+  "lib",
+  "messaging",
+  "channels",
+  "wechat",
+  "runtime",
   "wechat-diagnostics.js",
 );
 

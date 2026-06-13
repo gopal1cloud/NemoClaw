@@ -100,13 +100,6 @@ export function applyPreEnableChecks(
   return applyMessagingHooksForPhase(plan, "pre-enable", options);
 }
 
-export function applyRuntimePreloads(
-  plan: SandboxMessagingPlan,
-  options?: MessagingHookPhaseOptions,
-): ReturnType<typeof applyMessagingHooksForPhase> {
-  return applyMessagingHooksForPhase(plan, "runtime-preload", options);
-}
-
 export function applyHealthChecks(
   plan: SandboxMessagingPlan,
   options?: MessagingHookPhaseOptions,

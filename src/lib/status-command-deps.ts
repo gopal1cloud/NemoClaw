@@ -15,15 +15,13 @@ import type {
   ShowStatusCommandDeps,
 } from "./inventory";
 import { findAllOverlaps } from "./messaging/applier";
-import type { MessagingAgentId } from "./messaging/manifest";
-import { getActiveChannelIdsFromPlan } from "./messaging/plan-validation";
-import {
-  collectBuiltInMessagingStatusOutputs,
-  type MessagingStatusOutput,
-  type GatewayLogConflictCounterStatusOutput,
-  type SingleGatewayChannelOverlapStatusOutput,
-} from "./messaging/status-outputs";
-import { BASE_GATEWAY_NAME } from "./onboard/gateway-binding";
+import { createBuiltInChannelManifestRegistry } from "./messaging/channels";
+import { createBuiltInMessagingHookRegistry, runMessagingHookSync } from "./messaging/hooks";
+import type {
+  ChannelHookSpec,
+  MessagingAgentId,
+  MessagingSerializableValue,
+} from "./messaging/manifest";
 import * as registry from "./state/registry";
 import { createSystemDeps, parseSshProcesses } from "./state/sandbox-session";
 import { getServiceStatuses, showStatus as showServiceStatus } from "./tunnel/services";
@@ -51,29 +49,23 @@ function checkMessagingBridgeHealth(
   agent: string | null | undefined = "openclaw",
 ): MessagingBridgeHealth[] {
   const channelSet = new Set(Array.isArray(channels) ? channels : []);
-  const specs = getStatusOutputsForAgent(agent)
-    .filter(isGatewayLogConflictCounterStatusOutput)
-    .filter((spec) => channelSet.has(spec.channelId));
-  if (specs.length === 0) return [];
   const openshell = resolveOpenshell();
   if (!openshell) return [];
 
-  const results: MessagingBridgeHealth[] = [];
-  for (const spec of specs) {
-    const logTail = readSandboxFileTail(
-      rootDir,
-      openshell,
-      sandboxName,
-      spec.logFile,
-      spec.maxLogLines,
-    );
-    if (logTail === null) continue;
-    const conflicts = countRegexMatchesByLine(logTail, spec.pattern, spec.flags);
-    if (conflicts > 0) {
-      results.push({ channel: spec.channelId, conflicts });
-    }
-  }
-  return results;
+  return runMessagingStatusHooks({
+    agent: normalizeMessagingAgentId(agent),
+    channels: channelSet,
+    currentSandbox: sandboxName,
+    registryEntries: safeListRegistryEntries(),
+    hookRegistry: createBuiltInMessagingHookRegistry({
+      telegram: {
+        gatewayConflictStatus: {
+          executeSandboxCommand: (name, command, timeoutMs) =>
+            executeSandboxCommand(rootDir, openshell, name, command, timeoutMs),
+        },
+      },
+    }),
+  }).flatMap(readBridgeHealthOutputs);
 }
 
 function findMessagingOverlaps() {
@@ -82,136 +74,202 @@ function findMessagingOverlaps() {
   try {
     // Report both conflict axes independently and without deduping. They are
     // distinct, both-true facts: a shared messaging credential conflicts on any
-    // gateway, while manifest-declared gateway exclusivity can conflict even
-    // with distinct credentials. A pair that hits both genuinely has two
-    // problems, so surfacing both avoids masking the credential warning behind
-    // the gateway one.
+    // gateway, while channel-owned status hooks can report non-credential
+    // runtime exclusivity such as Slack Socket Mode on one gateway.
     const { sandboxes } = registry.listSandboxes();
     const credentialOverlaps = findAllOverlaps({
       listSandboxes: () => ({ sandboxes }),
     });
-    const singleGatewayOverlaps = listSingleGatewayOverlapSpecsForEntries(sandboxes).flatMap(
-      ({ spec, agents }) => detectSingleGatewayChannelOverlaps(sandboxes, spec, agents),
-    );
-    return [...credentialOverlaps, ...singleGatewayOverlaps];
+    const statusOverlaps = runMessagingStatusHooks({
+      agents: uniqueAgentsForEntries(sandboxes),
+      registryEntries: sandboxes,
+    }).flatMap(readOverlapOutputs);
+    return [...credentialOverlaps, ...statusOverlaps];
   } catch {
     return [];
   }
-}
-
-function isGatewayLogConflictCounterStatusOutput(
-  output: MessagingStatusOutput,
-): output is GatewayLogConflictCounterStatusOutput {
-  return output.type === "gateway-log-conflict-counter";
-}
-
-function isSingleGatewayChannelOverlapStatusOutput(
-  output: MessagingStatusOutput,
-): output is SingleGatewayChannelOverlapStatusOutput {
-  return output.type === "single-gateway-channel-overlap";
-}
-
-function getStatusOutputsForAgent(agent: string | null | undefined): MessagingStatusOutput[] {
-  return collectBuiltInMessagingStatusOutputs({ agent: normalizeMessagingAgentId(agent) });
 }
 
 function normalizeMessagingAgentId(agent: string | null | undefined): MessagingAgentId {
   return agent === "hermes" ? "hermes" : "openclaw";
 }
 
-function readSandboxFileTail(
+interface MessagingStatusHookRunOptions {
+  readonly agent?: MessagingAgentId;
+  readonly agents?: ReadonlySet<MessagingAgentId>;
+  readonly channels?: ReadonlySet<string>;
+  readonly currentSandbox?: string;
+  readonly registryEntries?: readonly registry.SandboxEntry[];
+  readonly hookRegistry?: ReturnType<typeof createBuiltInMessagingHookRegistry>;
+}
+
+type MessagingStatusHookRunResult = {
+  readonly channelId: string;
+  readonly hookId: string;
+  readonly outputs: ReturnType<typeof runMessagingHookSync>["outputs"];
+};
+
+function runMessagingStatusHooks(
+  options: MessagingStatusHookRunOptions,
+): MessagingStatusHookRunResult[] {
+  const hookRegistry = options.hookRegistry ?? createBuiltInMessagingHookRegistry();
+  const manifestRegistry = createBuiltInChannelManifestRegistry();
+  const agents: ReadonlySet<MessagingAgentId> = options.agent
+    ? new Set<MessagingAgentId>([options.agent])
+    : (options.agents ?? new Set<MessagingAgentId>(["openclaw"]));
+  const hookResults: MessagingStatusHookRunResult[] = [];
+  const seen = new Set<string>();
+
+  for (const agent of agents) {
+    for (const manifest of manifestRegistry.listAvailable({ agent })) {
+      if (options.channels && !options.channels.has(manifest.id)) continue;
+      for (const hook of manifest.hooks) {
+        if (!shouldRunStatusHook(hook, agent)) continue;
+        const key = `${manifest.id}\0${hook.id}\0${hook.handler}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        try {
+          const result = runMessagingHookSync(hook, hookRegistry, {
+            channelId: manifest.id,
+            inputs: createMessagingStatusHookInputs(options),
+          });
+          hookResults.push({
+            channelId: manifest.id,
+            hookId: hook.id,
+            outputs: result.outputs,
+          });
+        } catch {
+          // Status hooks are advisory; a broken hook must not hide the rest of
+          // `nemoclaw status`.
+        }
+      }
+    }
+  }
+  return hookResults;
+}
+
+function shouldRunStatusHook(hook: ChannelHookSpec, agent: MessagingAgentId): boolean {
+  return hook.phase === "status" && (!hook.agents || hook.agents.includes(agent));
+}
+
+function executeSandboxCommand(
   rootDir: string,
   openshell: string,
   sandboxName: string,
-  path: string,
-  maxLines: number,
-): string | null {
-  const script = `tail -n ${maxLines} ${shellQuote(path)} 2>/dev/null || true`;
+  command: string,
+  timeoutMs: number,
+): {
+  readonly status?: number | null;
+  readonly stdout?: unknown;
+  readonly stderr?: unknown;
+} | null {
   try {
     const result = spawnSync(
       openshell,
-      ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-c", script],
-      { cwd: rootDir, encoding: "utf-8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] },
+      ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-c", command],
+      { cwd: rootDir, encoding: "utf-8", timeout: timeoutMs, stdio: ["ignore", "pipe", "pipe"] },
     );
-    return typeof result.stdout === "string" ? result.stdout : "";
+    return {
+      status: result.status,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    };
   } catch {
     return null;
   }
 }
 
-function countRegexMatchesByLine(logTail: string, pattern: string, flags: string): number {
-  let regex: RegExp;
+function createMessagingStatusHookInputs(
+  options: MessagingStatusHookRunOptions,
+): Record<string, MessagingSerializableValue> {
+  const inputs: Record<string, MessagingSerializableValue> = {};
+  if (options.currentSandbox) inputs.currentSandbox = options.currentSandbox;
+  if (options.registryEntries) {
+    inputs.registryEntries = options.registryEntries.map(serializeRegistryEntry);
+  }
+  return inputs;
+}
+
+function serializeRegistryEntry(entry: registry.SandboxEntry): MessagingSerializableValue {
+  return {
+    name: entry.name,
+    gatewayName: entry.gatewayName ?? null,
+    messaging: entry.messaging?.plan
+      ? {
+          plan: entry.messaging.plan as unknown as MessagingSerializableValue,
+        }
+      : null,
+  };
+}
+
+function safeListRegistryEntries(): readonly registry.SandboxEntry[] {
   try {
-    regex = new RegExp(pattern, flags.replaceAll("g", ""));
+    return registry.listSandboxes().sandboxes;
   } catch {
-    return 0;
+    return [];
   }
-  return logTail
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && regex.test(line)).length;
 }
 
-function detectSingleGatewayChannelOverlaps(
+function uniqueAgentsForEntries(
   entries: readonly registry.SandboxEntry[],
-  spec: SingleGatewayChannelOverlapStatusOutput,
-  agents: ReadonlySet<MessagingAgentId>,
-): MessagingOverlap[] {
-  const byGateway = new Map<string, string[]>();
+): ReadonlySet<MessagingAgentId> {
+  const agents = new Set<MessagingAgentId>();
   for (const entry of entries) {
-    if (!agents.has(normalizeMessagingAgentId(entry.agent))) continue;
-    if (!entry.messaging?.plan) continue;
-    if (!getActiveChannelIdsFromPlan(entry.messaging.plan).includes(spec.channelId)) continue;
-    const gatewayName = entry.gatewayName ?? BASE_GATEWAY_NAME;
-    const names = byGateway.get(gatewayName) ?? [];
-    names.push(entry.name);
-    byGateway.set(gatewayName, names);
+    agents.add(normalizeMessagingAgentId(entry.agent));
   }
-
-  const overlaps: MessagingOverlap[] = [];
-  for (const names of byGateway.values()) {
-    if (names.length < 2) continue;
-    for (let i = 0; i < names.length; i += 1) {
-      for (let j = i + 1; j < names.length; j += 1) {
-        overlaps.push({
-          channel: spec.channelId,
-          sandboxes: [names[i], names[j]],
-          reason: spec.reason,
-          message: spec.message,
-        });
-      }
-    }
-  }
-  return overlaps;
+  if (agents.size === 0) agents.add("openclaw");
+  return agents;
 }
 
-function listSingleGatewayOverlapSpecsForEntries(entries: readonly registry.SandboxEntry[]): Array<{
-  readonly spec: SingleGatewayChannelOverlapStatusOutput;
-  readonly agents: ReadonlySet<MessagingAgentId>;
-}> {
-  const byKey = new Map<
-    string,
-    { spec: SingleGatewayChannelOverlapStatusOutput; agents: Set<MessagingAgentId> }
-  >();
-  for (const entry of entries) {
-    const agent = normalizeMessagingAgentId(entry.agent);
-    for (const spec of getStatusOutputsForAgent(agent).filter(
-      isSingleGatewayChannelOverlapStatusOutput,
-    )) {
-      const key = `${spec.channelId}\0${spec.reason}\0${spec.message}`;
-      const existing = byKey.get(key);
-      if (existing) {
-        existing.agents.add(agent);
-      } else {
-        byKey.set(key, { spec, agents: new Set([agent]) });
-      }
-    }
-  }
-  return [...byKey.values()];
+function readBridgeHealthOutputs(result: MessagingStatusHookRunResult): MessagingBridgeHealth[] {
+  return Object.values(result.outputs).flatMap((output) => {
+    if (output.kind !== "status" || !isObjectRecord(output.value)) return [];
+    if (output.value.type !== "messaging-bridge-health") return [];
+    const channel = stringField(output.value.channel) ?? result.channelId;
+    const conflicts = numberField(output.value.conflicts);
+    return conflicts > 0 ? [{ channel, conflicts }] : [];
+  });
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
+function readOverlapOutputs(result: MessagingStatusHookRunResult): MessagingOverlap[] {
+  return Object.values(result.outputs).flatMap((output) => {
+    if (output.kind !== "status" || !isObjectRecord(output.value)) return [];
+    if (output.value.type !== "messaging-overlaps" || !Array.isArray(output.value.overlaps)) {
+      return [];
+    }
+    return output.value.overlaps.flatMap((entry) => {
+      if (!isObjectRecord(entry) || !isStringPair(entry.sandboxes)) return [];
+      return [
+        {
+          channel: stringField(entry.channel) ?? result.channelId,
+          sandboxes: entry.sandboxes,
+          ...(typeof entry.reason === "string" ? { reason: entry.reason } : {}),
+          ...(typeof entry.message === "string" ? { message: entry.message } : {}),
+        },
+      ];
+    });
+  });
+}
+
+function stringField(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function numberField(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function isStringPair(value: unknown): value is [string, string] {
+  return (
+    Array.isArray(value) &&
+    value.length === 2 &&
+    typeof value[0] === "string" &&
+    typeof value[1] === "string"
+  );
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function readGatewayLog(rootDir: string, sandboxName: string): string | null {

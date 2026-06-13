@@ -9,6 +9,7 @@ import type {
   MessagingCompilerWorkflow,
   SandboxMessagingChannelPlan,
   SandboxMessagingPlan,
+  SandboxMessagingRuntimeSetupPlan,
 } from "../manifest";
 import type { RenderTemplateReferenceResolver } from "./engines/template";
 import { ManifestCompiler } from "./manifest-compiler";
@@ -315,6 +316,7 @@ function mergeSandboxMessagingPlans(
     },
     agentRender: mergePlanEntriesByChannel(existing.agentRender, incoming.agentRender),
     buildSteps: mergePlanEntriesByChannel(existing.buildSteps, incoming.buildSteps),
+    runtimeSetup: mergeRuntimeSetup(existing.runtimeSetup, incoming.runtimeSetup),
     stateUpdates: mergePlanEntriesByChannel(existing.stateUpdates, incoming.stateUpdates),
     healthChecks: mergePlanEntriesByChannel(existing.healthChecks, incoming.healthChecks),
   });
@@ -436,9 +438,38 @@ function removePlanChannel(
     },
     agentRender: plan.agentRender.filter(keepEntry),
     buildSteps: plan.buildSteps.filter(keepEntry),
+    runtimeSetup: filterRuntimeSetup(plan.runtimeSetup, keepEntry),
     stateUpdates: plan.stateUpdates.filter(keepEntry),
     healthChecks: plan.healthChecks.filter(keepEntry),
   });
+}
+
+function mergeRuntimeSetup(
+  existing: SandboxMessagingRuntimeSetupPlan | undefined,
+  incoming: SandboxMessagingRuntimeSetupPlan | undefined,
+): SandboxMessagingRuntimeSetupPlan {
+  return {
+    nodePreloads: mergePlanEntriesByChannel(
+      existing?.nodePreloads ?? [],
+      incoming?.nodePreloads ?? [],
+    ),
+    envAliases: mergePlanEntriesByChannel(existing?.envAliases ?? [], incoming?.envAliases ?? []),
+    secretScans: mergePlanEntriesByChannel(
+      existing?.secretScans ?? [],
+      incoming?.secretScans ?? [],
+    ),
+  };
+}
+
+function filterRuntimeSetup(
+  setup: SandboxMessagingRuntimeSetupPlan | undefined,
+  keepEntry: <T extends { readonly channelId: MessagingChannelId }>(entry: T) => boolean,
+): SandboxMessagingRuntimeSetupPlan {
+  return {
+    nodePreloads: (setup?.nodePreloads ?? []).filter(keepEntry),
+    envAliases: (setup?.envAliases ?? []).filter(keepEntry),
+    secretScans: (setup?.secretScans ?? []).filter(keepEntry),
+  };
 }
 
 function isChannelPlanStartable(channel: SandboxMessagingChannelPlan): boolean {

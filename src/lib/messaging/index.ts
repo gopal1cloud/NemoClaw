@@ -7,5 +7,4 @@ export * from "./compiler";
 export * from "./diagnostics";
 export * from "./hooks";
 export * from "./manifest";
-export * from "./status-outputs";
 export * from "./utils";

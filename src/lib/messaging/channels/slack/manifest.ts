@@ -147,6 +147,58 @@ export const slackManifest = {
       },
     },
   ],
+  runtime: {
+    openclaw: {
+      visibility: {
+        configKeys: ["slack"],
+        logPatterns: ["slack"],
+      },
+      envAliases: [
+        {
+          envKey: "SLACK_BOT_TOKEN",
+          match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+          value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+          message:
+            "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
+        },
+        {
+          envKey: "SLACK_APP_TOKEN",
+          match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
+          value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+          message:
+            "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",
+        },
+      ],
+      nodePreloads: [
+        {
+          module: "slack-channel-guard",
+          injectInto: ["boot", "connect"],
+          optional: false,
+          installMessage:
+            "[channels] Installing Slack channel guard (unhandled-rejection safety net)",
+          installedMessage: "[channels] Slack channel guard installed (NODE_OPTIONS updated)",
+        },
+      ],
+      secretScans: [
+        {
+          path: "/sandbox/.openclaw/openclaw.json",
+          pattern: "(?:xoxb|xapp)-(?!OPENSHELL-RESOLVE-ENV-)",
+          message: "[SECURITY] Slack token leaked into {path} - refusing to serve",
+          exitCode: 78,
+        },
+      ],
+    },
+  },
+  agentPackages: [
+    {
+      id: "openclawPluginPackage",
+      agent: "openclaw",
+      manager: "openclaw-plugin",
+      spec: "npm:@openclaw/slack@{{openclaw.version}}",
+      pin: true,
+      required: true,
+    },
+  ],
   state: {
     persist: {
       allowedIds: ["allowedUsers"],
@@ -171,136 +223,22 @@ export const slackManifest = {
       onFailure: "abort",
     },
     {
-      id: "slack-runtime-preload",
-      phase: "runtime-preload",
-      handler: "common.staticOutputs",
-      agents: ["openclaw"],
-      outputs: [
-        {
-          id: "slackRuntimePreload",
-          kind: "runtime-preload",
-          required: true,
-          value: {
-            envAliases: [
-              {
-                envKey: "SLACK_BOT_TOKEN",
-                match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
-                value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-                message:
-                  "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
-              },
-              {
-                envKey: "SLACK_APP_TOKEN",
-                match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
-                value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
-                message:
-                  "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",
-              },
-            ],
-            preloads: [
-              {
-                source: "/usr/local/lib/nemoclaw/preloads/slack-channel-guard.js",
-                target: "/tmp/nemoclaw-slack-channel-guard.js",
-                nodeOptions: ["boot", "connect"],
-                optional: false,
-                installMessage:
-                  "[channels] Installing Slack channel guard (unhandled-rejection safety net)",
-                installedMessage: "[channels] Slack channel guard installed (NODE_OPTIONS updated)",
-              },
-            ],
-            secretScans: [
-              {
-                path: "/sandbox/.openclaw/openclaw.json",
-                pattern: "(?:xoxb|xapp)-(?!OPENSHELL-RESOLVE-ENV-)",
-                message: "[SECURITY] Slack token leaked into {path} - refusing to serve",
-                exitCode: 78,
-              },
-            ],
-          },
-        },
-      ],
-      onFailure: "abort",
-    },
-    {
       id: "slack-openclaw-bridge-health",
       phase: "health-check",
-      handler: "common.staticOutputs",
+      handler: "slack.openclawBridgeHealth",
       agents: ["openclaw"],
-      outputs: [
-        {
-          id: "openclawBridgeStartup",
-          kind: "health-check",
-          required: true,
-          value: {
-            type: "openclaw-bridge-startup",
-            configFile: "/sandbox/.openclaw/openclaw.json",
-            channelConfigPath: "channels.slack",
-            enabledPath: "enabled",
-            logFile: "/tmp/gateway.log",
-            maxLogLines: 400,
-            logLinePattern: "^\\[slack\\] |^\\[channels\\] \\[slack\\]",
-            warningPattern:
-              "credential placeholder|Bot API rejected|startup probe (?:failed|returned)|provider failed to start|bridge did not start within|invalid_auth|token_revoked|token_expired",
-            positivePattern: "\\bstarting provider\\b|\\bprovider ready\\b",
-          },
-        },
-      ],
       onFailure: "abort",
-    },
-    {
-      id: "slack-openclaw-runtime-status",
-      phase: "status",
-      handler: "common.staticOutputs",
-      agents: ["openclaw"],
-      outputs: [
-        {
-          id: "openclawRuntimeChannel",
-          kind: "status",
-          required: true,
-          value: {
-            type: "openclaw-runtime-channel",
-            configKeys: ["slack"],
-            logPatterns: ["slack"],
-          },
-        },
-      ],
     },
     {
       id: "slack-socket-mode-gateway-status",
       phase: "status",
-      handler: "common.staticOutputs",
+      handler: "slack.socketModeGatewayStatus",
       outputs: [
         {
-          id: "singleGatewayOverlap",
+          id: "gatewayOverlaps",
           kind: "status",
-          required: true,
-          value: {
-            type: "single-gateway-channel-overlap",
-            reason: "socket-mode-gateway",
-            message:
-              "'{first}' and '{second}' both have Slack Socket Mode enabled on the same gateway; only one sandbox can receive Slack Socket Mode events unless the gateway supports multiplexing.",
-          },
         },
       ],
-    },
-    {
-      id: "slack-openclaw-package-install",
-      phase: "agent-install",
-      handler: "common.staticOutputs",
-      agents: ["openclaw"],
-      outputs: [
-        {
-          id: "openclawPluginPackage",
-          kind: "package-install",
-          required: true,
-          value: {
-            manager: "openclaw-plugin",
-            spec: "npm:@openclaw/slack@{{openclaw.version}}",
-            pin: true,
-          },
-        },
-      ],
-      onFailure: "abort",
     },
     {
       id: "slack-token-paste",

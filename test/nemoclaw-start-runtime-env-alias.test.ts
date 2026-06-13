@@ -9,20 +9,24 @@ import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 
-function messagingRuntimePreloadSection(src: string, planPath: string): string {
-  const start = src.indexOf("# ── Messaging runtime preloads from manifest hooks");
+function messagingRuntimeSetupSection(src: string, planPath: string): string {
+  const start = src.indexOf("# ── Messaging runtime setup from manifest metadata");
   const end = src.indexOf("_read_gateway_token()", start);
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
   return src
     .slice(start, end)
     .replace(
-      '_MESSAGING_RUNTIME_PRELOAD_PLAN="/tmp/nemoclaw-messaging-runtime-preloads.json"',
-      `_MESSAGING_RUNTIME_PRELOAD_PLAN=${JSON.stringify(planPath)}`,
+      '_MESSAGING_RUNTIME_SETUP_PLAN="/tmp/nemoclaw-messaging-runtime-setup.json"',
+      `_MESSAGING_RUNTIME_SETUP_PLAN=${JSON.stringify(planPath)}`,
     );
 }
 
-function encodeRuntimePreloadPlan(channelId: string, value: Record<string, unknown>): string {
+function encodeRuntimeSetupPlan(channelId: string, value: Record<string, unknown>): string {
+  const withChannelId = (entries: unknown) =>
+    Array.isArray(entries)
+      ? entries.map((entry) => ({ channelId, ...(entry as Record<string, unknown>) }))
+      : [];
   return Buffer.from(
     JSON.stringify({
       schemaVersion: 1,
@@ -39,24 +43,7 @@ function encodeRuntimePreloadPlan(channelId: string, value: Record<string, unkno
           configured: true,
           disabled: false,
           inputs: [],
-          hooks: [
-            {
-              channelId,
-              id: `${channelId}-runtime-preload`,
-              phase: "runtime-preload",
-              handler: "common.staticOutputs",
-              agents: ["openclaw"],
-              outputs: [
-                {
-                  id: "runtimePreload",
-                  kind: "runtime-preload",
-                  required: true,
-                  value,
-                },
-              ],
-              onFailure: "abort",
-            },
-          ],
+          hooks: [],
         },
       ],
       disabledChannels: [],
@@ -64,6 +51,11 @@ function encodeRuntimePreloadPlan(channelId: string, value: Record<string, unkno
       networkPolicy: { presets: [], entries: [] },
       agentRender: [],
       buildSteps: [],
+      runtimeSetup: {
+        nodePreloads: withChannelId(value.nodePreloads),
+        envAliases: withChannelId(value.envAliases),
+        secretScans: withChannelId(value.secretScans),
+      },
       stateUpdates: [],
       healthChecks: [],
     }),
@@ -93,9 +85,9 @@ describe("messaging runtime env aliases", () => {
         "set -euo pipefail",
         'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
         'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
-        `export NEMOCLAW_MESSAGING_PLAN_B64=${JSON.stringify(encodeRuntimePreloadPlan("slack", runtimeValue))}`,
-        messagingRuntimePreloadSection(src, planPath),
-        "write_messaging_runtime_preload_plan",
+        `export NEMOCLAW_MESSAGING_PLAN_B64=${JSON.stringify(encodeRuntimeSetupPlan("slack", runtimeValue))}`,
+        messagingRuntimeSetupSection(src, planPath),
+        "write_messaging_runtime_setup_plan",
         "apply_messaging_runtime_env_aliases",
         'printf "SLACK_BOT_TOKEN=%s\\n" "$SLACK_BOT_TOKEN"',
       ].join("\n"),

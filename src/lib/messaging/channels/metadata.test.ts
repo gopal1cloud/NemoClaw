@@ -153,31 +153,23 @@ describe("built-in messaging channel metadata", () => {
     ]);
   });
 
-  it("expands universal package-install hooks to the manifest supported agents", () => {
+  it("lists package installs from manifest agent package metadata", () => {
     const manifests: ChannelManifest[] = [
       {
         ...manifestWithPreset("alpha", "alpha"),
-        hooks: [
+        agentPackages: [
           {
-            id: "alpha-install",
-            phase: "agent-install",
-            handler: "common.staticOutputs",
-            outputs: [
-              {
-                id: "alphaPackage",
-                kind: "package-install",
-                value: { manager: "npm", spec: "alpha@1.0.0" },
-              },
-            ],
+            id: "alphaPackage",
+            agent: "openclaw",
+            manager: "openclaw-plugin",
+            spec: "npm:@openclaw/alpha@{{openclaw.version}}",
           },
         ],
       },
     ];
 
-    expect(listMessagingPackageInstallSpecs({ manifests })[0]?.agents).toEqual([
-      "openclaw",
-      "hermes",
-    ]);
+    expect(listMessagingPackageInstallSpecs({ manifests })[0]?.agents).toEqual(["openclaw"]);
+    expect(listMessagingPackageInstallSpecs({ manifests, agent: "hermes" })).toEqual([]);
   });
 });
 

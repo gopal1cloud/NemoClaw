@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
-  ChannelHookOutputSpec,
+  ChannelAgentPackageSpec,
   ChannelManifest,
   ChannelPolicyPresetReference,
   ChannelPolicyPresetSpec,
   MessagingAgentId,
-  MessagingSerializableObject,
   MessagingSerializableValue,
 } from "../manifest";
 import { BUILT_IN_CHANNEL_MANIFESTS } from "./built-ins";
@@ -48,19 +47,16 @@ export interface MessagingPolicyPresetMetadata {
 
 export interface OpenClawRuntimeChannelMetadata {
   readonly channelId: string;
-  readonly hookId: string;
-  readonly outputId: string;
   readonly configKeys: readonly string[];
   readonly logPatterns: readonly string[];
 }
 
 export interface MessagingPackageInstallMetadata {
   readonly channelId: string;
-  readonly hookId: string;
-  readonly outputId: string;
+  readonly packageId: string;
   readonly agents: readonly MessagingAgentId[];
-  readonly manager?: string;
-  readonly spec?: string;
+  readonly manager: string;
+  readonly spec: string;
   readonly pin?: boolean;
 }
 
@@ -270,47 +266,34 @@ export function getMessagingPolicyPresetValidationWarnings(
 export function listOpenClawRuntimeChannelMetadata(
   options: MessagingManifestMetadataOptions = {},
 ): OpenClawRuntimeChannelMetadata[] {
-  return selectManifests({ ...options, agent: "openclaw" }).flatMap((manifest) =>
-    manifest.hooks.flatMap((hook) => {
-      if (hook.phase !== "status" || !hookTargetsAgent(hook.agents, "openclaw")) return [];
-      return (hook.outputs ?? []).flatMap((output) => {
-        if (output.kind !== "status") return [];
-        const value = serializableObject(output.value);
-        if (value?.type !== "openclaw-runtime-channel") return [];
-        return [
-          {
-            channelId: manifest.id,
-            hookId: hook.id,
-            outputId: output.id,
-            configKeys: stringArray(value.configKeys),
-            logPatterns: stringArray(value.logPatterns),
-          },
-        ];
-      });
-    }),
-  );
+  return selectManifests({ ...options, agent: "openclaw" }).flatMap((manifest) => {
+    const visibility = manifest.runtime?.openclaw?.visibility;
+    if (!visibility) return [];
+    if (visibility.configKeys.length === 0 || visibility.logPatterns.length === 0) return [];
+    return [
+      {
+        channelId: manifest.id,
+        configKeys: [...visibility.configKeys],
+        logPatterns: [...visibility.logPatterns],
+      },
+    ];
+  });
 }
 
 export function listMessagingPackageInstallSpecs(
   options: MessagingManifestMetadataOptions = {},
 ): MessagingPackageInstallMetadata[] {
   return selectManifests(options).flatMap((manifest) =>
-    manifest.hooks.flatMap((hook) => {
-      if (hook.phase !== "agent-install") return [];
-      if (options.agent && !hookTargetsAgent(hook.agents, options.agent)) return [];
-      return (hook.outputs ?? []).flatMap((output) => {
-        if (output.kind !== "package-install") return [];
-        const value = serializableObject(output.value);
-        return [
-          {
-            channelId: manifest.id,
-            hookId: hook.id,
-            outputId: output.id,
-            agents: hook.agents ?? manifest.supportedAgents,
-            ...packageInstallValue(value),
-          },
-        ];
-      });
+    (manifest.agentPackages ?? []).flatMap((agentPackage) => {
+      if (options.agent && agentPackage.agent !== options.agent) return [];
+      return [
+        {
+          channelId: manifest.id,
+          packageId: agentPackage.id,
+          agents: [agentPackage.agent],
+          ...packageInstallValue(agentPackage),
+        },
+      ];
     }),
   );
 }
@@ -332,34 +315,14 @@ function normalizePolicyPreset(preset: ChannelPolicyPresetReference): ChannelPol
   return typeof preset === "string" ? { name: preset } : preset;
 }
 
-function hookTargetsAgent(
-  agents: readonly MessagingAgentId[] | undefined,
-  agent: MessagingAgentId,
-): boolean {
-  return agents === undefined || agents.includes(agent);
-}
-
-function serializableObject(
-  value: ChannelHookOutputSpec["value"],
-): MessagingSerializableObject | null {
-  return isSerializableObject(value) ? value : null;
-}
-
 function packageInstallValue(
-  value: MessagingSerializableObject | null,
+  value: ChannelAgentPackageSpec,
 ): Pick<MessagingPackageInstallMetadata, "manager" | "spec" | "pin"> {
-  if (!value) return {};
   return {
-    ...(typeof value.manager === "string" ? { manager: value.manager } : {}),
-    ...(typeof value.spec === "string" ? { spec: value.spec } : {}),
+    manager: value.manager,
+    spec: value.spec,
     ...(typeof value.pin === "boolean" ? { pin: value.pin } : {}),
   };
-}
-
-function isSerializableObject(
-  value: MessagingSerializableValue | undefined,
-): value is MessagingSerializableObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function stringArray(value: MessagingSerializableValue | undefined): string[] {

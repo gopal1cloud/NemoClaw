@@ -12,7 +12,6 @@ import {
   applyHealthChecks as applyPlanHealthChecks,
   applyMessagingHooksForPhase as applyPlanHooksForPhase,
   applyPreEnableChecks as applyPlanPreEnableChecks,
-  applyRuntimePreloads as applyPlanRuntimePreloads,
   type MessagingHookPhaseOptions,
 } from "./hook-phases";
 import { applyCredentialsAtOpenShell as applyCredentialsPlanAtOpenShell } from "./openshell-provider";
@@ -80,11 +79,6 @@ export class MessagingSetupApplier {
     return listPlanHookRequests(plan, "pre-enable");
   }
 
-  static listRuntimePreloads(plan: SandboxMessagingPlan): MessagingHookApplyRequest[] {
-    assertSandboxMessagingPlan(plan);
-    return listPlanHookRequests(plan, "runtime-preload");
-  }
-
   static listHealthChecks(plan: SandboxMessagingPlan): MessagingHookApplyRequest[] {
     assertSandboxMessagingPlan(plan);
     return listPlanHookRequests(plan, "health-check");
@@ -105,14 +99,6 @@ export class MessagingSetupApplier {
   ): ReturnType<typeof applyPlanPreEnableChecks> {
     assertSandboxMessagingPlan(plan);
     return applyPlanPreEnableChecks(plan, options);
-  }
-
-  static applyRuntimePreloads(
-    plan: SandboxMessagingPlan,
-    options: MessagingHookPhaseOptions = {},
-  ): ReturnType<typeof applyPlanRuntimePreloads> {
-    assertSandboxMessagingPlan(plan);
-    return applyPlanRuntimePreloads(plan, options);
   }
 
   static applyHealthChecks(
@@ -168,6 +154,7 @@ function assertSandboxMessagingPlan(value: unknown): asserts value is SandboxMes
     !isObject(value.networkPolicy) ||
     !Array.isArray(value.agentRender) ||
     !Array.isArray(value.buildSteps) ||
+    !isRuntimeSetup(value.runtimeSetup) ||
     !Array.isArray(value.stateUpdates) ||
     !Array.isArray(value.healthChecks)
   ) {
@@ -177,6 +164,16 @@ function assertSandboxMessagingPlan(value: unknown): asserts value is SandboxMes
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isRuntimeSetup(value: unknown): boolean {
+  if (value === undefined) return true;
+  return (
+    isObject(value) &&
+    Array.isArray(value.nodePreloads) &&
+    Array.isArray(value.envAliases) &&
+    Array.isArray(value.secretScans)
+  );
 }
 
 function assertJsonSerializable(

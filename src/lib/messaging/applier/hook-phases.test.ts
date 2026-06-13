@@ -4,17 +4,11 @@
 import { describe, expect, it } from "vitest";
 
 import type {
-  ChannelHookPhase,
   MessagingChannelId,
   SandboxMessagingChannelPlan,
   SandboxMessagingPlan,
 } from "../manifest";
-import {
-  applyDiagnostics,
-  applyPreEnableChecks,
-  applyRuntimePreloads,
-  MessagingSetupApplier,
-} from "./index";
+import { applyDiagnostics, applyPreEnableChecks, MessagingSetupApplier } from "./index";
 import type { MessagingHookApplyRequest, MessagingHookApplyRunner } from "./types";
 
 describe("messaging applier hook phases", () => {
@@ -101,17 +95,6 @@ describe("messaging applier hook phases", () => {
       currentSandbox: "demo",
       currentGatewayName: "nemoclaw",
     });
-  });
-
-  it("keeps phase wrappers on the shared ChannelHookPhase type", async () => {
-    const phases: ChannelHookPhase[] = [];
-    await applyRuntimePreloads(makePlan(), {
-      runHook: (request) => {
-        phases.push(request.phase);
-      },
-    });
-
-    expect(phases).toEqual(["runtime-preload"]);
   });
 
   it("honors skip-channel failure policy and continues later hooks", async () => {
@@ -215,12 +198,6 @@ function makePlan(
               },
             ]
           : []),
-        {
-          channelId: "telegram",
-          id: "telegram-runtime-preload",
-          phase: "runtime-preload",
-          handler: "telegram.runtimePreload",
-        },
       ],
     }),
     makeChannel("slack", {

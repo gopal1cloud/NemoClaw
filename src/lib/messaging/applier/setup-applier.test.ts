@@ -208,11 +208,11 @@ describe("MessagingSetupApplier", () => {
         phase: "pre-enable",
       }),
     ]);
-    expect(MessagingSetupApplier.listRuntimePreloads(slackPlan)).toEqual([
+    expect(slackPlan.runtimeSetup?.nodePreloads).toEqual([
       expect.objectContaining({
         channelId: "slack",
-        hookId: "slack-runtime-preload",
-        phase: "runtime-preload",
+        module: "slack-channel-guard",
+        source: "/usr/local/lib/nemoclaw/preloads/slack-channel-guard.js",
       }),
     ]);
     expect(MessagingSetupApplier.listHealthChecks(slackPlan)).toEqual([
@@ -220,6 +220,7 @@ describe("MessagingSetupApplier", () => {
         channelId: "slack",
         hookId: "slack-openclaw-bridge-health",
         phase: "health-check",
+        handler: "slack.openclawBridgeHealth",
       }),
     ]);
   });
@@ -455,11 +456,8 @@ describe("MessagingSetupApplier", () => {
       ),
     ).toEqual([
       "slack:slack-socket-mode-gateway-conflict",
-      "slack:slack-runtime-preload",
       "slack:slack-openclaw-bridge-health",
-      "slack:slack-openclaw-runtime-status",
       "slack:slack-socket-mode-gateway-status",
-      "slack:slack-openclaw-package-install",
       "slack:slack-token-paste",
       "slack:slack-config-prompt",
       "slack:slack-credential-validation",

@@ -16,9 +16,7 @@ import {
   createMessagingPreEnableHookInputs,
   getMessagingManifestAvailabilityContext,
   isMessagingHookConflictError,
-  type MessagingHookOutputValue,
   MessagingHostStateApplier,
-  type MessagingSerializableValue,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
   runMessagingHook,
@@ -67,28 +65,6 @@ type ChannelMutationOptions = {
   channel?: string;
   dryRun?: boolean;
   force?: boolean;
-};
-
-type BridgeStartupHealthSpec = {
-  type: "openclaw-bridge-startup";
-  configFile: string;
-  channelConfigPath: string;
-  enabledPath: string;
-  logFile: string;
-  maxLogLines: number;
-  logLinePattern: string;
-  warningPattern: string;
-  positivePattern: string;
-  allowlistWarning?: AllowlistHealthWarningSpec;
-};
-
-type AllowlistHealthWarningSpec = {
-  accountContainerPath: string;
-  preferredAccountKey?: string;
-  policyPath: string;
-  requiredPolicy: string;
-  allowListPath: string;
-  messages: readonly string[];
 };
 
 const messagingManifestRegistry = createBuiltInChannelManifestRegistry();
@@ -698,9 +674,9 @@ async function promptAndRebuild(sandboxName: string, actionDesc: string): Promis
   return true;
 }
 
-// Run post-rebuild messaging health checks through the manifest hook phase.
+// Run manifest-owned post-rebuild health hooks.
 // Failures remain best-effort warnings because the rebuild has already
-// succeeded; the phase surfaces likely channel startup issues without making
+// succeeded; this phase surfaces likely channel startup issues without making
 // channel ownership leak back into this action.
 async function runMessagingHealthChecksAfterRebuild(
   sandboxName: string,
@@ -708,10 +684,15 @@ async function runMessagingHealthChecksAfterRebuild(
 ): Promise<void> {
   if (MessagingSetupApplier.listHealthChecks(plan).length === 0) return;
 
-  const hookRegistry = createBuiltInMessagingHookRegistry();
-  let result: Awaited<ReturnType<typeof MessagingSetupApplier.applyHealthChecks>>;
+  const hookRegistry = createBuiltInMessagingHookRegistry({
+    openclawBridgeHealth: {
+      sandboxName,
+      executeSandboxCommand: (command, timeoutMs) =>
+        executeSandboxExecCommand(sandboxName, command, timeoutMs),
+    },
+  });
   try {
-    result = await MessagingSetupApplier.applyHealthChecks(plan, {
+    await MessagingSetupApplier.applyHealthChecks(plan, {
       runHook: (request) =>
         runMessagingHook(
           {
@@ -732,269 +713,7 @@ async function runMessagingHealthChecksAfterRebuild(
     });
   } catch (err) {
     console.log(`  ${YW}⚠${R} Messaging health check failed: ${formatErrorMessage(err)}`);
-    return;
   }
-
-  for (const hookResult of result.hookResults) {
-    const request = result.hookRequests.find(
-      (entry) => entry.hookId === hookResult.hookId && entry.handler === hookResult.handlerId,
-    );
-    if (!request) continue;
-    for (const [outputId, output] of Object.entries(hookResult.outputs)) {
-      if (output.kind !== "health-check") continue;
-      runDeclaredMessagingHealthCheck(sandboxName, request.channelId, outputId, output);
-    }
-  }
-}
-
-function runDeclaredMessagingHealthCheck(
-  sandboxName: string,
-  channelName: string,
-  outputId: string,
-  output: MessagingHookOutputValue,
-): void {
-  const spec = parseBridgeStartupHealthSpec(output.value);
-  if (!spec) {
-    console.log(
-      `  ${YW}⚠${R} Ignoring unsupported messaging health-check output '${outputId}' for '${channelName}'.`,
-    );
-    return;
-  }
-  verifyOpenClawBridgeStartupFromSpec(sandboxName, channelName, spec);
-}
-
-function verifyOpenClawBridgeStartupFromSpec(
-  sandboxName: string,
-  channelName: string,
-  spec: BridgeStartupHealthSpec,
-): void {
-  const configProbe = executeSandboxExecCommand(
-    sandboxName,
-    `cat ${shellQuote(spec.configFile)} 2>/dev/null || true`,
-    10000,
-  );
-  if (!configProbe || configProbe.status !== 0 || !configProbe.stdout) {
-    console.log(
-      `  ${YW}⚠${R} Could not read ${spec.configFile} to verify '${channelName}' bridge startup.`,
-    );
-    console.log(
-      `    Run '${CLI_NAME} ${sandboxName} status' to inspect the sandbox once it is fully running.`,
-    );
-    return;
-  }
-
-  let channelBlock: unknown = null;
-  let channelEnabled = false;
-  try {
-    const cfg = JSON.parse(String(configProbe.stdout));
-    channelBlock = getObjectPath(cfg, spec.channelConfigPath);
-    channelEnabled = Boolean(getObjectPath(channelBlock, spec.enabledPath));
-  } catch {
-    // Malformed config: continue to a clear disabled warning.
-  }
-
-  if (!channelEnabled) {
-    console.log(
-      `  ${YW}⚠${R} '${channelName}' channel was not marked enabled in baked ${spec.configFile} after rebuild.`,
-    );
-    console.log(
-      `    The bridge will not start. Re-run '${CLI_NAME} ${sandboxName} rebuild' or 'channels remove ${channelName}' and add again.`,
-    );
-    return;
-  }
-
-  const logLineRegex = compileHealthRegex(spec.logLinePattern, "log line", channelName);
-  const warningRegex = compileHealthRegex(spec.warningPattern, "warning", channelName, "i");
-  const positiveRegex = compileHealthRegex(spec.positivePattern, "startup", channelName);
-  if (!logLineRegex || !warningRegex || !positiveRegex) return;
-
-  const logProbe = executeSandboxExecCommand(
-    sandboxName,
-    `tail -n ${spec.maxLogLines} ${shellQuote(spec.logFile)} 2>/dev/null || true`,
-    10000,
-  );
-  const lines = String(logProbe?.stdout || "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && logLineRegex.test(line));
-  if (lines.length === 0) {
-    console.log(
-      `  ${YW}⚠${R} '${channelName}' bridge did not log a startup breadcrumb in ${spec.logFile} yet.`,
-    );
-    console.log(
-      `    Tail it with 'openshell sandbox exec --name ${sandboxName} -- tail -f ${spec.logFile}' if the channel stays silent.`,
-    );
-    return;
-  }
-
-  const credentialWarnings = lines.filter((line) => warningRegex.test(line));
-  if (credentialWarnings.length > 0) {
-    console.log(`  ${YW}⚠${R} '${channelName}' bridge logged credential/startup warnings:`);
-    for (const line of credentialWarnings.slice(0, 3)) {
-      console.log(`    ${line}`);
-    }
-    console.log(
-      `    Verify the OpenShell provider for ${channelName} holds a valid credential and re-run '${CLI_NAME} ${sandboxName} rebuild' if needed.`,
-    );
-    return;
-  }
-
-  if (lines.some((line) => positiveRegex.test(line))) {
-    console.log(`  ${G}✓${R} '${channelName}' bridge startup detected in sandbox runtime log.`);
-    if (spec.allowlistWarning) {
-      printDeclaredAllowlistWarning(channelBlock, spec.allowlistWarning);
-    }
-    return;
-  }
-
-  console.log(
-    `  ${YW}⚠${R} '${channelName}' bridge log lines found but no startup confirmation yet.`,
-  );
-  console.log(
-    `    Tail it with 'openshell sandbox exec --name ${sandboxName} -- tail -f ${spec.logFile}' if the channel stays silent.`,
-  );
-}
-
-function parseBridgeStartupHealthSpec(
-  value: MessagingSerializableValue,
-): BridgeStartupHealthSpec | null {
-  if (!isObjectRecord(value) || value.type !== "openclaw-bridge-startup") return null;
-  const configFile = getStringField(value, "configFile");
-  const channelConfigPath = getStringField(value, "channelConfigPath");
-  const enabledPath = getStringField(value, "enabledPath") ?? "enabled";
-  const logFile = getStringField(value, "logFile");
-  const logLinePattern = getStringField(value, "logLinePattern");
-  const warningPattern = getStringField(value, "warningPattern");
-  const positivePattern = getStringField(value, "positivePattern");
-  if (
-    !configFile ||
-    !channelConfigPath ||
-    !enabledPath ||
-    !logFile ||
-    !logLinePattern ||
-    !warningPattern ||
-    !positivePattern
-  ) {
-    return null;
-  }
-
-  return {
-    type: "openclaw-bridge-startup",
-    configFile,
-    channelConfigPath,
-    enabledPath,
-    logFile,
-    maxLogLines: normalizeMaxLogLines(value.maxLogLines),
-    logLinePattern,
-    warningPattern,
-    positivePattern,
-    allowlistWarning: parseAllowlistHealthWarning(value.allowlistWarning),
-  };
-}
-
-function parseAllowlistHealthWarning(value: unknown): AllowlistHealthWarningSpec | undefined {
-  if (!isObjectRecord(value)) return undefined;
-  const accountContainerPath = getStringField(value, "accountContainerPath");
-  const policyPath = getStringField(value, "policyPath");
-  const requiredPolicy = getStringField(value, "requiredPolicy");
-  const allowListPath = getStringField(value, "allowListPath");
-  const messages = Array.isArray(value.messages)
-    ? value.messages.filter((entry): entry is string => typeof entry === "string")
-    : [];
-  if (
-    !accountContainerPath ||
-    !policyPath ||
-    !requiredPolicy ||
-    !allowListPath ||
-    messages.length === 0
-  ) {
-    return undefined;
-  }
-  const preferredAccountKey = getStringField(value, "preferredAccountKey");
-  return {
-    accountContainerPath,
-    preferredAccountKey,
-    policyPath,
-    requiredPolicy,
-    allowListPath,
-    messages,
-  };
-}
-
-function printDeclaredAllowlistWarning(
-  channelBlock: unknown,
-  spec: AllowlistHealthWarningSpec,
-): boolean {
-  const account = selectDeclaredAccount(channelBlock, spec);
-  const allowList = getObjectPath(account, spec.allowListPath);
-  const allowedCount = Array.isArray(allowList) ? allowList.length : 0;
-  if (getObjectPath(account, spec.policyPath) !== spec.requiredPolicy || allowedCount > 0) {
-    return false;
-  }
-
-  const [firstLine, ...rest] = spec.messages;
-  if (!firstLine) return false;
-  console.log(`  ${YW}⚠${R} ${firstLine}`);
-  for (const line of rest) {
-    console.log(`    ${line}`);
-  }
-  return true;
-}
-
-function selectDeclaredAccount(
-  channelBlock: unknown,
-  spec: AllowlistHealthWarningSpec,
-): Record<string, unknown> | null {
-  const accountContainer = getObjectPath(channelBlock, spec.accountContainerPath);
-  if (!isObjectRecord(accountContainer)) return null;
-  const preferredAccount = spec.preferredAccountKey
-    ? accountContainer[spec.preferredAccountKey]
-    : null;
-  if (isObjectRecord(preferredAccount)) {
-    return preferredAccount;
-  }
-  const firstKey = Object.keys(accountContainer)[0];
-  const firstAccount = firstKey ? accountContainer[firstKey] : null;
-  return isObjectRecord(firstAccount) ? firstAccount : null;
-}
-
-function compileHealthRegex(
-  pattern: string,
-  label: string,
-  channelName: string,
-  flags?: string,
-): RegExp | null {
-  try {
-    return new RegExp(pattern, flags);
-  } catch (err) {
-    console.log(
-      `  ${YW}⚠${R} Invalid ${label} health pattern for '${channelName}': ${formatErrorMessage(err)}`,
-    );
-    return null;
-  }
-}
-
-function getObjectPath(value: unknown, dottedPath: string): unknown {
-  let current = value;
-  for (const segment of dottedPath.split(".").filter(Boolean)) {
-    if (!isObjectRecord(current)) return undefined;
-    current = current[segment];
-  }
-  return current;
-}
-
-function getStringField(value: Record<string, unknown>, field: string): string | undefined {
-  const entry = value[field];
-  return typeof entry === "string" && entry.trim().length > 0 ? entry : undefined;
-}
-
-function normalizeMaxLogLines(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return 400;
-  return Math.min(Math.max(Math.trunc(value), 1), 2000);
-}
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function formatErrorMessage(err: unknown): string {

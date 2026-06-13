@@ -113,7 +113,9 @@ describe("Hermes secret-boundary guard — guard snippet behaviour", () => {
     }
   }
 
-  it("env-file guard exits 1, kills hermes processes, and persists [SECURITY] to the recovery log when python validator fails", () => {
+  it("env-file guard exits 1, kills hermes processes, and persists [SECURITY] to the recovery log when python validator fails", {
+    timeout: 15_000,
+  }, () => {
     const result = runGuard({
       guard: __testing.buildHermesEnvFileBoundaryGuard(),
       pythonExit: 1,

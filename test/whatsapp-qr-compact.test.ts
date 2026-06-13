@@ -12,8 +12,12 @@ const REPO_ROOT = path.join(import.meta.dirname, "..");
 const START_SCRIPT = path.join(REPO_ROOT, "scripts", "nemoclaw-start.sh");
 const PRELOAD_SOURCE = path.join(
   REPO_ROOT,
-  "nemoclaw-blueprint",
-  "scripts",
+  "src",
+  "lib",
+  "messaging",
+  "channels",
+  "whatsapp",
+  "runtime",
   "whatsapp-qr-compact.js",
 );
 

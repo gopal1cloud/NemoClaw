@@ -85,6 +85,33 @@ export const whatsappManifest = {
       },
     },
   ],
+  runtime: {
+    openclaw: {
+      visibility: {
+        configKeys: ["whatsapp"],
+        logPatterns: ["whatsapp"],
+      },
+      nodePreloads: [
+        {
+          module: "whatsapp-qr-compact",
+          injectInto: ["connect"],
+          optional: true,
+          installMessage:
+            "[channels] Installing WhatsApp compact-QR renderer (scan-friendly pairing)",
+        },
+      ],
+    },
+  },
+  agentPackages: [
+    {
+      id: "openclawPluginPackage",
+      agent: "openclaw",
+      manager: "openclaw-plugin",
+      spec: "npm:@openclaw/whatsapp@{{openclaw.version}}",
+      pin: true,
+      required: true,
+    },
+  ],
   state: {
     persist: {
       allowedIds: ["allowedIds"],
@@ -96,69 +123,5 @@ export const whatsappManifest = {
       },
     ],
   },
-  hooks: [
-    {
-      id: "whatsapp-runtime-preload",
-      phase: "runtime-preload",
-      handler: "common.staticOutputs",
-      agents: ["openclaw"],
-      outputs: [
-        {
-          id: "whatsappQrCompact",
-          kind: "runtime-preload",
-          required: true,
-          value: {
-            preloads: [
-              {
-                source: "/usr/local/lib/nemoclaw/preloads/whatsapp-qr-compact.js",
-                target: "/tmp/nemoclaw-whatsapp-qr-compact.js",
-                nodeOptions: ["connect"],
-                optional: true,
-                installMessage:
-                  "[channels] Installing WhatsApp compact-QR renderer (scan-friendly pairing)",
-              },
-            ],
-          },
-        },
-      ],
-      onFailure: "abort",
-    },
-    {
-      id: "whatsapp-openclaw-runtime-status",
-      phase: "status",
-      handler: "common.staticOutputs",
-      agents: ["openclaw"],
-      outputs: [
-        {
-          id: "openclawRuntimeChannel",
-          kind: "status",
-          required: true,
-          value: {
-            type: "openclaw-runtime-channel",
-            configKeys: ["whatsapp"],
-            logPatterns: ["whatsapp"],
-          },
-        },
-      ],
-    },
-    {
-      id: "whatsapp-openclaw-package-install",
-      phase: "agent-install",
-      handler: "common.staticOutputs",
-      agents: ["openclaw"],
-      outputs: [
-        {
-          id: "openclawPluginPackage",
-          kind: "package-install",
-          required: true,
-          value: {
-            manager: "openclaw-plugin",
-            spec: "npm:@openclaw/whatsapp@{{openclaw.version}}",
-            pin: true,
-          },
-        },
-      ],
-      onFailure: "abort",
-    },
-  ],
+  hooks: [],
 } as const satisfies ChannelManifest;

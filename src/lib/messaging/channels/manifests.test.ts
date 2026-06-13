@@ -8,7 +8,6 @@ import { describe, expect, it } from "vitest";
 import { getChannelTokenKeys, KNOWN_CHANNELS, knownChannelNames } from "../../sandbox/channels";
 import {
   COMMON_CONFIG_PROMPT_HOOK_HANDLER_ID,
-  COMMON_STATIC_OUTPUTS_HOOK_HANDLER_ID,
   COMMON_TOKEN_PASTE_HOOK_HANDLER_ID,
 } from "../hooks/common";
 import type {
@@ -28,9 +27,13 @@ import {
 } from "./index";
 import {
   SLACK_SOCKET_MODE_GATEWAY_CONFLICT_HOOK_HANDLER_ID,
+  SLACK_SOCKET_MODE_GATEWAY_STATUS_HOOK_HANDLER_ID,
   SLACK_VALIDATE_CREDENTIALS_HOOK_HANDLER_ID,
 } from "./slack/hooks";
-import { TELEGRAM_ALLOWLIST_ALIASES_HOOK_ID } from "./telegram/hooks";
+import {
+  TELEGRAM_ALLOWLIST_ALIASES_HOOK_ID,
+  TELEGRAM_GATEWAY_CONFLICT_STATUS_HOOK_HANDLER_ID,
+} from "./telegram/hooks";
 
 function findInput(manifest: ChannelManifest, inputId: string): ChannelInputSpec {
   const input = manifest.inputs.find((entry) => entry.id === inputId);
@@ -133,63 +136,56 @@ function expectSlackSocketModeGatewayConflictHook(): void {
   });
 }
 
-function expectRuntimePreloadHook(
+function expectOpenClawBridgeHealthHook(
   manifest: ChannelManifest,
   hookId: string,
-  outputId: string,
+  handler: string,
 ): void {
-  expect(findHook(manifest, hookId)).toMatchObject({
-    id: hookId,
-    phase: "runtime-preload",
-    handler: COMMON_STATIC_OUTPUTS_HOOK_HANDLER_ID,
-    agents: ["openclaw"],
-    outputs: [
-      expect.objectContaining({
-        id: outputId,
-        kind: "runtime-preload",
-        required: true,
-      }),
-    ],
-    onFailure: "abort",
-  });
-}
-
-function expectOpenClawBridgeHealthHook(manifest: ChannelManifest, hookId: string): void {
-  expect(findHook(manifest, hookId)).toMatchObject({
+  const hook = findHook(manifest, hookId);
+  expect(hook).toMatchObject({
     id: hookId,
     phase: "health-check",
-    handler: COMMON_STATIC_OUTPUTS_HOOK_HANDLER_ID,
+    handler,
     agents: ["openclaw"],
-    outputs: [
-      expect.objectContaining({
-        id: "openclawBridgeStartup",
-        kind: "health-check",
-        required: true,
-      }),
-    ],
     onFailure: "abort",
   });
+  expect(hook.outputs).toBeUndefined();
 }
 
-function expectStatusHook(
+function expectConcreteStatusHook(
   manifest: ChannelManifest,
   hookId: string,
+  handler: string,
   outputId: string,
-  type: string,
 ): void {
   expect(findHook(manifest, hookId)).toMatchObject({
     id: hookId,
     phase: "status",
-    handler: COMMON_STATIC_OUTPUTS_HOOK_HANDLER_ID,
+    handler,
     outputs: [
-      expect.objectContaining({
+      {
         id: outputId,
         kind: "status",
-        required: true,
-        value: expect.objectContaining({ type }),
-      }),
+      },
     ],
   });
+}
+
+function expectOpenClawRuntimeVisibility(
+  manifest: ChannelManifest,
+  configKeys: readonly string[],
+  logPatterns: readonly string[],
+): void {
+  expect(manifest.runtime?.openclaw?.visibility).toEqual({
+    configKeys,
+    logPatterns,
+  });
+}
+
+function expectOpenClawNodePreload(manifest: ChannelManifest, module: string): void {
+  expect(manifest.runtime?.openclaw?.nodePreloads ?? []).toEqual(
+    expect.arrayContaining([expect.objectContaining({ module })]),
+  );
 }
 
 describe("built-in channel manifests", () => {
@@ -223,14 +219,21 @@ describe("built-in channel manifests", () => {
   it("keeps phase-1 manifest and hook files free of production side-effect imports", () => {
     const manifestPaths = [
       "src/lib/messaging/channels/telegram/manifest.ts",
+      "src/lib/messaging/channels/telegram/hooks/gateway-conflict-status.ts",
+      "src/lib/messaging/channels/telegram/hooks/openclaw-bridge-health.ts",
       "src/lib/messaging/channels/discord/manifest.ts",
+      "src/lib/messaging/channels/discord/hooks/index.ts",
+      "src/lib/messaging/channels/discord/hooks/openclaw-bridge-health.ts",
       "src/lib/messaging/channels/wechat/manifest.ts",
       "src/lib/messaging/channels/wechat/hooks/health-check.ts",
       "src/lib/messaging/channels/wechat/hooks/ilink-login.ts",
       "src/lib/messaging/channels/wechat/hooks/index.ts",
       "src/lib/messaging/channels/wechat/hooks/seed-openclaw-account.ts",
+      "src/lib/messaging/channels/openclaw-bridge-health.ts",
       "src/lib/messaging/channels/slack/manifest.ts",
+      "src/lib/messaging/channels/slack/hooks/openclaw-bridge-health.ts",
       "src/lib/messaging/channels/slack/hooks/socket-mode-gateway-conflict.ts",
+      "src/lib/messaging/channels/slack/hooks/socket-mode-gateway-status.ts",
       "src/lib/messaging/channels/slack/hooks/validate-credentials.ts",
       "src/lib/messaging/channels/whatsapp/manifest.ts",
       "src/lib/messaging/hooks/common/config-prompt.ts",
@@ -337,25 +340,19 @@ describe("built-in channel manifests", () => {
     });
     expectConfigPromptEnrollHook(telegramManifest, ["requireMention", "allowedIds"]);
     expectReachabilityHook(telegramManifest, ["botToken"]);
-    expectRuntimePreloadHook(telegramManifest, "telegram-runtime-preload", "telegramDiagnostics");
-    expect(JSON.stringify(findHook(telegramManifest, "telegram-runtime-preload"))).toContain(
-      "telegram-diagnostics.js",
-    );
-    expectOpenClawBridgeHealthHook(telegramManifest, "telegram-openclaw-bridge-health");
-    expect(JSON.stringify(findHook(telegramManifest, "telegram-openclaw-bridge-health"))).toContain(
-      "Telegram direct-message allowlist is empty",
-    );
-    expectStatusHook(
+    expectOpenClawNodePreload(telegramManifest, "telegram-diagnostics");
+    expect(JSON.stringify(telegramManifest.runtime?.openclaw)).toContain("telegram-diagnostics");
+    expectOpenClawBridgeHealthHook(
       telegramManifest,
-      "telegram-openclaw-runtime-status",
-      "openclawRuntimeChannel",
-      "openclaw-runtime-channel",
+      "telegram-openclaw-bridge-health",
+      "telegram.openclawBridgeHealth",
     );
-    expectStatusHook(
+    expectOpenClawRuntimeVisibility(telegramManifest, ["telegram"], ["telegram"]);
+    expectConcreteStatusHook(
       telegramManifest,
       "telegram-gateway-conflict-status",
-      "gatewayConflictCounter",
-      "gateway-log-conflict-counter",
+      TELEGRAM_GATEWAY_CONFLICT_STATUS_HOOK_HANDLER_ID,
+      "bridgeHealth",
     );
   });
 
@@ -395,13 +392,12 @@ describe("built-in channel manifests", () => {
     expect(renderJson(discordManifest)).toContain("require_mention");
     expectTokenPasteEnrollHook(discordManifest, ["botToken"]);
     expectConfigPromptEnrollHook(discordManifest, ["serverId", "requireMention", "userId"]);
-    expectOpenClawBridgeHealthHook(discordManifest, "discord-openclaw-bridge-health");
-    expectStatusHook(
+    expectOpenClawBridgeHealthHook(
       discordManifest,
-      "discord-openclaw-runtime-status",
-      "openclawRuntimeChannel",
-      "openclaw-runtime-channel",
+      "discord-openclaw-bridge-health",
+      "discord.openclawBridgeHealth",
     );
+    expectOpenClawRuntimeVisibility(discordManifest, ["discord"], ["discord"]);
   });
 
   it("declares Slack Bolt-compatible placeholders and allowlist render intent", () => {
@@ -451,28 +447,23 @@ describe("built-in channel manifests", () => {
     expect(renderJson(slackManifest)).toContain('"accounts"');
     expect(renderJson(slackManifest)).toContain("allowedIds.slack.channels");
     expectSlackSocketModeGatewayConflictHook();
-    expectRuntimePreloadHook(slackManifest, "slack-runtime-preload", "slackRuntimePreload");
-    expect(JSON.stringify(findHook(slackManifest, "slack-runtime-preload"))).toContain(
-      "slack-channel-guard.js",
-    );
-    expect(JSON.stringify(findHook(slackManifest, "slack-runtime-preload"))).toContain(
-      "SLACK_BOT_TOKEN",
-    );
+    expectOpenClawNodePreload(slackManifest, "slack-channel-guard");
+    expect(JSON.stringify(slackManifest.runtime?.openclaw)).toContain("slack-channel-guard");
+    expect(JSON.stringify(slackManifest.runtime?.openclaw)).toContain("SLACK_BOT_TOKEN");
     expectTokenPasteEnrollHook(slackManifest, ["botToken", "appToken"]);
     expectConfigPromptEnrollHook(slackManifest, ["allowedUsers", "allowedChannels"]);
     expectSlackCredentialValidationHook(["botToken", "appToken"]);
-    expectOpenClawBridgeHealthHook(slackManifest, "slack-openclaw-bridge-health");
-    expectStatusHook(
+    expectOpenClawBridgeHealthHook(
       slackManifest,
-      "slack-openclaw-runtime-status",
-      "openclawRuntimeChannel",
-      "openclaw-runtime-channel",
+      "slack-openclaw-bridge-health",
+      "slack.openclawBridgeHealth",
     );
-    expectStatusHook(
+    expectOpenClawRuntimeVisibility(slackManifest, ["slack"], ["slack"]);
+    expectConcreteStatusHook(
       slackManifest,
       "slack-socket-mode-gateway-status",
-      "singleGatewayOverlap",
-      "single-gateway-channel-overlap",
+      SLACK_SOCKET_MODE_GATEWAY_STATUS_HOOK_HANDLER_ID,
+      "gatewayOverlaps",
     );
     expect(slackManifest.state).toEqual({
       persist: {
@@ -547,18 +538,13 @@ describe("built-in channel manifests", () => {
     expect(renderJson(wechatManifest)).toContain("WEIXIN_TOKEN");
     expect(renderJson(wechatManifest)).toContain("credential.wechatBotToken.placeholder");
     expect(wechatManifest.hooks.map((hook) => hook.handler)).toEqual([
-      "common.staticOutputs",
       "wechat.ilinkLogin",
       "common.configPrompt",
       "wechat.seedOpenClawAccount",
-      "common.staticOutputs",
       "wechat.healthCheck",
-      "common.staticOutputs",
     ]);
-    expectRuntimePreloadHook(wechatManifest, "wechat-runtime-preload", "wechatDiagnostics");
-    expect(JSON.stringify(findHook(wechatManifest, "wechat-runtime-preload"))).toContain(
-      "wechat-diagnostics.js",
-    );
+    expectOpenClawNodePreload(wechatManifest, "wechat-diagnostics");
+    expect(JSON.stringify(wechatManifest.runtime?.openclaw)).toContain("wechat-diagnostics");
     expectConfigPromptEnrollHook(wechatManifest, ["allowedIds"]);
     const seedHook = wechatManifest.hooks.find(
       (hook) => hook.id === "wechat-seed-openclaw-account",
@@ -582,11 +568,10 @@ describe("built-in channel manifests", () => {
       inputs: ["wechatConfig.accountId"],
       onFailure: "abort",
     });
-    expectStatusHook(
+    expectOpenClawRuntimeVisibility(
       wechatManifest,
-      "wechat-openclaw-runtime-status",
-      "openclawRuntimeChannel",
-      "openclaw-runtime-channel",
+      ["openclaw-weixin"],
+      ["wechat", "openclaw-weixin"],
     );
   });
 
@@ -626,15 +611,8 @@ describe("built-in channel manifests", () => {
     expect(renderJson(whatsappManifest)).toContain("platforms.whatsapp");
     expect(renderJson(whatsappManifest)).not.toContain("WHATSAPP_BOT_TOKEN");
     expect(renderJson(whatsappManifest)).not.toContain("openshell:resolve:env:WHATSAPP");
-    expectRuntimePreloadHook(whatsappManifest, "whatsapp-runtime-preload", "whatsappQrCompact");
-    expect(JSON.stringify(findHook(whatsappManifest, "whatsapp-runtime-preload"))).toContain(
-      "whatsapp-qr-compact.js",
-    );
-    expectStatusHook(
-      whatsappManifest,
-      "whatsapp-openclaw-runtime-status",
-      "openclawRuntimeChannel",
-      "openclaw-runtime-channel",
-    );
+    expectOpenClawNodePreload(whatsappManifest, "whatsapp-qr-compact");
+    expect(JSON.stringify(whatsappManifest.runtime?.openclaw)).toContain("whatsapp-qr-compact");
+    expectOpenClawRuntimeVisibility(whatsappManifest, ["whatsapp"], ["whatsapp"]);
   });
 });

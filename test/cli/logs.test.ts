@@ -384,7 +384,7 @@ describe("CLI dispatch", () => {
     const log = fs.readFileSync(markerFile, "utf8");
     expect(r.code).toBe(0);
     expect(log).toContain(
-      "sandbox exec -n alpha -- sh -c tail -n 200 '/tmp/gateway.log' 2>/dev/null || true",
+      "sandbox exec -n alpha -- sh -c tail -n 200 /tmp/gateway.log 2>/dev/null || true",
     );
     expect(log).not.toContain("grep -cE");
     expect(log).not.toContain("sandbox exec alpha sh -c");

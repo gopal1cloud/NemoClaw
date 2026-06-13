@@ -57,7 +57,7 @@ exit 0
       { channel: "telegram", conflicts: 3 },
     ]);
     expect(fs.readFileSync(callsFile, "utf-8")).toContain(
-      "sandbox exec -n alpha -- sh -c tail -n 200 '/tmp/gateway.log'",
+      "sandbox exec -n alpha -- sh -c tail -n 200 /tmp/gateway.log",
     );
     expect(fs.readFileSync(callsFile, "utf-8")).not.toContain("grep -cE");
   });

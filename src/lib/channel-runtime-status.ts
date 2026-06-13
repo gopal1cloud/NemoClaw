@@ -38,19 +38,11 @@
  */
 
 import {
-  collectBuiltInMessagingStatusOutputs,
-  type OpenClawRuntimeChannelStatusOutput,
-} from "./messaging/status-outputs";
+  listOpenClawRuntimeChannelMetadata,
+  type OpenClawRuntimeChannelMetadata,
+} from "./messaging/channels/metadata";
 
-const DEFAULT_RUNTIME_STATUS_OUTPUTS = collectBuiltInMessagingStatusOutputs({
-  agent: "openclaw",
-}).filter(isOpenClawRuntimeChannelStatusOutput);
-
-function isOpenClawRuntimeChannelStatusOutput(
-  output: ReturnType<typeof collectBuiltInMessagingStatusOutputs>[number],
-): output is OpenClawRuntimeChannelStatusOutput {
-  return output.type === "openclaw-runtime-channel";
-}
+const DEFAULT_RUNTIME_VISIBILITY_METADATA = listOpenClawRuntimeChannelMetadata();
 
 export type RuntimeChannelStatus = {
   /**
@@ -118,7 +110,7 @@ export function extractEnabledChannelsFromOpenclawConfig(json: unknown): string[
   if (!json || typeof json !== "object") return [];
   const channels = (json as Record<string, unknown>).channels;
   if (!channels || typeof channels !== "object") return [];
-  const channelKeyToName = runtimeConfigKeyToChannelName(DEFAULT_RUNTIME_STATUS_OUTPUTS);
+  const channelKeyToName = runtimeConfigKeyToChannelName(DEFAULT_RUNTIME_VISIBILITY_METADATA);
   const visible = new Set<string>();
   for (const [key, value] of Object.entries(channels as Record<string, unknown>)) {
     const canonical = channelKeyToName.get(key);
@@ -182,7 +174,7 @@ const GATEWAY_BOOT_MARKER_REGEX = "\\[gateway\\].*(launched|respawning)";
  */
 export function buildGatewayLogScanScript(gatewayLogPath: string): string {
   const quotedPath = shellQuote(gatewayLogPath);
-  const patternAlternation = runtimeLogPatterns(DEFAULT_RUNTIME_STATUS_OUTPUTS)
+  const patternAlternation = runtimeLogPatterns(DEFAULT_RUNTIME_VISIBILITY_METADATA)
     .map(escapeExtendedRegexLiteral)
     .join("|");
   // The awk program uses single-quoted strings inside the shell single-
@@ -213,7 +205,7 @@ export function buildGatewayLogScanScript(gatewayLogPath: string): string {
  */
 export function parseGatewayLogScanOutput(stdout: string): Set<string> {
   const found = new Set<string>();
-  const patternToChannel = runtimeLogPatternToChannelName(DEFAULT_RUNTIME_STATUS_OUTPUTS);
+  const patternToChannel = runtimeLogPatternToChannelName(DEFAULT_RUNTIME_VISIBILITY_METADATA);
   for (const line of stdout.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed.startsWith(LOG_FOUND_PREFIX)) continue;
@@ -227,7 +219,7 @@ export function parseGatewayLogScanOutput(stdout: string): Set<string> {
 const DEFAULT_GATEWAY_LOG_PATH = "/tmp/gateway.log";
 
 function runtimeConfigKeyToChannelName(
-  outputs: readonly OpenClawRuntimeChannelStatusOutput[],
+  outputs: readonly OpenClawRuntimeChannelMetadata[],
 ): ReadonlyMap<string, string> {
   const aliases = new Map<string, string>();
   for (const output of outputs) {
@@ -238,14 +230,14 @@ function runtimeConfigKeyToChannelName(
   return aliases;
 }
 
-function runtimeLogPatterns(outputs: readonly OpenClawRuntimeChannelStatusOutput[]): string[] {
+function runtimeLogPatterns(outputs: readonly OpenClawRuntimeChannelMetadata[]): string[] {
   return [
     ...new Set(outputs.flatMap((output) => output.logPatterns).filter((entry) => entry.length > 0)),
   ];
 }
 
 function runtimeLogPatternToChannelName(
-  outputs: readonly OpenClawRuntimeChannelStatusOutput[],
+  outputs: readonly OpenClawRuntimeChannelMetadata[],
 ): ReadonlyMap<string, string> {
   const aliases = new Map<string, string>();
   for (const output of outputs) {

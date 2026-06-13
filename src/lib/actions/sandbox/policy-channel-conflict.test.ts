@@ -210,11 +210,11 @@ beforeEach(() => {
   // Downstream rebuild is not under test.
   vi.spyOn(rebuild, "rebuildSandbox").mockResolvedValue(undefined);
 
-  // After a successful interactive add, manifest health-check hooks can probe
+  // After a successful interactive add, channel health-check hooks can probe
   // the sandbox via executeSandboxExecCommand, which calls getOpenshellBinary()
   // -> process.exit(1) when the openshell binary is absent (e.g. the CI
   // unit-test runner; locally it is installed, so this only bites in CI). Stub
-  // the exec seam so the post-add verification never shells out and never trips
+  // the exec path so the post-add verification never shells out and never trips
   // the exit spy unless a test explicitly overrides it.
   vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue(null);
   vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue(null);
@@ -809,7 +809,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(upsertMock).toHaveBeenCalledTimes(1);
   });
 
-  it("runs Telegram post-rebuild health through manifest hook output", async () => {
+  it("runs Telegram post-rebuild bridge verification through the channel hook", async () => {
     arrangeRegistry({ current: { name: "alpha" } as SandboxEntry });
     getCredentialMock.mockImplementation((key: string) =>
       key === "TELEGRAM_BOT_TOKEN" ? TELEGRAM_TOKEN : null,
@@ -847,7 +847,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     ).toBe(true);
   });
 
-  it("runs Slack post-rebuild warning detection through manifest hook output", async () => {
+  it("runs Slack post-rebuild warning detection through the channel hook", async () => {
     arrangeRegistry({ current: { name: "alpha" } as SandboxEntry });
     getCredentialMock.mockImplementation((key: string) =>
       key === "SLACK_BOT_TOKEN"

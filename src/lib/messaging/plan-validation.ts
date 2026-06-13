@@ -31,6 +31,7 @@ export function parseSandboxMessagingPlan(
     !isObject(value.networkPolicy) ||
     !Array.isArray(value.agentRender) ||
     !Array.isArray(value.buildSteps) ||
+    !isRuntimeSetup(value.runtimeSetup) ||
     !Array.isArray(value.stateUpdates) ||
     !Array.isArray(value.healthChecks)
   ) {
@@ -144,4 +145,14 @@ function stringifyPlanStateValue(value: MessagingSerializableValue | undefined):
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isRuntimeSetup(value: unknown): boolean {
+  if (value === undefined) return true;
+  return (
+    isObject(value) &&
+    Array.isArray(value.nodePreloads) &&
+    Array.isArray(value.envAliases) &&
+    Array.isArray(value.secretScans)
+  );
 }

@@ -1418,29 +1418,29 @@ PYPLACEHOLDERS
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
-# ── Messaging runtime preloads from manifest hooks ───────────────
-# Channel-owned runtime-preload hooks are serialized into
-# NEMOCLAW_MESSAGING_PLAN_B64 at image build time. The entrypoint only consumes
-# generic declarations: envAliases, preloads, and secretScans.
-_MESSAGING_RUNTIME_PRELOAD_PLAN="/tmp/nemoclaw-messaging-runtime-preloads.json"
+# ── Messaging runtime setup from manifest metadata ───────────────
+# Channel-owned runtime setup is serialized into NEMOCLAW_MESSAGING_PLAN_B64 at
+# image build time. The entrypoint only consumes generic declarations:
+# envAliases, nodePreloads, and secretScans.
+_MESSAGING_RUNTIME_SETUP_PLAN="/tmp/nemoclaw-messaging-runtime-setup.json"
 _MESSAGING_CONNECT_PRELOADS_FILE="/tmp/nemoclaw-messaging-connect-preloads.list"
 
-write_messaging_runtime_preload_plan() {
-  python3 - <<'PYMESSAGINGRUNTIME' | emit_sandbox_sourced_file "$_MESSAGING_RUNTIME_PRELOAD_PLAN"
+write_messaging_runtime_setup_plan() {
+  python3 - <<'PYMESSAGINGRUNTIME' | emit_sandbox_sourced_file "$_MESSAGING_RUNTIME_SETUP_PLAN"
 import base64
 import json
 import os
 import re
 import sys
 
-EMPTY = {"preloads": [], "envAliases": [], "secretScans": []}
+EMPTY = {"nodePreloads": [], "envAliases": [], "secretScans": []}
 PRELOAD_SOURCE_PREFIX = "/usr/local/lib/nemoclaw/preloads/"
 PRELOAD_TARGET_PREFIX = "/tmp/nemoclaw-"
 ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
 
 
 def fail(message):
-    print(f"[channels] Invalid messaging runtime preload plan: {message}", file=sys.stderr)
+    print(f"[channels] Invalid messaging runtime setup plan: {message}", file=sys.stderr)
     raise SystemExit(1)
 
 
@@ -1464,34 +1464,34 @@ def clean_message(value, field):
     return value
 
 
-def clean_preload(entry, index):
+def clean_node_preload(entry, index):
     if not isinstance(entry, dict):
-        fail(f"preloads[{index}] must be an object")
-    source = clean_string(entry.get("source"), f"preloads[{index}].source")
-    target = clean_string(entry.get("target"), f"preloads[{index}].target")
+        fail(f"nodePreloads[{index}] must be an object")
+    source = clean_string(entry.get("source"), f"nodePreloads[{index}].source")
+    target = clean_string(entry.get("target"), f"nodePreloads[{index}].target")
     if not source.startswith(PRELOAD_SOURCE_PREFIX) or not source.endswith(".js"):
-        fail(f"preloads[{index}].source must be a preload JavaScript file under {PRELOAD_SOURCE_PREFIX}")
+        fail(f"nodePreloads[{index}].source must be a preload JavaScript file under {PRELOAD_SOURCE_PREFIX}")
     if not target.startswith(PRELOAD_TARGET_PREFIX) or not target.endswith(".js"):
-        fail(f"preloads[{index}].target must be a JavaScript file under {PRELOAD_TARGET_PREFIX}*")
-    node_options = entry.get("nodeOptions", [])
-    if not isinstance(node_options, list):
-        fail(f"preloads[{index}].nodeOptions must be a list")
-    normalized_options = []
-    for option in node_options:
-        if option not in ("boot", "connect"):
-            fail(f"preloads[{index}].nodeOptions contains unsupported value {option!r}")
-        if option not in normalized_options:
-            normalized_options.append(option)
+        fail(f"nodePreloads[{index}].target must be a JavaScript file under {PRELOAD_TARGET_PREFIX}*")
+    inject_into = entry.get("injectInto", [])
+    if not isinstance(inject_into, list):
+        fail(f"nodePreloads[{index}].injectInto must be a list")
+    normalized_scopes = []
+    for scope in inject_into:
+        if scope not in ("boot", "connect"):
+            fail(f"nodePreloads[{index}].injectInto contains unsupported value {scope!r}")
+        if scope not in normalized_scopes:
+            normalized_scopes.append(scope)
     optional = entry.get("optional", False)
     if not isinstance(optional, bool):
-        fail(f"preloads[{index}].optional must be a boolean")
+        fail(f"nodePreloads[{index}].optional must be a boolean")
     return {
         "source": source,
         "target": target,
-        "nodeOptions": normalized_options,
+        "injectInto": normalized_scopes,
         "optional": optional,
-        "installMessage": clean_message(entry.get("installMessage"), f"preloads[{index}].installMessage"),
-        "installedMessage": clean_message(entry.get("installedMessage"), f"preloads[{index}].installedMessage"),
+        "installMessage": clean_message(entry.get("installMessage"), f"nodePreloads[{index}].installMessage"),
+        "installedMessage": clean_message(entry.get("installedMessage"), f"nodePreloads[{index}].installedMessage"),
     }
 
 
@@ -1548,55 +1548,78 @@ except Exception as exc:
 if not isinstance(plan, dict):
     fail("decoded plan must be an object")
 
-preloads = []
-env_aliases = []
-secret_scans = []
-seen_preloads = set()
-seen_aliases = set()
-seen_scans = set()
-
+disabled_channels = {
+    channel_id
+    for channel_id in plan.get("disabledChannels", [])
+    if isinstance(channel_id, str)
+}
+active_channel_ids = set()
 for channel in plan.get("channels", []):
     if not isinstance(channel, dict):
         continue
-    if channel.get("active") is not True or channel.get("disabled") is True:
+    channel_id = channel.get("channelId")
+    if not isinstance(channel_id, str):
         continue
-    for hook in channel.get("hooks", []):
-        if not isinstance(hook, dict) or hook.get("phase") != "runtime-preload":
-            continue
-        for output in hook.get("outputs", []):
-            if not isinstance(output, dict) or output.get("kind") != "runtime-preload":
-                continue
-            value = output.get("value")
-            if not isinstance(value, dict):
-                fail(f"{channel.get('channelId', '<unknown>')}.{hook.get('id', '<unknown>')}.{output.get('id', '<unknown>')} value must be an object")
-            for entry in value.get("preloads", []):
-                preload = clean_preload(entry, len(preloads))
-                preload_key = (preload["source"], preload["target"])
-                if preload_key not in seen_preloads:
-                    seen_preloads.add(preload_key)
-                    preloads.append(preload)
-            for entry in value.get("envAliases", []):
-                alias = clean_env_alias(entry, len(env_aliases))
-                alias_key = (alias["envKey"], alias["match"], alias["value"])
-                if alias_key not in seen_aliases:
-                    seen_aliases.add(alias_key)
-                    env_aliases.append(alias)
-            for entry in value.get("secretScans", []):
-                scan = clean_secret_scan(entry, len(secret_scans))
-                scan_key = (scan["path"], scan["pattern"])
-                if scan_key not in seen_scans:
-                    seen_scans.add(scan_key)
-                    secret_scans.append(scan)
+    if channel.get("active") is True and channel.get("disabled") is not True and channel_id not in disabled_channels:
+        active_channel_ids.add(channel_id)
 
-print(json.dumps({"preloads": preloads, "envAliases": env_aliases, "secretScans": secret_scans}, sort_keys=True))
+runtime_setup = plan.get("runtimeSetup", EMPTY)
+if runtime_setup is None:
+    runtime_setup = EMPTY
+if not isinstance(runtime_setup, dict):
+    fail("runtimeSetup must be an object")
+
+
+def runtime_setup_entries(key):
+    entries = runtime_setup.get(key, [])
+    if not isinstance(entries, list):
+        fail(f"runtimeSetup.{key} must be a list")
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            fail(f"runtimeSetup.{key}[{index}] must be an object")
+        channel_id = entry.get("channelId")
+        if not isinstance(channel_id, str) or not channel_id:
+            fail(f"runtimeSetup.{key}[{index}].channelId must be a string")
+        if channel_id not in active_channel_ids:
+            continue
+        yield entry
+
+
+node_preloads = []
+env_aliases = []
+secret_scans = []
+seen_node_preloads = set()
+seen_aliases = set()
+seen_scans = set()
+
+for entry in runtime_setup_entries("nodePreloads"):
+    preload = clean_node_preload(entry, len(node_preloads))
+    preload_key = (preload["source"], preload["target"])
+    if preload_key not in seen_node_preloads:
+        seen_node_preloads.add(preload_key)
+        node_preloads.append(preload)
+for entry in runtime_setup_entries("envAliases"):
+    alias = clean_env_alias(entry, len(env_aliases))
+    alias_key = (alias["envKey"], alias["match"], alias["value"])
+    if alias_key not in seen_aliases:
+        seen_aliases.add(alias_key)
+        env_aliases.append(alias)
+for entry in runtime_setup_entries("secretScans"):
+    scan = clean_secret_scan(entry, len(secret_scans))
+    scan_key = (scan["path"], scan["pattern"])
+    if scan_key not in seen_scans:
+        seen_scans.add(scan_key)
+        secret_scans.append(scan)
+
+print(json.dumps({"nodePreloads": node_preloads, "envAliases": env_aliases, "secretScans": secret_scans}, sort_keys=True))
 PYMESSAGINGRUNTIME
 }
 
 apply_messaging_runtime_env_aliases() {
-  [ -f "$_MESSAGING_RUNTIME_PRELOAD_PLAN" ] || return 0
+  [ -f "$_MESSAGING_RUNTIME_SETUP_PLAN" ] || return 0
   local _rows
   _rows="$(
-    python3 - "$_MESSAGING_RUNTIME_PRELOAD_PLAN" <<'PYMESSAGINGALIASES'
+    python3 - "$_MESSAGING_RUNTIME_SETUP_PLAN" <<'PYMESSAGINGALIASES'
 import json
 import os
 import re
@@ -1624,20 +1647,20 @@ PYMESSAGINGALIASES
 }
 
 install_messaging_runtime_preloads() {
-  [ -f "$_MESSAGING_RUNTIME_PRELOAD_PLAN" ] || return 0
+  [ -f "$_MESSAGING_RUNTIME_SETUP_PLAN" ] || return 0
   local _rows
   _rows="$(
-    python3 - "$_MESSAGING_RUNTIME_PRELOAD_PLAN" <<'PYMESSAGINGPRELOADS'
+    python3 - "$_MESSAGING_RUNTIME_SETUP_PLAN" <<'PYMESSAGINGPRELOADS'
 import json
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     plan = json.load(handle)
-for preload in plan.get("preloads", []):
+for preload in plan.get("nodePreloads", []):
     print("\t".join([
         preload["source"],
         preload["target"],
-        ",".join(preload.get("nodeOptions", [])),
+        ",".join(preload.get("injectInto", [])),
         "1" if preload.get("optional") else "0",
         preload.get("installMessage", ""),
         preload.get("installedMessage", ""),
@@ -1647,8 +1670,8 @@ PYMESSAGINGPRELOADS
 
   local _connect_preloads=()
   if [ -n "$_rows" ]; then
-    local _source _target _node_options _optional _install_message _installed_message
-    while IFS=$'\t' read -r _source _target _node_options _optional _install_message _installed_message; do
+    local _source _target _inject_into _optional _install_message _installed_message
+    while IFS=$'\t' read -r _source _target _inject_into _optional _install_message _installed_message; do
       if [ ! -f "$_source" ]; then
         [ "$_optional" = "1" ] && continue
         printf '[channels] Missing runtime preload source: %s\n' "$_source" >&2
@@ -1656,12 +1679,12 @@ PYMESSAGINGPRELOADS
       fi
       [ -n "$_install_message" ] && printf '%s\n' "$_install_message" >&2
       emit_sandbox_sourced_file "$_target" <"$_source"
-      case ",$_node_options," in
+      case ",$_inject_into," in
         *,boot,*)
           export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_target"
           ;;
       esac
-      case ",$_node_options," in
+      case ",$_inject_into," in
         *,connect,*)
           _connect_preloads+=("$_target")
           ;;
@@ -1690,15 +1713,15 @@ CONNECTPRELOADSEOF
 }
 
 messaging_runtime_preload_targets() {
-  printf '%s\n' "$_MESSAGING_RUNTIME_PRELOAD_PLAN" "$_MESSAGING_CONNECT_PRELOADS_FILE"
-  [ -f "$_MESSAGING_RUNTIME_PRELOAD_PLAN" ] || return 0
-  python3 - "$_MESSAGING_RUNTIME_PRELOAD_PLAN" <<'PYMESSAGINGTARGETS'
+  printf '%s\n' "$_MESSAGING_RUNTIME_SETUP_PLAN" "$_MESSAGING_CONNECT_PRELOADS_FILE"
+  [ -f "$_MESSAGING_RUNTIME_SETUP_PLAN" ] || return 0
+  python3 - "$_MESSAGING_RUNTIME_SETUP_PLAN" <<'PYMESSAGINGTARGETS'
 import json
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     plan = json.load(handle)
-for preload in plan.get("preloads", []):
+for preload in plan.get("nodePreloads", []):
     target = preload.get("target")
     if target:
         print(target)
@@ -1716,8 +1739,8 @@ validate_nemoclaw_tmp_permissions() {
 }
 
 verify_messaging_runtime_secret_scans() {
-  [ -f "$_MESSAGING_RUNTIME_PRELOAD_PLAN" ] || return 0
-  python3 - "$_MESSAGING_RUNTIME_PRELOAD_PLAN" <<'PYMESSAGINGSECRETS'
+  [ -f "$_MESSAGING_RUNTIME_SETUP_PLAN" ] || return 0
+  python3 - "$_MESSAGING_RUNTIME_SETUP_PLAN" <<'PYMESSAGINGSECRETS'
 import json
 import re
 import sys
@@ -2316,7 +2339,7 @@ fi
 # that could not catch follow-redirects + proxy-from-env bundled as ESM
 # in OpenClaw's dist/ (no require() calls to intercept).
 #
-# Runtime preload modules are copied into /usr/local/lib/nemoclaw/preloads/
+# Node runtime preload modules are copied into /usr/local/lib/nemoclaw/preloads/
 # at image build time, then copied to /tmp before NODE_OPTIONS=--require so
 # the sandbox user can read them under Landlock-constrained runtimes.
 # ── Global sandbox safety net ──────────────────────────────────
@@ -3564,7 +3587,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # actually runs with.
   write_openclaw_config_baseline
   export_gateway_token
-  write_messaging_runtime_preload_plan
+  write_messaging_runtime_setup_plan
   write_runtime_shell_env
   ensure_runtime_shell_env_shim
   lock_rc_files "$_SANDBOX_HOME" || true
@@ -3719,7 +3742,7 @@ prepare_gateway_token_for_current_command
 # actually runs with.
 write_openclaw_config_baseline
 export_gateway_token
-write_messaging_runtime_preload_plan
+write_messaging_runtime_setup_plan
 write_runtime_shell_env
 ensure_runtime_shell_env_shim
 lock_rc_files "$_SANDBOX_HOME"
@@ -3730,7 +3753,7 @@ apply_messaging_runtime_env_aliases
 
 # Messaging channel config was announced before placeholder refresh so the
 # baseline captures the same provider placeholders the gateway will use.
-# Install manifest-declared runtime preloads before starting OpenClaw.
+# Install manifest-declared Node runtime preloads before starting OpenClaw.
 install_messaging_runtime_preloads
 verify_messaging_runtime_secret_scans
 
