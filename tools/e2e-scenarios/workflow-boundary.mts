@@ -3443,6 +3443,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 
   validateBedrockRuntimeCompatibleAnthropicVitestJob(errors, jobs);
 
+  validateFreeStandingJobSelector(errors, jobs, "gateway-health-honest-vitest", "gateway-health-honest");
+
   validateChannelsAddRemoveVitestJob(errors, jobs);
 
   const reportToPr = asRecord(jobs["report-to-pr"]);
