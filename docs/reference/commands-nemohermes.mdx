@@ -432,13 +432,13 @@ The exit code is the remote command's exit code.
 | `--tty` / `--no-tty` | Allocate a pseudo-terminal; defaults to auto-detection (on when stdin and stdout are terminals) |
 | `--timeout <seconds>` | Timeout in seconds (`0` means no timeout) |
 
-### `nemohermes <name> prompt`
+### `nemohermes <name> agent`
 
-Send a single prompt to the agent running inside a sandbox and stream the response to stdout.
-The prompt runs non-interactively over the same OpenShell exec transport as `exec`, with `HOME=/sandbox` so the addressed agent profile resolves the same way as `connect`.
+Run one OpenClaw agent turn non-interactively in a running sandbox.
+The command is a thin pass-through to `openclaw agent ...` inside the sandbox via `openshell sandbox exec`, with `HOME=/sandbox` so the addressed agent profile resolves the same way as `connect`.
 Use this when driving the sandbox programmatically from another process (CI job, multi-agent platform, evaluation harness) rather than from an interactive terminal.
 
-`prompt` is currently supported only on OpenClaw sandboxes. Hermes already exposes an OpenAI-compatible HTTP API on port `8642` inside the sandbox, so non-interactive use does not need a wrapper command.
+`agent` is currently supported only on OpenClaw sandboxes. Hermes already exposes an OpenAI-compatible HTTP API on port `8642` inside the sandbox, so non-interactive use does not need a wrapper command.
 
 Forward the port and POST chat completions directly:
 

@@ -250,11 +250,11 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]",
     },
   ],
-  "sandbox:prompt": [
+  "sandbox:agent": [
     {
       group: "Sandbox Management",
       order: 4.6,
-      flags: "[--agent <profile>] [--workdir <dir>] [--timeout <s>] [--prompt-file <path|->] [<text>]",
+      flags: "[openclaw-agent-flags...]",
     },
   ],
   "sandbox:upload": [

@@ -530,38 +530,31 @@ The exit code is the remote command's exit code.
 | `--tty` / `--no-tty` | Allocate a pseudo-terminal; defaults to auto-detection (on when stdin and stdout are terminals) |
 | `--timeout <seconds>` | Timeout in seconds (`0` means no timeout) |
 
-### `$$nemoclaw <name> prompt`
+### `$$nemoclaw <name> agent`
 
-Send a single prompt to the agent running inside a sandbox and stream the response to stdout.
-The prompt runs non-interactively over the same OpenShell exec transport as `exec`, with `HOME=/sandbox` so the addressed agent profile resolves the same way as `connect`.
+Run one OpenClaw agent turn non-interactively in a running sandbox.
+The command is a thin pass-through to `openclaw agent ...` inside the sandbox via `openshell sandbox exec`, with `HOME=/sandbox` so the addressed agent profile resolves the same way as `connect`.
 Use this when driving the sandbox programmatically from another process (CI job, multi-agent platform, evaluation harness) rather than from an interactive terminal.
 
 <AgentOnly variant="openclaw">
 
-The prompt is forwarded to `openclaw agent --agent <profile> -m <text>` inside the sandbox, where `<profile>` defaults to `main` and can be overridden with `--agent`.
+All flags accepted by the in-sandbox OpenClaw CLI are forwarded verbatim, so the upstream surface stays the single source of truth.
 
 ```bash
-$$nemoclaw my-assistant prompt "Summarise README.md"
-$$nemoclaw my-assistant prompt --agent chess-bot "Best opening for Black?"
-$$nemoclaw my-assistant prompt --prompt-file ./question.txt
-echo "What is 2+2?" | $$nemoclaw my-assistant prompt --prompt-file -
+$$nemoclaw my-assistant agent -m "Summarise README.md"
+$$nemoclaw my-assistant agent --agent work -m "Status update?"
+$$nemoclaw my-assistant agent --session-id review-42 -m "Any new findings?"
+$$nemoclaw my-assistant agent --json -m 'ping'
 ```
 
-Supply the prompt body in one of two ways: as a positional argument (one quoted string), or via `--prompt-file <path>` where `-` reads from stdin. Passing both at once is an error; passing neither is an error.
+The exit code is the remote command's exit code, so host-side pipelines can branch on it. Streaming follows whatever `openclaw agent` already emits on stdout; no additional buffering is added.
 
-Streaming follows whatever `openclaw agent` already emits on stdout; no additional buffering is added. The exit code is the remote command's exit code, so pipelines can branch on it.
-
-| Flag | Description |
-|------|-------------|
-| `--agent <profile>` | OpenClaw agent profile to address (default: `main`) |
-| `--workdir <dir>` | Working directory inside the sandbox |
-| `--timeout <seconds>` | Timeout in seconds (`0` means no timeout) |
-| `--prompt-file <path\|->` | Read the prompt body from a file path, or `-` for stdin |
+Common upstream flags include `-m <text>`, `--session-id <id>`, `--agent <id>`, `--model <id>`, `--thinking <level>`, `--json`, `--deliver`, `--reply-channel <channel>`, and `--timeout <seconds>`. Run `$$nemoclaw <name> agent --help` for the wrapper-level summary, or invoke `$$nemoclaw <name> exec -- openclaw agent --help` to view the upstream OpenClaw help text directly.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-`prompt` is currently supported only on OpenClaw sandboxes. Hermes already exposes an OpenAI-compatible HTTP API on port `8642` inside the sandbox, so non-interactive use does not need a wrapper command.
+`agent` is currently supported only on OpenClaw sandboxes. Hermes already exposes an OpenAI-compatible HTTP API on port `8642` inside the sandbox, so non-interactive use does not need a wrapper command.
 
 Forward the port and POST chat completions directly:
 
