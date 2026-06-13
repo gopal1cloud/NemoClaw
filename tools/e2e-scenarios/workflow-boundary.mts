@@ -2678,6 +2678,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateSnapshotCommandsVitestJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "gateway-drift-preflight-vitest", "gateway-drift-preflight");
 
+  validateFreeStandingJobSelector(errors, jobs, "openclaw-inference-switch-vitest", "openclaw-inference-switch");
+
   const reportToPr = asRecord(jobs["report-to-pr"]);
   if (Object.keys(reportToPr).length === 0) {
     errors.push("workflow missing report-to-pr job");
