@@ -56,7 +56,7 @@ jobs:
           SCENARIOS: ${{ inputs.scenarios }}
         run: |
           set -euo pipefail
-          inventory_path="tools/e2e-scenarios/free-standing-jobs.env"
+          inventory_output="$(npx tsx tools/e2e-scenarios/free-standing-workflow-inventory.mts --shell)"
           allowed_jobs=""
           free_standing_scenarios_csv=""
           free_standing_scenario_jobs_csv=""
@@ -68,13 +68,13 @@ jobs:
               continue
             fi
             if [[ ! "${line}" =~ ^(allowed_jobs|free_standing_scenarios_csv|free_standing_scenario_jobs_csv)=([A-Za-z0-9_:-]+(,[A-Za-z0-9_:-]+)*)$ ]]; then
-              echo "::error::free-standing jobs inventory must be data-only key=value" >&2
+              echo "::error::free-standing workflow inventory must be data-only key=value" >&2
               exit 1
             fi
             inventory_key="${BASH_REMATCH[1]}"
             inventory_value="${BASH_REMATCH[2]}"
             if [[ -n "${seen_inventory_keys[${inventory_key}]:-}" ]]; then
-              echo "::error::free-standing jobs inventory must not redefine ${inventory_key}" >&2
+              echo "::error::free-standing workflow inventory must not redefine ${inventory_key}" >&2
               exit 1
             fi
             seen_inventory_keys["${inventory_key}"]=1
@@ -83,10 +83,10 @@ jobs:
               free_standing_scenarios_csv) free_standing_scenarios_csv="${inventory_value}" ;;
               free_standing_scenario_jobs_csv) free_standing_scenario_jobs_csv="${inventory_value}" ;;
             esac
-          done < "${inventory_path}"
+          done <<< "${inventory_output}"
           for required_inventory_key in allowed_jobs free_standing_scenarios_csv free_standing_scenario_jobs_csv; do
             if [[ -z "${!required_inventory_key:-}" ]]; then
-              echo "::error::free-standing jobs inventory missing ${required_inventory_key}" >&2
+              echo "::error::free-standing workflow inventory missing ${required_inventory_key}" >&2
               exit 1
             fi
           done
@@ -94,11 +94,11 @@ jobs:
           IFS=',' read -r -a allowed_job_entries <<< "${allowed_jobs}"
           for job in "${allowed_job_entries[@]}"; do
             if [[ ! "${job}" =~ ^[A-Za-z0-9_-]+$ ]]; then
-              echo "::error::free-standing jobs inventory contains invalid job id" >&2
+              echo "::error::free-standing workflow inventory contains invalid job id" >&2
               exit 1
             fi
             if [[ -n "${seen_allowed_jobs[${job}]:-}" ]]; then
-              echo "::error::free-standing jobs inventory repeats job id" >&2
+              echo "::error::free-standing workflow inventory repeats job id" >&2
               exit 1
             fi
             seen_allowed_jobs["${job}"]=1
@@ -107,11 +107,11 @@ jobs:
           IFS=',' read -r -a free_standing_scenario_entries <<< "${free_standing_scenarios_csv}"
           for scenario in "${free_standing_scenario_entries[@]}"; do
             if [[ ! "${scenario}" =~ ^[A-Za-z0-9_-]+$ ]]; then
-              echo "::error::free-standing jobs inventory contains invalid scenario id" >&2
+              echo "::error::free-standing workflow inventory contains invalid scenario id" >&2
               exit 1
             fi
             if [[ -n "${seen_free_standing_scenarios[${scenario}]:-}" ]]; then
-              echo "::error::free-standing jobs inventory repeats scenario id" >&2
+              echo "::error::free-standing workflow inventory repeats scenario id" >&2
               exit 1
             fi
             seen_free_standing_scenarios["${scenario}"]=1
@@ -127,7 +127,7 @@ jobs:
             scenario="${entry%%:*}"
             job="${entry#*:}"
             if [[ -n "${seen_scenario_mappings[${scenario}]:-}" ]]; then
-              echo "::error::free-standing jobs inventory repeats scenario mapping" >&2
+              echo "::error::free-standing workflow inventory repeats scenario mapping" >&2
               exit 1
             fi
             seen_scenario_mappings["${scenario}"]=1
@@ -247,7 +247,7 @@ jobs:
 
       - name: Run Vitest live E2E scenarios
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           SCENARIO_ID: ${{ matrix.id }}
         run: |
           set -euo pipefail
@@ -323,6 +323,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "openshell-version-pin"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/openshell-version-pin
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
     steps:
@@ -364,6 +366,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "onboard-negative-paths"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/onboard-negative-paths
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
     steps:
@@ -412,6 +416,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "skill-agent"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/skill-agent
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
@@ -467,7 +473,7 @@ jobs:
 
       - name: Run skill-agent live test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -511,6 +517,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "hermes-root-entrypoint-smoke"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/hermes-root-entrypoint-smoke
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
     steps:
@@ -553,6 +561,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "inference-routing"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/inference-routing
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
     steps:
@@ -601,6 +611,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "issue-4434-tui-unreachable-inference"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/issue-4434-tui-unreachable-inference
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
@@ -662,7 +674,7 @@ jobs:
 
       - name: Run issue #4434 TUI unreachable inference live test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -699,6 +711,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 65
     env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "credential-sanitization"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/credential-sanitization
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
@@ -749,11 +763,11 @@ jobs:
 
       - name: Run credential sanitization live test
         # Migrated from test/e2e/test-credential-sanitization.sh. Preserves the
-        # same ubuntu-latest + Docker/OpenShell + NVIDIA_API_KEY lane by running
+        # same ubuntu-latest + Docker/OpenShell + NVIDIA_INFERENCE_API_KEY lane by running
         # install.sh, onboarding a real sandbox, and probing sandbox state from
         # Vitest while fixture redaction owns evidence logs.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -783,6 +797,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 50
     env:
+      FREE_STANDING_VITEST_JOB: "1"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/credential-migration
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
@@ -832,11 +847,11 @@ jobs:
 
       - name: Run credential migration live test
         # Migrated from test/e2e/test-credential-migration.sh. This live test
-        # needs NVIDIA_API_KEY only as the staged legacy credential value; it
+        # needs NVIDIA_INFERENCE_API_KEY only as the staged legacy credential value; it
         # preserves the default NVIDIA provider/key migration path while
         # pinning a lower-quota catalog model in the test fixture.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -861,6 +876,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "runtime-overrides"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/runtime-overrides
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
     steps:
@@ -902,6 +919,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "hermes-e2e"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/hermes-e2e
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
@@ -931,7 +950,7 @@ jobs:
 
       - name: Run Hermes live Vitest test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -954,6 +973,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "network-policy"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/network-policy
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
@@ -979,21 +1000,21 @@ jobs:
         run: npm run build:cli
 
       - name: Install OpenShell
-        # Runs without workflow tokens, Docker credentials, or NVIDIA_API_KEY.
+        # Runs without workflow tokens, Docker credentials, or NVIDIA_INFERENCE_API_KEY.
         # scripts/install-openshell.sh pins the OpenShell version and verifies
         # release SHA-256 checksums before installation.
         env:
           NEMOCLAW_NON_INTERACTIVE: "1"
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run network-policy live test
         # Migrated from test/e2e/test-network-policy.sh. Free-standing anchor
         # for live network policy allow/deny probes; shell retirement remains
         # deferred to #5098 Phase 11.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -1016,6 +1037,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "shields-config"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/shields-config
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
@@ -1067,7 +1090,7 @@ jobs:
         # bash install.sh to preserve installer/onboard fidelity, then probes
         # real shields/config behavior against the live sandbox.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -1092,6 +1115,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 130
     env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "rebuild-openclaw"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/rebuild-openclaw
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
@@ -1145,11 +1170,11 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run OpenClaw rebuild live test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -1184,6 +1209,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "sandbox-rebuild"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/sandbox-rebuild
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
@@ -1238,11 +1265,11 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run sandbox rebuild live test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -1277,6 +1304,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "double-onboard"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/double-onboard
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
@@ -1364,6 +1393,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "token-rotation"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/token-rotation
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
@@ -1441,12 +1472,102 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  messaging-providers-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',messaging-providers-vitest,') || contains(format(',{0},', inputs.scenarios), ',messaging-providers,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "messaging-providers"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/messaging-providers
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run messaging providers live Vitest test
+        # Migrated from test/e2e/test-messaging-providers.sh. The test keeps
+        # the legacy fake-token defaults, optional _REAL secret overrides,
+        # provider placeholder redaction checks, and WhatsApp QR-only parity.
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          TELEGRAM_BOT_TOKEN_REAL: ${{ secrets.TELEGRAM_BOT_TOKEN_REAL }}
+          DISCORD_BOT_TOKEN_REAL: ${{ secrets.DISCORD_BOT_TOKEN_REAL }}
+          SLACK_BOT_TOKEN_REAL: ${{ secrets.SLACK_BOT_TOKEN_REAL }}
+          SLACK_APP_TOKEN_REAL: ${{ secrets.SLACK_APP_TOKEN_REAL }}
+          TELEGRAM_ALLOWED_IDS: ${{ secrets.TELEGRAM_ALLOWED_IDS }}
+          TELEGRAM_AUTHORIZED_CHAT_IDS: ${{ secrets.TELEGRAM_AUTHORIZED_CHAT_IDS }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHAT_ID_E2E: ${{ secrets.TELEGRAM_CHAT_ID_E2E }}
+          DISCORD_CHANNEL_ID_E2E: ${{ secrets.DISCORD_CHANNEL_ID_E2E }}
+          SLACK_CHANNEL_ID_E2E: ${{ secrets.SLACK_CHANNEL_ID_E2E }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/messaging-providers.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload messaging providers artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-messaging-providers
+          path: e2e-artifacts/vitest/messaging-providers/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
   launchable-smoke-vitest:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',launchable-smoke-vitest,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      FREE_STANDING_VITEST_JOB: "1"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/launchable-smoke
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-launchable"
@@ -1495,7 +1616,7 @@ jobs:
 
       - name: Run launchable smoke live test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -1521,6 +1642,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "model-router-provider-routed-inference"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/model-router-provider-routed-inference
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
@@ -1580,7 +1703,7 @@ jobs:
         # sandbox inference.local completion boundaries without adding registry
         # or migration-ledger wiring.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -1610,6 +1733,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "sandbox-survival"
       DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-sandbox-survival
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/sandbox-survival
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
@@ -1668,7 +1793,7 @@ jobs:
         # fidelity before exercising gateway restart, state survival, and live
         # inference.local before and after restart.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -1701,6 +1826,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "openclaw-tui-chat-correlation"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/openclaw-tui-chat-correlation
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
@@ -1749,7 +1876,7 @@ jobs:
 
       - name: Run OpenClaw TUI chat correlation live test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -1781,10 +1908,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
+      FREE_STANDING_VITEST_JOB: "1"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/gateway-guard-recovery
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       # nemoclaw onboard registers the gateway under the canonical name
@@ -1823,6 +1950,8 @@ jobs:
         run: bash scripts/install-openshell.sh
 
       - name: Run Vitest gateway-guard-recovery scenario
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           # OpenShell installs to /usr/local/bin on GitHub-hosted runners
@@ -1886,6 +2015,7 @@ jobs:
         rebuild-openclaw-vitest,
         sandbox-rebuild-vitest,
         token-rotation-vitest,
+        messaging-providers-vitest,
         launchable-smoke-vitest,
         double-onboard-vitest,
         model-router-provider-routed-inference-vitest,
