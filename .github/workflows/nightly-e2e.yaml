@@ -632,7 +632,7 @@ jobs:
     uses: ./.github/workflows/e2e-script.yaml
     with:
       ref: ${{ inputs.target_ref || github.ref }}
-      script: test/e2e/test-issue-4462-scope-upgrade-approval.sh
+      script: test/e2e/test-cli-scope-upgrade-approval.sh
       timeout_minutes: 60
       artifact_name: "issue-4462-scope-upgrade-approval-logs"
       artifact_path: |
@@ -656,7 +656,7 @@ jobs:
     uses: ./.github/workflows/e2e-script.yaml
     with:
       ref: ${{ inputs.target_ref || github.ref }}
-      script: test/e2e/test-issue-4462-scope-upgrade-approval.sh
+      script: test/e2e/test-cli-scope-upgrade-approval.sh
       timeout_minutes: 60
       artifact_name: "issue-4462-gateway-pinned-approval-characterization-logs"
       artifact_path: |

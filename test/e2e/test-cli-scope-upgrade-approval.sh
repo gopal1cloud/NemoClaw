@@ -1043,6 +1043,45 @@ fi
 
 pass "approved agent output contains no fallback or pairing markers"
 
+section "Phase 6: Verify watcher emits slow-mode fast-reentry instrumentation"
+
+# Once the watcher converges (fast-deadline elapsed or paired devices seen
+# for several quiet polls) it transitions to slow-mode keepalive. A late
+# allowlisted scope upgrade arriving after that point must drop polling
+# back to a bounded fast-reentry window so the OpenClaw client does not
+# time out and fall back to embedded mode. Phases 3-5 have already left
+# at least one paired device in the sandbox, so the watcher should have
+# logged a slow-mode transition; the fast-reentry marker is emitted on
+# the first allowlisted approval attempt the watcher itself performs and
+# is therefore best-effort here (the test's explicit approve_request may
+# win the race against the watcher poll cadence).
+
+auto_pair_log_snapshot=$(sandbox_exec_sh_script 20 '
+set -u
+cat /tmp/auto-pair.log 2>/dev/null || true
+' 2>&1)
+printf '=== /tmp/auto-pair.log snapshot ===\n%s\n' "$auto_pair_log_snapshot" >>"$STATE_LOG"
+
+slow_mode_observed=0
+if grep -F '[auto-pair] fast-mode deadline reached; switching to slow-mode' <<<"$auto_pair_log_snapshot" >/dev/null \
+  || grep -F '[auto-pair] browser pairing converged; entering slow-mode' <<<"$auto_pair_log_snapshot" >/dev/null \
+  || grep -F '[auto-pair] devices paired ' <<<"$auto_pair_log_snapshot" >/dev/null \
+  || grep -F '[auto-pair] non-browser pairing converged; entering slow-mode' <<<"$auto_pair_log_snapshot" >/dev/null; then
+  slow_mode_observed=1
+fi
+
+if [ "$slow_mode_observed" -eq 1 ]; then
+  pass "watcher reached slow-mode keepalive"
+else
+  fail "watcher did not record any slow-mode transition during the test window"
+fi
+
+if grep -F '[auto-pair] fast-reentry bumped' <<<"$auto_pair_log_snapshot" >/dev/null; then
+  pass "watcher logged fast-reentry marker on at least one allowlisted approval attempt"
+else
+  info "fast-reentry marker not observed (explicit approve_request likely won the race against the watcher poll cadence; the user-facing path is gated by Phase 5)"
+fi
+
 section "Summary"
 echo ""
 printf '  Total: %d | \033[32mPass: %d\033[0m | \033[31mFail: %d\033[0m\n' \

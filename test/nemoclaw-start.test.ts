@@ -1743,6 +1743,121 @@ exit 2
     }
   }, 40_000);
 
+  it("drops slow-mode polling back to fast cadence when a late scope upgrade arrives", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-fastreentry-"));
+    const fakeOpenclaw = path.join(tmpDir, "openclaw");
+    const stateFile = path.join(tmpDir, "list-count");
+    const approveLog = path.join(tmpDir, "approvals.log");
+
+    // Same poll timeline as the late-cli convergence case:
+    //   1-2:  first-time browser pairing request pending.
+    //   3-6:  browser paired, nothing pending (watcher converges to slow mode).
+    //   7-10: late CLI scope upgrade arrives — must trigger fast-reentry.
+    //   11+:  cli paired alongside browser.
+    const initialPending = JSON.stringify({
+      pending: [
+        { requestId: "browser-pair", clientId: "openclaw-control-ui", clientMode: "webchat" },
+      ],
+      paired: [],
+    });
+    const browserPaired = JSON.stringify({
+      pending: [],
+      paired: [{ clientId: "openclaw-control-ui", clientMode: "webchat" }],
+    });
+    const lateCli = JSON.stringify({
+      pending: [{ requestId: "late-cli", clientId: "openclaw-cli", clientMode: "cli" }],
+      paired: [{ clientId: "openclaw-control-ui", clientMode: "webchat" }],
+    });
+    const allPaired = JSON.stringify({
+      pending: [],
+      paired: [
+        { clientId: "openclaw-control-ui", clientMode: "webchat" },
+        { clientId: "openclaw-cli", clientMode: "cli" },
+      ],
+    });
+
+    fs.writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
+  count="$(cat ${JSON.stringify(stateFile)} 2>/dev/null || echo 0)"
+  count=$((count + 1))
+  echo "$count" > ${JSON.stringify(stateFile)}
+  if [ "$count" -le 2 ]; then
+    printf '%s\n' ${JSON.stringify(initialPending)}
+  elif [ "$count" -le 6 ]; then
+    printf '%s\n' ${JSON.stringify(browserPaired)}
+  elif [ "$count" -le 10 ]; then
+    printf '%s\n' ${JSON.stringify(lateCli)}
+  else
+    printf '%s\n' ${JSON.stringify(allPaired)}
+  fi
+  exit 0
+fi
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  echo "$3" >> ${JSON.stringify(approveLog)}
+  printf '{}\n'
+  exit 0
+fi
+echo "unexpected: $*" >&2
+exit 2
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const run = spawnSync("python3", ["-c", buildAutoPairScript()], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          OPENCLAW_BIN: fakeOpenclaw,
+          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "600",
+          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "5",
+          // SLOW_INTERVAL larger than FAST_REENTRY_INTERVAL so the regression
+          // would be visible if fast-reentry did not kick in. The harness's
+          // virtual clock caps each sleep at 0.25s, so behavioural assertions
+          // (markers, ordering, approval count) carry the proof rather than
+          // wall-clock timing.
+          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "5",
+          NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
+          NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "1",
+        },
+        timeout: 30_000,
+      });
+      expect(run.status).toBe(0);
+      expect(run.stdout).toContain(
+        "[auto-pair] approved request=browser-pair client=openclaw-control-ui mode=webchat",
+      );
+      expect(run.stdout).toContain(
+        "[auto-pair] browser pairing converged; entering slow-mode approvals=1",
+      );
+      expect(run.stdout).toContain(
+        "[auto-pair] approved request=late-cli client=openclaw-cli mode=cli",
+      );
+      // Critical: the slow-mode → fast-reentry transition fires on the
+      // late-cli pending wave (not on the original pre-convergence approval).
+      expect(run.stdout).toContain(
+        "[auto-pair] fast-reentry bumped polls=3 approved=2 mode=slow",
+      );
+      // The fast-reentry marker must come AFTER slow-mode convergence,
+      // and the late-cli approval must come AFTER the marker.
+      const convergedAt = run.stdout.indexOf("browser pairing converged");
+      const bumpedAt = run.stdout.indexOf("fast-reentry bumped polls=3 approved=2 mode=slow");
+      const lateApprovedAt = run.stdout.indexOf("approved request=late-cli");
+      expect(convergedAt).toBeGreaterThanOrEqual(0);
+      expect(bumpedAt).toBeGreaterThan(convergedAt);
+      expect(lateApprovedAt).toBeGreaterThan(convergedAt);
+      // Both allowlisted approvals should have been recorded.
+      expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual([
+        "browser-pair",
+        "late-cli",
+      ]);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 40_000);
+
   it("rejects unknown clients in slow-mode keepalive", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-slow-evil-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");

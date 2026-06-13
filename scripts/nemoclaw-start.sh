@@ -1907,6 +1907,20 @@ def _env_seconds(name, default):
 FAST_DEADLINE = time.time() + _env_seconds('NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS', 600)
 DEADLINE = time.time() + _env_seconds('NEMOCLAW_AUTO_PAIR_DEADLINE_SECS', 28800)
 SLOW_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS', 30)
+# After convergence the watcher polls at SLOW_INTERVAL (default 30s). A late
+# allowlisted scope upgrade — e.g. `openclaw tui`, `openclaw cron add`,
+# `openclaw agent` invoked after the watcher entered slow mode — can therefore
+# wait up to SLOW_INTERVAL before being approved, which is longer than the
+# OpenClaw client's tolerance for `scope upgrade pending approval` so the
+# client falls back to embedded mode. When the watcher successfully approves
+# (or attempts to approve) an allowlisted upgrade during slow mode it bumps a
+# bounded fast-reentry counter that drops polling back to 1s for the next
+# FAST_REENTRY_POLLS iterations. The counter is bounded so a sticky pending
+# request cannot pin the watcher in fast polling for the rest of DEADLINE
+# and re-create the WS handshake-timeout pile-up.
+FAST_REENTRY_POLLS = int(_env_seconds('NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS', 5))
+FAST_REENTRY_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS', 1)
+FAST_REENTRY_REMAINING = 0
 QUIET_POLLS = 0
 APPROVED = 0
 SLOW_MODE = False
@@ -1948,15 +1962,33 @@ def run(*args, strip_gateway_env=False):
         print(f'[auto-pair] timeout calling {args[1] if len(args) > 1 else "openclaw"} {args[2] if len(args) > 2 else ""}'.rstrip())
         return 124, out.strip(), err.strip()
 
+
+def sleep_for_next_poll(default_seconds):
+    # Apply the bounded fast-reentry override before the caller's default
+    # sleep so a recent allowlisted approval (which bumps the remaining
+    # counter) drops polling to FAST_REENTRY_INTERVAL for the next few
+    # iterations. Mutates the global counter so callers do not need to
+    # thread the state through. The override is floored by the caller's
+    # default so it never increases the inter-poll latency (e.g. when the
+    # default is already tighter than FAST_REENTRY_INTERVAL during a
+    # bounded retry pass in fast mode).
+    global FAST_REENTRY_REMAINING
+    if FAST_REENTRY_REMAINING > 0:
+        FAST_REENTRY_REMAINING -= 1
+        time.sleep(min(FAST_REENTRY_INTERVAL, default_seconds))
+        return
+    time.sleep(default_seconds)
+
+
 while time.time() < DEADLINE:
     rc, out, err = run(OPENCLAW, 'devices', 'list', '--json')
     if rc != 0 or not out:
-        time.sleep(SLOW_INTERVAL if SLOW_MODE else 1)
+        sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1)
         continue
     try:
         data = json.loads(out)
     except Exception:
-        time.sleep(SLOW_INTERVAL if SLOW_MODE else 1)
+        sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1)
         continue
 
     pending = data.get('pending') or []
@@ -1975,6 +2007,7 @@ while time.time() < DEADLINE:
 
     if pending:
         QUIET_POLLS = 0
+        attempted_approval = False
         for device in pending:
             if not isinstance(device, dict):
                 continue
@@ -1997,6 +2030,7 @@ while time.time() < DEADLINE:
                 scopes = decision['scopes']
                 print(f'[auto-pair] rejected disallowed scopes={sorted(scopes)} client={client_id} mode={client_mode}')
                 continue
+            attempted_approval = True
             arc, aout, aerr = run(
                 OPENCLAW, 'devices', 'approve', request_id, '--json', strip_gateway_env=True,
             )
@@ -2013,7 +2047,19 @@ while time.time() < DEADLINE:
                 print(f'[auto-pair] approved request={request_id} client={client_id} mode={client_mode}')
             elif aout or aerr:
                 print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
-        time.sleep(SLOW_INTERVAL if SLOW_MODE else 1)
+        # An allowlisted approval attempt — successful or not — bumps the
+        # fast-reentry counter so the next few polls run at 1s instead of
+        # SLOW_INTERVAL. That covers (a) cascading scope upgrades from the
+        # same client and (b) transient approve failures that need a retry
+        # before the OpenClaw client gives up and falls back to embedded.
+        # A pending list containing only already-handled or always-rejected
+        # entries does not bump the counter, so a sticky reject cannot pin
+        # the watcher in fast polling.
+        if attempted_approval and FAST_REENTRY_POLLS > 0:
+            FAST_REENTRY_REMAINING = FAST_REENTRY_POLLS
+            mode_label = 'slow' if SLOW_MODE else 'fast'
+            print(f'[auto-pair] fast-reentry bumped polls={FAST_REENTRY_POLLS} approved={APPROVED} mode={mode_label}')
+        sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1)
         continue
 
     QUIET_POLLS += 1
@@ -2046,13 +2092,15 @@ while time.time() < DEADLINE:
     # 5s in fast mode once anything is paired/approved, and SLOW_INTERVAL
     # (default 30s) after convergence. Slow-mode keepalive lets late CLI
     # scope upgrades get approved through the rest of DEADLINE without
-    # hammering the gateway.
+    # hammering the gateway. The bounded fast-reentry counter (bumped above
+    # when an allowlisted upgrade was attempted) overrides whichever tier
+    # is selected here so the next few polls catch cascading upgrades.
     if SLOW_MODE:
-        time.sleep(SLOW_INTERVAL)
+        sleep_for_next_poll(SLOW_INTERVAL)
     elif APPROVED > 0 or paired:
-        time.sleep(5)
+        sleep_for_next_poll(5)
     else:
-        time.sleep(1)
+        sleep_for_next_poll(1)
 else:
     print(f'[auto-pair] watcher deadline reached approvals={APPROVED}')
 PYAUTOPAIR
