@@ -2245,9 +2245,9 @@ exit 2
       expect(run.stdout).toContain("watcher deadline reached approvals=1");
       expect(fs.readFileSync(stateFile, "utf-8").trim()).toBe("2");
       expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual(["retry-cli"]);
-      // Rising edge arms once for retry-cli; second poll reuses bumped set.
-      const markerRe = /fast-reentry bumped polls=3 approved=0 mode=fast/g;
+      const markerRe = /fast-reentry bumped polls=3 /g;
       expect(run.stdout.match(markerRe)?.length).toBe(1);
+      expect(run.stdout).toContain("[auto-pair] fast-reentry bumped polls=3 approved=0 mode=fast");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

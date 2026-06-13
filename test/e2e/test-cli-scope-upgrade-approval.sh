@@ -765,6 +765,7 @@ fi
 pass "Pre-cleanup complete"
 
 info "Running install.sh --non-interactive"
+# shellcheck disable=SC2030,SC2031
 (
   export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
   export NEMOCLAW_RECREATE_SANDBOX=1
@@ -1088,6 +1089,125 @@ if grep -F '[auto-pair] fast-reentry bumped' <<<"$auto_pair_log_snapshot" >/dev/
   pass "watcher logged fast-reentry marker on at least one allowlisted approval attempt"
 else
   info "watcher did not log a fast-reentry marker (explicit approve_request won the race against the watcher poll cadence; the user-facing path is gated by Phase 5 and unit test/nemoclaw-start.test.ts)"
+fi
+
+section "Phase 7: Verify two-sandbox concurrent gateway-backed agent turns"
+
+# Targets the multi-sandbox half of the linked issue: two sandboxes running
+# allowlisted CLI clients through the shared OpenShell gateway concurrently
+# must each get their late scope upgrade approved by their own in-sandbox
+# auto-pair watcher with no scope-upgrade, pairing, or embedded-fallback
+# markers. CI has only one inference provider key available, so both
+# sandboxes share the same NVIDIA Cloud provider; the property being
+# validated — independent per-sandbox watchers + concurrent gateway use —
+# is the same whether providers differ or match.
+
+SANDBOX_NAME_B="${SANDBOX_NAME}-b"
+register_sandbox_for_teardown "$SANDBOX_NAME_B"
+
+info "Onboarding second sandbox: ${SANDBOX_NAME_B}"
+# shellcheck disable=SC2030,SC2031
+(
+  export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME_B"
+  export NEMOCLAW_RECREATE_SANDBOX=1
+  export NEMOCLAW_FRESH=1
+  export NEMOCLAW_NON_INTERACTIVE=1
+  export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
+  # Second sandbox needs its own dashboard port; the first sandbox uses
+  # 18789 by default, so pin the sibling to 18790 to avoid a collision.
+  export NEMOCLAW_DASHBOARD_PORT=18790
+  export NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS="$AUTO_PAIR_FAST_DEADLINE_SECS"
+  export NEMOCLAW_AUTO_PAIR_DEADLINE_SECS="$AUTO_PAIR_DEADLINE_SECS"
+  export NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS="$AUTO_PAIR_SLOW_INTERVAL_SECS"
+  export NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS="$AUTO_PAIR_RUN_TIMEOUT_SECS"
+  run_with_timeout 900 nemoclaw onboard --non-interactive --fresh
+) >>"$INSTALL_LOG" 2>&1
+onboard_b_rc=$?
+if [ "$onboard_b_rc" -ne 0 ]; then
+  fail "second sandbox onboard failed with exit ${onboard_b_rc}; see ${INSTALL_LOG}"
+  exit 1
+fi
+pass "second sandbox onboarded"
+
+sandbox_b_exec_sh_script() {
+  local seconds="$1"
+  local script="$2"
+  shift 2
+  local encoded remote_cmd arg
+  encoded="$(printf '%s' "$script" | base64 | tr -d '\n')"
+  remote_cmd="tmp=\$(mktemp); trap 'rm -f \"\$tmp\"' EXIT; printf %s $(quote_for_remote_sh "$encoded") | base64 -d > \"\$tmp\"; bash \"\$tmp\""
+  for arg in "$@"; do
+    remote_cmd+=" $(quote_for_remote_sh "$arg")"
+  done
+  run_with_timeout "$seconds" "$OPENSHELL_BIN" sandbox exec --name "$SANDBOX_NAME_B" -- sh -lc "$remote_cmd"
+}
+
+info "Running concurrent openclaw agent turns in both sandboxes"
+
+multi_agent_script='
+set -u
+# shellcheck source=/dev/null
+. /tmp/nemoclaw-proxy-env.sh
+session_id="cli-scope-multi-$(date +%s)-$$"
+rm -f "/sandbox/.openclaw/agents/main/sessions/${session_id}.jsonl.lock" \
+      "/sandbox/.openclaw/agents/main/sessions/${session_id}.trajectory.jsonl" 2>/dev/null || true
+printf "__URL_FOR_MULTI_AGENT__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
+openclaw agent --agent main --json --session-id "$session_id" \
+  -m "What is 2 plus 2? Reply with only the integer, no extra words."
+'
+
+multi_out_a="$(mktemp)"
+multi_out_b="$(mktemp)"
+
+(sandbox_exec_sh_script 240 "$multi_agent_script" >"$multi_out_a" 2>&1) &
+multi_pid_a=$!
+(sandbox_b_exec_sh_script 240 "$multi_agent_script" >"$multi_out_b" 2>&1) &
+multi_pid_b=$!
+
+wait "$multi_pid_a"
+multi_rc_a=$?
+wait "$multi_pid_b"
+multi_rc_b=$?
+
+{
+  printf '=== sandbox A concurrent agent (rc=%s) ===\n' "$multi_rc_a"
+  cat "$multi_out_a"
+  printf '=== sandbox B concurrent agent (rc=%s) ===\n' "$multi_rc_b"
+  cat "$multi_out_b"
+} >>"$AGENT_LOG"
+
+multi_marker_re='EMBEDDED FALLBACK|scope upgrade pending approval|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded'
+
+multi_pass=1
+if [ "$multi_rc_a" -ne 0 ]; then
+  fail "sandbox A concurrent agent exited ${multi_rc_a}: $(head -c 400 "$multi_out_a")"
+  multi_pass=0
+fi
+if [ "$multi_rc_b" -ne 0 ]; then
+  fail "sandbox B concurrent agent exited ${multi_rc_b}: $(head -c 400 "$multi_out_b")"
+  multi_pass=0
+fi
+if grep -Eiq "$multi_marker_re" "$multi_out_a"; then
+  fail "sandbox A concurrent agent output contained scope-upgrade or fallback marker"
+  multi_pass=0
+fi
+if grep -Eiq "$multi_marker_re" "$multi_out_b"; then
+  fail "sandbox B concurrent agent output contained scope-upgrade or fallback marker"
+  multi_pass=0
+fi
+if ! grep -q '^__URL_FOR_MULTI_AGENT__=ws://' "$multi_out_a"; then
+  fail "sandbox A concurrent agent did not preserve OPENCLAW_GATEWAY_URL"
+  multi_pass=0
+fi
+if ! grep -q '^__URL_FOR_MULTI_AGENT__=ws://' "$multi_out_b"; then
+  fail "sandbox B concurrent agent did not preserve OPENCLAW_GATEWAY_URL"
+  multi_pass=0
+fi
+
+rm -f "$multi_out_a" "$multi_out_b"
+
+if [ "$multi_pass" -eq 1 ]; then
+  pass "both sandboxes ran concurrent openclaw agent turns gateway-backed without scope-upgrade, pairing, or EMBEDDED FALLBACK markers"
 fi
 
 section "Summary"
