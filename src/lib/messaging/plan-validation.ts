@@ -8,6 +8,10 @@ import type {
   MessagingSerializableValue,
   SandboxMessagingPlan,
 } from "./manifest";
+import {
+  type MaybeCompactMessagingPlan,
+  normalizePersistedSandboxMessagingPlanShape,
+} from "./persistence";
 
 export interface SandboxMessagingPlanParseOptions {
   sandboxName?: string | null;
@@ -27,13 +31,13 @@ export function parseSandboxMessagingPlan(
     typeof value.workflow !== "string" ||
     !Array.isArray(value.channels) ||
     !Array.isArray(value.disabledChannels) ||
-    !Array.isArray(value.credentialBindings) ||
-    !isObject(value.networkPolicy) ||
+    (Object.hasOwn(value, "credentialBindings") && !Array.isArray(value.credentialBindings)) ||
+    (Object.hasOwn(value, "networkPolicy") && !isObject(value.networkPolicy)) ||
     (Object.hasOwn(value, "agentRender") && !Array.isArray(value.agentRender)) ||
-    !Array.isArray(value.buildSteps) ||
+    (Object.hasOwn(value, "buildSteps") && !Array.isArray(value.buildSteps)) ||
     !isRuntimeSetup(value.runtimeSetup) ||
-    !Array.isArray(value.stateUpdates) ||
-    !Array.isArray(value.healthChecks)
+    (Object.hasOwn(value, "stateUpdates") && !Array.isArray(value.stateUpdates)) ||
+    (Object.hasOwn(value, "healthChecks") && !Array.isArray(value.healthChecks))
   ) {
     return null;
   }
@@ -47,11 +51,19 @@ export function parseSandboxMessagingPlan(
       : null;
   for (const [index, channel] of value.channels.entries()) {
     if (!isObject(channel) || typeof channel.channelId !== "string") return null;
-    if (typeof channel.configured !== "boolean") return null;
-    if (typeof channel.active !== "boolean") return null;
-    if (typeof channel.disabled !== "boolean") return null;
-    if (!Array.isArray(channel.inputs)) return null;
+    if (Object.hasOwn(channel, "configured") && typeof channel.configured !== "boolean") {
+      return null;
+    }
+    if (Object.hasOwn(channel, "active") && typeof channel.active !== "boolean") return null;
+    if (Object.hasOwn(channel, "disabled") && typeof channel.disabled !== "boolean") return null;
+    if (Object.hasOwn(channel, "inputs") && !Array.isArray(channel.inputs)) return null;
     if (Object.hasOwn(channel, "hooks") && !Array.isArray(channel.hooks)) return null;
+    if (
+      Array.isArray(channel.inputs) &&
+      channel.inputs.some((input) => !isObject(input) || typeof input.inputId !== "string")
+    ) {
+      return null;
+    }
     if (supported && !supported.has(channel.channelId)) return null;
     if (
       value.channels.findIndex(
@@ -64,7 +76,7 @@ export function parseSandboxMessagingPlan(
   if (!value.disabledChannels.every((channelId) => typeof channelId === "string")) return null;
 
   return cloneSandboxMessagingPlan(
-    normalizePersistedSandboxMessagingPlanShape(value as unknown as MaybeCompactMessagingPlan),
+    normalizePersistedSandboxMessagingPlanShape(value as MaybeCompactMessagingPlan),
   );
 }
 
@@ -144,28 +156,6 @@ function stringifyPlanStateValue(value: MessagingSerializableValue | undefined):
   }
   const text = String(value).trim();
   return text.length > 0 ? text : null;
-}
-
-type MaybeCompactMessagingChannelPlan = Omit<SandboxMessagingPlan["channels"][number], "hooks"> & {
-  readonly hooks?: SandboxMessagingPlan["channels"][number]["hooks"];
-};
-
-type MaybeCompactMessagingPlan = Omit<SandboxMessagingPlan, "agentRender" | "channels"> & {
-  readonly agentRender?: SandboxMessagingPlan["agentRender"];
-  readonly channels: readonly MaybeCompactMessagingChannelPlan[];
-};
-
-function normalizePersistedSandboxMessagingPlanShape(
-  plan: MaybeCompactMessagingPlan,
-): SandboxMessagingPlan {
-  return {
-    ...plan,
-    agentRender: Array.isArray(plan.agentRender) ? [...plan.agentRender] : [],
-    channels: plan.channels.map((channel) => ({
-      ...channel,
-      hooks: Array.isArray(channel.hooks) ? [...channel.hooks] : [],
-    })),
-  };
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

@@ -66,15 +66,83 @@ describe("parseSandboxMessagingPlan", () => {
     expect(parsed).not.toBe(source);
   });
 
-  it("accepts compact persisted plans without render or channel hooks", () => {
-    const source = makePlan();
+  it("accepts compact persisted plans without manifest-derived sections", () => {
+    const source = makePlan({
+      channels: [
+        {
+          ...makePlan().channels[0],
+          inputs: [
+            {
+              channelId: "telegram",
+              inputId: "botToken",
+              kind: "secret",
+              required: true,
+              sourceEnv: "TELEGRAM_BOT_TOKEN",
+              credentialAvailable: true,
+            },
+            makePlan().channels[0].inputs[0],
+          ],
+        },
+      ],
+      credentialBindings: [
+        {
+          channelId: "telegram",
+          credentialId: "telegramBotToken",
+          sourceInput: "botToken",
+          providerName: "sb-telegram-bridge",
+          providerEnvKey: "TELEGRAM_BOT_TOKEN",
+          placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+          credentialAvailable: true,
+          credentialHash: "hash",
+        },
+      ],
+    });
     const compact = compactSandboxMessagingPlanForPersistence(source);
     const parsed = parseSandboxMessagingPlan(compact);
 
-    expect(parsed).toEqual({
+    expect(compact).not.toHaveProperty("networkPolicy");
+    expect(compact).not.toHaveProperty("agentRender");
+    expect(compact).not.toHaveProperty("buildSteps");
+    expect(compact).not.toHaveProperty("runtimeSetup");
+    expect(compact).not.toHaveProperty("stateUpdates");
+    expect(compact).not.toHaveProperty("healthChecks");
+    expect(compact.channels[0]).toEqual({
+      channelId: "telegram",
+      configured: true,
+      disabled: false,
+      inputs: [
+        { inputId: "allowedIds", value: "123" },
+        { inputId: "botToken", credentialAvailable: true },
+      ],
+    });
+    expect(parsed).toMatchObject({
       ...source,
-      agentRender: [],
-      channels: source.channels.map((channel) => ({ ...channel, hooks: [] })),
+      channels: [
+        expect.objectContaining({
+          channelId: "telegram",
+          active: true,
+          hooks: [],
+          inputs: expect.arrayContaining([
+            expect.objectContaining({
+              inputId: "botToken",
+              credentialAvailable: true,
+              sourceEnv: "TELEGRAM_BOT_TOKEN",
+            }),
+            expect.objectContaining({
+              inputId: "allowedIds",
+              statePath: "allowedIds.telegram",
+              value: "123",
+            }),
+          ]),
+        }),
+      ],
+      credentialBindings: [
+        expect.objectContaining({
+          providerEnvKey: "TELEGRAM_BOT_TOKEN",
+          credentialAvailable: true,
+          credentialHash: "hash",
+        }),
+      ],
     });
   });
 
