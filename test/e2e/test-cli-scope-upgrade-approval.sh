@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Issue #4462 E2E:
+# CLI scope-upgrade approval E2E:
 #
 # Build a real NemoClaw/OpenClaw sandbox, create a low-scope CLI device
 # approval, trigger the later `openclaw agent` operator.write scope upgrade, and
@@ -12,11 +12,12 @@
 #                verify the request is no longer pending, and verify the next
 #                `openclaw agent` turn stays on the gateway path.
 #   legacy-repro Characterize the old gateway-pinned approve path. Current
-#                OpenClaw builds may return a #4462 failure, return a replacement
-#                request id, time out, succeed cleanly, or apply approval before
-#                reporting failure. If the request remains pending, recover
-#                through the fixed proxy-env guard so the sandbox is not left
-#                dirty. This mode is diagnostic, not the fix gate.
+#                OpenClaw builds may return a pending-scope failure, return a
+#                replacement request id, time out, succeed cleanly, or apply
+#                approval before reporting failure. If the request remains
+#                pending, recover through the fixed proxy-env guard so the
+#                sandbox is not left dirty. This mode is diagnostic, not the
+#                fix gate.
 #
 # Prerequisites:
 #   - Docker running
@@ -67,13 +68,13 @@ else
 fi
 
 E2E_DIR="${SCRIPT_DIR}"
-SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-issue-4462-scope-upgrade}"
+SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-cli-scope-upgrade}"
 OPENSHELL_BIN="${NEMOCLAW_OPENSHELL_BIN:-openshell}"
-TEST_MODE="${NEMOCLAW_4462_MODE:-approval}"
-INSTALL_LOG="${NEMOCLAW_4462_INSTALL_LOG:-/tmp/nemoclaw-e2e-issue-4462-scope-upgrade-install.log}"
-APPROVAL_LOG="${NEMOCLAW_4462_APPROVAL_LOG:-/tmp/nemoclaw-issue-4462-scope-upgrade-approval.log}"
-AGENT_LOG="${NEMOCLAW_4462_AGENT_LOG:-/tmp/nemoclaw-issue-4462-scope-upgrade-agent.log}"
-STATE_LOG="${NEMOCLAW_4462_STATE_LOG:-/tmp/nemoclaw-issue-4462-scope-upgrade-state.log}"
+TEST_MODE="${NEMOCLAW_CLI_SCOPE_MODE:-approval}"
+INSTALL_LOG="${NEMOCLAW_CLI_SCOPE_INSTALL_LOG:-/tmp/nemoclaw-e2e-cli-scope-upgrade-install.log}"
+APPROVAL_LOG="${NEMOCLAW_CLI_SCOPE_APPROVAL_LOG:-/tmp/nemoclaw-cli-scope-upgrade-approval.log}"
+AGENT_LOG="${NEMOCLAW_CLI_SCOPE_AGENT_LOG:-/tmp/nemoclaw-cli-scope-upgrade-agent.log}"
+STATE_LOG="${NEMOCLAW_CLI_SCOPE_STATE_LOG:-/tmp/nemoclaw-cli-scope-upgrade-state.log}"
 INSTALL_TIMEOUT_SECONDS="${NEMOCLAW_E2E_INSTALL_TIMEOUT_SECONDS:-1800}"
 
 AUTO_PAIR_FAST_DEADLINE_DEFAULT="3"
@@ -86,10 +87,10 @@ if [ "$TEST_MODE" = "legacy-repro" ]; then
   AUTO_PAIR_SLOW_INTERVAL_DEFAULT="1"
   AUTO_PAIR_RUN_TIMEOUT_DEFAULT="2"
 fi
-AUTO_PAIR_FAST_DEADLINE_SECS="${NEMOCLAW_4462_AUTO_PAIR_FAST_DEADLINE_SECS:-${NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS:-$AUTO_PAIR_FAST_DEADLINE_DEFAULT}}"
-AUTO_PAIR_DEADLINE_SECS="${NEMOCLAW_4462_AUTO_PAIR_DEADLINE_SECS:-${NEMOCLAW_AUTO_PAIR_DEADLINE_SECS:-$AUTO_PAIR_DEADLINE_DEFAULT}}"
-AUTO_PAIR_SLOW_INTERVAL_SECS="${NEMOCLAW_4462_AUTO_PAIR_SLOW_INTERVAL_SECS:-${NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS:-$AUTO_PAIR_SLOW_INTERVAL_DEFAULT}}"
-AUTO_PAIR_RUN_TIMEOUT_SECS="${NEMOCLAW_4462_AUTO_PAIR_RUN_TIMEOUT_SECS:-${NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS:-$AUTO_PAIR_RUN_TIMEOUT_DEFAULT}}"
+AUTO_PAIR_FAST_DEADLINE_SECS="${NEMOCLAW_CLI_SCOPE_AUTO_PAIR_FAST_DEADLINE_SECS:-${NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS:-$AUTO_PAIR_FAST_DEADLINE_DEFAULT}}"
+AUTO_PAIR_DEADLINE_SECS="${NEMOCLAW_CLI_SCOPE_AUTO_PAIR_DEADLINE_SECS:-${NEMOCLAW_AUTO_PAIR_DEADLINE_SECS:-$AUTO_PAIR_DEADLINE_DEFAULT}}"
+AUTO_PAIR_SLOW_INTERVAL_SECS="${NEMOCLAW_CLI_SCOPE_AUTO_PAIR_SLOW_INTERVAL_SECS:-${NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS:-$AUTO_PAIR_SLOW_INTERVAL_DEFAULT}}"
+AUTO_PAIR_RUN_TIMEOUT_SECS="${NEMOCLAW_CLI_SCOPE_AUTO_PAIR_RUN_TIMEOUT_SECS:-${NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS:-$AUTO_PAIR_RUN_TIMEOUT_DEFAULT}}"
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "${E2E_DIR}/lib/sandbox-teardown.sh"
@@ -210,12 +211,12 @@ PY
 summarize_device_state() {
   local state_doc
   state_doc="$(cat)"
-  OPENCLAW_4462_DEVICE_STATE="$state_doc" python3 - <<'PY'
+  OPENCLAW_CLI_SCOPE_DEVICE_STATE="$state_doc" python3 - <<'PY'
 import json
 import os
 import sys
 
-raw = os.environ.get("OPENCLAW_4462_DEVICE_STATE") or "{}"
+raw = os.environ.get("OPENCLAW_CLI_SCOPE_DEVICE_STATE") or "{}"
 doc = json.loads(raw)
 pending = doc.get("pending") or []
 paired = doc.get("paired") or []
@@ -422,12 +423,12 @@ approve_request() {
 	cat >"$probe_dir/openclaw" <<'"'"'PROBESH'"'"'
 #!/bin/sh
 token_state="$([ "${OPENCLAW_GATEWAY_TOKEN+x}" = x ] && printf set || printf unset)"
-printf "__APPROVE_SUBPROCESS_ENV__=%s:%s:%s\n" "${OPENCLAW_GATEWAY_URL-unset}" "${OPENCLAW_GATEWAY_PORT-unset}" "$token_state" >>"$NEMOCLAW_4462_APPROVE_ENV_LOG"
-exec "$NEMOCLAW_4462_REAL_OPENCLAW" "$@"
+printf "__APPROVE_SUBPROCESS_ENV__=%s:%s:%s\n" "${OPENCLAW_GATEWAY_URL-unset}" "${OPENCLAW_GATEWAY_PORT-unset}" "$token_state" >>"$NEMOCLAW_CLI_SCOPE_APPROVE_ENV_LOG"
+exec "$NEMOCLAW_CLI_SCOPE_REAL_OPENCLAW" "$@"
 PROBESH
 	chmod +x "$probe_dir/openclaw"
-	export NEMOCLAW_4462_REAL_OPENCLAW="$real_openclaw"
-	export NEMOCLAW_4462_APPROVE_ENV_LOG="$probe_log"
+	export NEMOCLAW_CLI_SCOPE_REAL_OPENCLAW="$real_openclaw"
+	export NEMOCLAW_CLI_SCOPE_APPROVE_ENV_LOG="$probe_log"
 	PATH="$probe_dir:$PATH"
 	printf "__URL_BEFORE__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
 	printf "__PORT_BEFORE__=%s\n" "${OPENCLAW_GATEWAY_PORT-unset}"
@@ -523,11 +524,11 @@ fi
 # shellcheck source=/dev/null
 . /tmp/nemoclaw-proxy-env.sh
 printf "__URL_FOR_LEGACY_APPROVE__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
-OPENCLAW_4462_REQUEST_ID="$request_id" python3 - <<'"'"'PY'"'"'
+OPENCLAW_CLI_SCOPE_REQUEST_ID="$request_id" python3 - <<'"'"'PY'"'"'
 import os
 import subprocess
 
-request_id = os.environ["OPENCLAW_4462_REQUEST_ID"]
+request_id = os.environ["OPENCLAW_CLI_SCOPE_REQUEST_ID"]
 env = os.environ.copy()
 try:
     proc = subprocess.run(
@@ -584,12 +585,12 @@ exit 0
       return 1
     fi
     if [ "$legacy_failure_request_id" = "$request_id" ]; then
-      pass "legacy gateway-pinned devices approve returns the #4462 pending-scope failure for the requested id"
+      pass "legacy gateway-pinned devices approve returns the pending-scope failure for the requested id"
     else
-      pass "legacy gateway-pinned devices approve returns the #4462 pending-scope failure for replacement id ${legacy_failure_request_id}"
+      pass "legacy gateway-pinned devices approve returns the pending-scope failure for replacement id ${legacy_failure_request_id}"
     fi
   else
-    pass "legacy gateway-pinned devices approve returned nonzero without the known #4462 signature"
+    pass "legacy gateway-pinned devices approve returned nonzero without the known pending-scope signature"
   fi
 
   state="$(device_state_json 2>&1)" || {
@@ -909,7 +910,7 @@ trigger_output=$(sandbox_exec_sh_script 120 '
 set -u
 # shellcheck source=/dev/null
 . /tmp/nemoclaw-proxy-env.sh
-session_id="issue-4462-trigger-$(date +%s)-$$"
+session_id="cli-scope-upgrade-trigger-$(date +%s)-$$"
 rm -f "/sandbox/.openclaw/agents/main/sessions/${session_id}.jsonl.lock" \
       "/sandbox/.openclaw/agents/main/sessions/${session_id}.trajectory.jsonl" 2>/dev/null || true
 printf "__URL_FOR_TRIGGER_AGENT__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
@@ -963,12 +964,12 @@ if [ "$TEST_MODE" = "legacy-repro" ]; then
     echo "RESULT: FAILED - ${FAIL} test(s) failed"
     exit 1
   fi
-  echo "RESULT: PASSED - #4462 legacy gateway-pinned approval behavior characterized and final state handled"
+  echo "RESULT: PASSED - CLI scope-upgrade legacy gateway-pinned approval behavior characterized and final state handled"
   exit 0
 fi
 
 if [ "$TEST_MODE" != "approval" ]; then
-  fail "Unknown NEMOCLAW_4462_MODE=${TEST_MODE}; expected approval or legacy-repro"
+  fail "Unknown NEMOCLAW_CLI_SCOPE_MODE=${TEST_MODE}; expected approval or legacy-repro"
   exit 1
 fi
 
@@ -1010,7 +1011,7 @@ for attempt in 1 2; do
 set -u
 # shellcheck source=/dev/null
 . /tmp/nemoclaw-proxy-env.sh
-session_id="issue-4462-fixed-$(date +%s)-$$"
+session_id="cli-scope-upgrade-fixed-$(date +%s)-$$"
 rm -f "/sandbox/.openclaw/agents/main/sessions/${session_id}.jsonl.lock" \
       "/sandbox/.openclaw/agents/main/sessions/${session_id}.trajectory.jsonl" 2>/dev/null || true
 printf "__URL_FOR_FINAL_AGENT__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
@@ -1100,5 +1101,5 @@ if [ "$FAIL" -gt 0 ]; then
   exit 1
 fi
 
-echo "RESULT: PASSED - #4462 CLI scope-upgrade approval stays on the gateway path"
+echo "RESULT: PASSED - CLI scope-upgrade CLI scope-upgrade approval stays on the gateway path"
 exit 0

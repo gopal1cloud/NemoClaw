@@ -17,7 +17,7 @@
 #                            gateway and connect-shell OpenClaw state roots (#4061).
 #   cli-scope-upgrade-approval-e2e
 #                            Validates real CLI scope-upgrade approval and confirms
-#                            the approved agent run stays on gateway mode (#4462).
+#                            the approved agent run stays on gateway mode.
 #   cli-scope-upgrade-legacy-repro-e2e
 #                            Characterizes legacy gateway-pinned scope approval
 #                            against a real sandbox, then recovers with the fix.
@@ -620,7 +620,7 @@ jobs:
       nvidia_api_key: true
       github_token: true
     secrets: *nightly-e2e-default-secrets
-  # ── OpenClaw Scope-Upgrade Approval E2E (#4462) ────────────────
+  # ── OpenClaw Scope-Upgrade Approval E2E ────────────────
   # Positive proof: in a real sandbox, accept either a visible pending CLI
   # scope upgrade or the fixed watcher's immediate approval, then confirm
   # openclaw agent still uses the gateway path rather than embedded fallback.
@@ -634,17 +634,17 @@ jobs:
       ref: ${{ inputs.target_ref || github.ref }}
       script: test/e2e/test-cli-scope-upgrade-approval.sh
       timeout_minutes: 60
-      artifact_name: "issue-4462-scope-upgrade-approval-logs"
+      artifact_name: "cli-scope-upgrade-approval-logs"
       artifact_path: |
-        /tmp/nemoclaw-e2e-issue-4462-scope-upgrade-install.log
-        /tmp/nemoclaw-issue-4462-scope-upgrade-approval.log
-        /tmp/nemoclaw-issue-4462-scope-upgrade-agent.log
-        /tmp/nemoclaw-issue-4462-scope-upgrade-state.log
-      env_json: '{"NEMOCLAW_4462_MODE":"approval","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AUTO_PAIR_DEADLINE_SECS":"30","NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS":"3","NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS":"5","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-issue-4462-scope-upgrade"}'
+        /tmp/nemoclaw-e2e-cli-scope-upgrade-install.log
+        /tmp/nemoclaw-cli-scope-upgrade-approval.log
+        /tmp/nemoclaw-cli-scope-upgrade-agent.log
+        /tmp/nemoclaw-cli-scope-upgrade-state.log
+      env_json: '{"NEMOCLAW_CLI_SCOPE_MODE":"approval","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AUTO_PAIR_DEADLINE_SECS":"30","NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS":"3","NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS":"5","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-cli-scope-upgrade"}'
       nvidia_api_key: true
       github_token: false
     secrets: *nightly-e2e-default-secrets
-  # ── OpenClaw Gateway-Pinned Approval Characterization (#4462) ──
+  # ── OpenClaw Gateway-Pinned Approval Characterization ──
   # Diagnostic proof: in a real sandbox, wait for the fixed watcher to exit,
   # force the legacy gateway-pinned approve path, record the observed
   # OpenClaw outcome, and recover through the fixed proxy-env guard if needed.
@@ -658,13 +658,13 @@ jobs:
       ref: ${{ inputs.target_ref || github.ref }}
       script: test/e2e/test-cli-scope-upgrade-approval.sh
       timeout_minutes: 60
-      artifact_name: "issue-4462-gateway-pinned-approval-characterization-logs"
+      artifact_name: "cli-scope-upgrade-legacy-repro-logs"
       artifact_path: |
-        /tmp/nemoclaw-e2e-issue-4462-scope-upgrade-repro-install.log
-        /tmp/nemoclaw-issue-4462-scope-upgrade-repro-approval.log
-        /tmp/nemoclaw-issue-4462-scope-upgrade-repro-agent.log
-        /tmp/nemoclaw-issue-4462-scope-upgrade-repro-state.log
-      env_json: '{"NEMOCLAW_4462_AGENT_LOG":"/tmp/nemoclaw-issue-4462-scope-upgrade-repro-agent.log","NEMOCLAW_4462_APPROVAL_LOG":"/tmp/nemoclaw-issue-4462-scope-upgrade-repro-approval.log","NEMOCLAW_4462_AUTO_PAIR_DEADLINE_SECS":"12","NEMOCLAW_4462_AUTO_PAIR_FAST_DEADLINE_SECS":"1","NEMOCLAW_4462_AUTO_PAIR_RUN_TIMEOUT_SECS":"2","NEMOCLAW_4462_AUTO_PAIR_SLOW_INTERVAL_SECS":"1","NEMOCLAW_4462_INSTALL_LOG":"/tmp/nemoclaw-e2e-issue-4462-scope-upgrade-repro-install.log","NEMOCLAW_4462_MODE":"legacy-repro","NEMOCLAW_4462_STATE_LOG":"/tmp/nemoclaw-issue-4462-scope-upgrade-repro-state.log","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-issue-4462-scope-upgrade-repro"}'
+        /tmp/nemoclaw-e2e-cli-scope-upgrade-repro-install.log
+        /tmp/nemoclaw-cli-scope-upgrade-repro-approval.log
+        /tmp/nemoclaw-cli-scope-upgrade-repro-agent.log
+        /tmp/nemoclaw-cli-scope-upgrade-repro-state.log
+      env_json: '{"NEMOCLAW_CLI_SCOPE_AGENT_LOG":"/tmp/nemoclaw-cli-scope-upgrade-repro-agent.log","NEMOCLAW_CLI_SCOPE_APPROVAL_LOG":"/tmp/nemoclaw-cli-scope-upgrade-repro-approval.log","NEMOCLAW_CLI_SCOPE_AUTO_PAIR_DEADLINE_SECS":"12","NEMOCLAW_CLI_SCOPE_AUTO_PAIR_FAST_DEADLINE_SECS":"1","NEMOCLAW_CLI_SCOPE_AUTO_PAIR_RUN_TIMEOUT_SECS":"2","NEMOCLAW_CLI_SCOPE_AUTO_PAIR_SLOW_INTERVAL_SECS":"1","NEMOCLAW_CLI_SCOPE_INSTALL_LOG":"/tmp/nemoclaw-e2e-cli-scope-upgrade-repro-install.log","NEMOCLAW_CLI_SCOPE_MODE":"legacy-repro","NEMOCLAW_CLI_SCOPE_STATE_LOG":"/tmp/nemoclaw-cli-scope-upgrade-repro-state.log","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-cli-scope-upgrade-repro"}'
       nvidia_api_key: true
       github_token: false
     secrets: *nightly-e2e-default-secrets
