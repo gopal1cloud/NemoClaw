@@ -631,7 +631,7 @@ describe("onboard session", () => {
     session.saveSession(created);
 
     const raw = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf-8"));
-    expect(raw.messagingPlan.networkPolicy).toBeUndefined();
+    expect(raw.messagingPlan.networkPolicy).toEqual({ presets: [], entries: [] });
     expect(raw.messagingPlan.agentRender).toBeUndefined();
     expect(raw.messagingPlan.buildSteps).toBeUndefined();
     expect(raw.messagingPlan.runtimeSetup).toBeUndefined();
@@ -639,7 +639,7 @@ describe("onboard session", () => {
     expect(raw.messagingPlan.healthChecks).toBeUndefined();
     expect(raw.messagingPlan.channels[0].displayName).toBeUndefined();
     expect(raw.messagingPlan.channels[0].authMode).toBeUndefined();
-    expect(raw.messagingPlan.channels[0].active).toBeUndefined();
+    expect(raw.messagingPlan.channels[0].active).toBe(true);
     expect(raw.messagingPlan.channels[0].selected).toBeUndefined();
     expect(raw.messagingPlan.channels[0].hooks).toBeUndefined();
     const reloadedPlan = requireLoadedSession(session.loadSession()).messagingPlan;

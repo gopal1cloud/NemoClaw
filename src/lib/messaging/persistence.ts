@@ -95,7 +95,7 @@ export function compactSandboxMessagingPlanForPersistence(
   const {
     channels,
     credentialBindings,
-    networkPolicy: _networkPolicy,
+    networkPolicy,
     agentRender: _agentRender,
     buildSteps: _buildSteps,
     runtimeSetup: _runtimeSetup,
@@ -105,8 +105,10 @@ export function compactSandboxMessagingPlanForPersistence(
   } = clonePlan(plan);
   return {
     ...rest,
+    networkPolicy,
     channels: channels.map((channel) => ({
       channelId: channel.channelId,
+      active: channel.active,
       configured: channel.configured,
       disabled: channel.disabled,
       inputs: channel.inputs

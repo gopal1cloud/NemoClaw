@@ -294,7 +294,10 @@ describe("registry", () => {
       sandboxName: "messaging",
       channels: [{ channelId: "telegram" }],
     });
-    expect(data.sandboxes.messaging.messaging.plan.networkPolicy).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.networkPolicy).toEqual({
+      presets: [],
+      entries: [],
+    });
     expect(data.sandboxes.messaging.messaging.plan.agentRender).toBeUndefined();
     expect(data.sandboxes.messaging.messaging.plan.buildSteps).toBeUndefined();
     expect(data.sandboxes.messaging.messaging.plan.runtimeSetup).toBeUndefined();
@@ -302,6 +305,7 @@ describe("registry", () => {
     expect(data.sandboxes.messaging.messaging.plan.healthChecks).toBeUndefined();
     expect(data.sandboxes.messaging.messaging.plan.channels[0]).toEqual({
       channelId: "telegram",
+      active: true,
       configured: true,
       disabled: false,
       inputs: [{ inputId: "botToken", credentialAvailable: true }],

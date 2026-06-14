@@ -100,7 +100,7 @@ describe("parseSandboxMessagingPlan", () => {
     const compact = compactSandboxMessagingPlanForPersistence(source);
     const parsed = parseSandboxMessagingPlan(compact);
 
-    expect(compact).not.toHaveProperty("networkPolicy");
+    expect(compact.networkPolicy).toEqual(source.networkPolicy);
     expect(compact).not.toHaveProperty("agentRender");
     expect(compact).not.toHaveProperty("buildSteps");
     expect(compact).not.toHaveProperty("runtimeSetup");
@@ -108,6 +108,7 @@ describe("parseSandboxMessagingPlan", () => {
     expect(compact).not.toHaveProperty("healthChecks");
     expect(compact.channels[0]).toEqual({
       channelId: "telegram",
+      active: true,
       configured: true,
       disabled: false,
       inputs: [
