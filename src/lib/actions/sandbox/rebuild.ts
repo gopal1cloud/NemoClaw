@@ -291,6 +291,18 @@ function hookOutputsFromBuildSteps(
   return { outputs };
 }
 
+function countActiveSandboxSessionsForRebuild(sandboxName: string): number {
+  const opsBinRebuild = resolveOpenshell();
+  if (!opsBinRebuild) return 0;
+
+  try {
+    const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBinRebuild));
+    return sessionResult.detected ? sessionResult.sessions.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
 async function reapplyMessagingManifestAfterOpenClawDoctor(
   sandboxName: string,
   plan: SandboxMessagingPlan | null,
@@ -345,18 +357,7 @@ export async function rebuildSandbox(
     : (_msg: string, code = 1) => process.exit(code);
 
   // Active session detection — enrich the confirmation prompt if sessions are active
-  let rebuildActiveSessionCount = 0;
-  const opsBinRebuild = resolveOpenshell();
-  if (opsBinRebuild) {
-    try {
-      const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBinRebuild));
-      if (sessionResult.detected) {
-        rebuildActiveSessionCount = sessionResult.sessions.length;
-      }
-    } catch {
-      /* non-fatal */
-    }
-  }
+  const rebuildActiveSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
 
   const sb = registry.getSandbox(sandboxName) as any;
   if (!sb) {
