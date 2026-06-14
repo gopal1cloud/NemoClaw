@@ -26,7 +26,7 @@
 #                            through inference.local with a hermetic local mock (#2766).
 #   kimi-inference-compat-e2e
 #                            Validates Kimi K2.6 safe exec splitting through OpenClaw trajectories
-#                            with a hermetic OpenAI-compatible mock (#2620).
+#                            against public NVIDIA Endpoints, with a mock fallback (#2620).
 #   bedrock-runtime-compatible-anthropic-e2e
 #                            Validates the silent Bedrock Runtime custom Anthropic endpoint path
 #                            through a hermetic fake Bedrock Runtime host for OpenClaw and Hermes.
@@ -470,6 +470,7 @@ jobs:
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_PREFERRED_API: openai-completions
           COMPATIBLE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -545,6 +546,7 @@ jobs:
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_PREFERRED_API: openai-completions
           COMPATIBLE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           NEMOCLAW_ISSUE_4434_LIVE: "1"
           NEMOCLAW_NON_INTERACTIVE: "1"
@@ -853,11 +855,41 @@ jobs:
 
       - name: Run Kimi inference compatibility E2E test
         env:
+          # Kimi uses the public NVIDIA Endpoints key intentionally. The script
+          # validates this nvapi-* key, then mirrors it only inside the process
+          # for the shared onboarding/provider-registration path.
+          NVIDIA_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_API_KEY || '' }}
+          NEMOCLAW_PROVIDER: cloud
+          NEMOCLAW_MODEL: moonshotai/kimi-k2.6
+          NEMOCLAW_PREFERRED_API: openai-completions
+          NEMOCLAW_KIMI_USE_MOCK: "0"
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-kimi-compat"
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-kimi-inference-compat.sh
+
+      - name: Sanitize Kimi logs on failure
+        if: failure()
+        shell: bash
+        env:
+          NVIDIA_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_API_KEY || '' }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for file in \
+            /tmp/nemoclaw-e2e-kimi-inference-compat-onboard.log \
+            /tmp/nemoclaw-e2e-kimi-inference-compat-build.log \
+            /tmp/nemoclaw-e2e-kimi-inference-compat-agent.log; do
+            [ -f "$file" ] || continue
+            if [ -n "${NVIDIA_API_KEY:-}" ]; then
+              perl -0pi -e 's/\Q$ENV{NVIDIA_API_KEY}\E/[REDACTED_NVIDIA_API_KEY]/g' "$file"
+            fi
+            if [ -n "${GITHUB_TOKEN:-}" ]; then
+              perl -0pi -e 's/\Q$ENV{GITHUB_TOKEN}\E/[REDACTED_GITHUB_TOKEN]/g' "$file"
+            fi
+            perl -0pi -e 's/nvapi-[A-Za-z0-9._-]+/[REDACTED_NVIDIA_API_KEY]/g; s/gh[pousr]_[A-Za-z0-9_]+/[REDACTED_GITHUB_TOKEN]/g' "$file"
+          done
 
       - name: Upload onboard log on failure
         if: failure()
@@ -973,6 +1005,7 @@ jobs:
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_PREFERRED_API: openai-completions
           COMPATIBLE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -1270,6 +1303,7 @@ jobs:
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_PREFERRED_API: openai-completions
           COMPATIBLE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -1576,6 +1610,7 @@ jobs:
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_PREFERRED_API: openai-completions
           COMPATIBLE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/credential-migration
           NEMOCLAW_RUN_E2E_SCENARIOS: "1"
@@ -1801,6 +1836,7 @@ jobs:
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_PREFERRED_API: openai-completions
           COMPATIBLE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -1813,6 +1849,7 @@ jobs:
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_PREFERRED_API: openai-completions
           COMPATIBLE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -1851,6 +1888,7 @@ jobs:
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_PREFERRED_API: openai-completions
           COMPATIBLE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -1863,6 +1901,7 @@ jobs:
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_PREFERRED_API: openai-completions
           COMPATIBLE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -1901,6 +1940,7 @@ jobs:
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_PREFERRED_API: openai-completions
           COMPATIBLE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -1913,6 +1953,7 @@ jobs:
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_PREFERRED_API: openai-completions
           COMPATIBLE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -1952,6 +1993,7 @@ jobs:
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_PREFERRED_API: openai-completions
           COMPATIBLE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -1964,6 +2006,7 @@ jobs:
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_PREFERRED_API: openai-completions
           COMPATIBLE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -2003,6 +2046,7 @@ jobs:
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_PREFERRED_API: openai-completions
           COMPATIBLE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -2016,6 +2060,7 @@ jobs:
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_PREFERRED_API: openai-completions
           COMPATIBLE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -2057,6 +2102,7 @@ jobs:
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_PREFERRED_API: openai-completions
           COMPATIBLE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -2070,6 +2116,7 @@ jobs:
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_PREFERRED_API: openai-completions
           COMPATIBLE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -2149,6 +2196,7 @@ jobs:
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
           NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
           NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_PREFERRED_API: openai-completions
           COMPATIBLE_API_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"

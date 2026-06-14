@@ -47,6 +47,7 @@ const traceTiming = require("../scripts/scorecard/analyze-trace-timing.ts") as T
 const TRACE_SUMMARY_FILE = "cloud-onboard-trace-timing-summary.json";
 const TRUSTED_REF_GUARD = "github.event_name != 'workflow_dispatch' || inputs.target_ref == ''";
 const GUARDED_HOSTED_INFERENCE_SECRET = `\${{ (${TRUSTED_REF_GUARD}) && secrets.NVIDIA_INFERENCE_API_KEY || '' }}`;
+const GUARDED_PUBLIC_NVIDIA_SECRET = `\${{ (${TRUSTED_REF_GUARD}) && secrets.NVIDIA_API_KEY || '' }}`;
 const RAW_HOSTED_INFERENCE_SECRET = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
 
 function timingSummary(
@@ -547,6 +548,7 @@ describe("E2E reusable workflow contract", () => {
     expect(runStep?.env?.NEMOCLAW_ENDPOINT_URL).toBe("https://inference-api.nvidia.com/v1");
     expect(runStep?.env?.NEMOCLAW_MODEL).toBe("nvidia/nvidia/nemotron-3-super-v3");
     expect(runStep?.env?.NEMOCLAW_COMPAT_MODEL).toBe("nvidia/nvidia/nemotron-3-super-v3");
+    expect(runStep?.env?.NEMOCLAW_PREFERRED_API).toBe("openai-completions");
     expect(runStep?.env?.COMPATIBLE_API_KEY).toBe(GUARDED_HOSTED_INFERENCE_SECRET);
     expect(runStep?.env?.GITHUB_TOKEN).toBeUndefined();
     expect(runStep?.env?.NEMOCLAW_RUN_E2E_SCENARIOS).toBe("1");
@@ -559,6 +561,27 @@ describe("E2E reusable workflow contract", () => {
     expect(uploadStep?.with?.["include-hidden-files"]).toBe(false);
     expect(uploadStep?.with?.["if-no-files-found"]).toBe("ignore");
     expect(uploadStep?.with?.["retention-days"]).toBe(14);
+  });
+
+  it("uses NVIDIA_API_KEY, not NVIDIA_INFERENCE_API_KEY, for the live Kimi E2E", () => {
+    const job = nightlyWorkflow.jobs["kimi-inference-compat-e2e"];
+    const runStep = job.steps?.find(
+      (step) => step.name === "Run Kimi inference compatibility E2E test",
+    );
+    const sanitizeStep = job.steps?.find((step) => step.name === "Sanitize Kimi logs on failure");
+    const script = readFileSync(
+      new URL("./e2e/test-kimi-inference-compat.sh", import.meta.url),
+      "utf8",
+    );
+
+    expect(runStep?.env?.NVIDIA_API_KEY).toBe(GUARDED_PUBLIC_NVIDIA_SECRET);
+    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(sanitizeStep?.env?.NVIDIA_API_KEY).toBe(GUARDED_PUBLIC_NVIDIA_SECRET);
+    expect(sanitizeStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(script).toContain("NVIDIA_API_KEY must be a public NVIDIA Endpoints nvapi-* key");
+    expect(script).not.toContain(
+      "NVIDIA_API_KEY or NVIDIA_INFERENCE_API_KEY must be a public NVIDIA Endpoints nvapi-* key",
+    );
   });
 
   it("authenticates Docker Hub pulls in direct nightly E2E jobs", () => {
@@ -905,11 +928,31 @@ describe("E2E reusable workflow contract", () => {
     expect(exportStep?.run).toContain("NEMOCLAW_ENDPOINT_URL=https://inference-api.nvidia.com/v1");
     expect(exportStep?.run).toContain("NEMOCLAW_MODEL=nvidia/nvidia/nemotron-3-super-v3");
     expect(exportStep?.run).toContain("NEMOCLAW_COMPAT_MODEL=nvidia/nvidia/nemotron-3-super-v3");
+    expect(exportStep?.run).toContain("NEMOCLAW_PREFERRED_API=openai-completions");
     expect(exportStep?.run).toContain("COMPATIBLE_API_KEY=%s");
 
     expect(hostedJobs.length).toBeGreaterThan(20);
     for (const [name, job] of hostedJobs) {
       expect(job.with?.nvidia_secret_as_compatible_api_key, name).toBeUndefined();
+    }
+  });
+
+  it("keeps rebuild fixture registry inference aligned with hosted custom inference", () => {
+    const rebuildFixtures = [
+      "test/e2e/test-rebuild-openclaw.sh",
+      "test/e2e/test-rebuild-hermes.sh",
+      "test/e2e/test-upgrade-stale-sandbox.sh",
+    ];
+
+    for (const fixture of rebuildFixtures) {
+      const body = readFileSync(fixture, "utf8");
+      expect(body, fixture).toContain("provider = sess.get('provider')");
+      expect(body, fixture).toContain("if env_provider == 'custom'");
+      expect(body, fixture).toContain("'provider': provider");
+      expect(body, fixture).toContain("'model': model");
+      expect(body, fixture).toContain("nvidia/nvidia/nemotron-3-super-v3");
+      expect(body, fixture).not.toContain("'provider': 'nvidia-prod'");
+      expect(body, fixture).not.toContain("'model': 'nvidia/nemotron-3-super-120b-a12b'");
     }
   });
 
@@ -962,6 +1005,7 @@ describe("E2E reusable workflow contract", () => {
       expect(step.env?.NEMOCLAW_ENDPOINT_URL, jobName).toBe("https://inference-api.nvidia.com/v1");
       expect(step.env?.NEMOCLAW_MODEL, jobName).toBe("nvidia/nvidia/nemotron-3-super-v3");
       expect(step.env?.NEMOCLAW_COMPAT_MODEL, jobName).toBe("nvidia/nvidia/nemotron-3-super-v3");
+      expect(step.env?.NEMOCLAW_PREFERRED_API, jobName).toBe("openai-completions");
       expect(step.env?.COMPATIBLE_API_KEY, jobName).toBe(GUARDED_HOSTED_INFERENCE_SECRET);
     }
 
