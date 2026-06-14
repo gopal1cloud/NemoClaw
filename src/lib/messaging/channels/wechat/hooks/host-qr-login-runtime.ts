@@ -17,12 +17,7 @@ function createWechatHostQrLoginRunner(): () => Promise<WechatLoginResult> {
   return async () => {
     logEnrollmentHelp();
 
-    let result: WechatHostQrLoginResult;
-    try {
-      result = await runWechatHostQrLogin();
-    } catch (error) {
-      result = { kind: "error", message: error instanceof Error ? error.message : String(error) };
-    }
+    const result: WechatHostQrLoginResult = await runWechatHostQrLogin();
 
     if (result.kind !== "ok") {
       return result;

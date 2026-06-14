@@ -31,13 +31,13 @@ export function parseSandboxMessagingPlan(
     typeof value.workflow !== "string" ||
     !Array.isArray(value.channels) ||
     !Array.isArray(value.disabledChannels) ||
-    (Object.hasOwn(value, "credentialBindings") && !Array.isArray(value.credentialBindings)) ||
+    !isOptionalObjectArray(value, "credentialBindings") ||
     (Object.hasOwn(value, "networkPolicy") && !isObject(value.networkPolicy)) ||
-    (Object.hasOwn(value, "agentRender") && !Array.isArray(value.agentRender)) ||
-    (Object.hasOwn(value, "buildSteps") && !Array.isArray(value.buildSteps)) ||
+    !isOptionalObjectArray(value, "agentRender") ||
+    !isOptionalObjectArray(value, "buildSteps") ||
     !isRuntimeSetup(value.runtimeSetup) ||
-    (Object.hasOwn(value, "stateUpdates") && !Array.isArray(value.stateUpdates)) ||
-    (Object.hasOwn(value, "healthChecks") && !Array.isArray(value.healthChecks))
+    !isOptionalObjectArray(value, "stateUpdates") ||
+    !isOptionalObjectArray(value, "healthChecks")
   ) {
     return null;
   }
@@ -62,6 +62,9 @@ export function parseSandboxMessagingPlan(
       Array.isArray(channel.inputs) &&
       channel.inputs.some((input) => !isObject(input) || typeof input.inputId !== "string")
     ) {
+      return null;
+    }
+    if (Array.isArray(channel.hooks) && channel.hooks.some((hook) => !isObject(hook))) {
       return null;
     }
     if (supported && !supported.has(channel.channelId)) return null;
@@ -162,12 +165,21 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isOptionalObjectArray(value: Record<string, unknown>, key: string): boolean {
+  if (!Object.hasOwn(value, key)) return true;
+  const entries = value[key];
+  return Array.isArray(entries) && entries.every(isObject);
+}
+
 function isRuntimeSetup(value: unknown): boolean {
   if (value === undefined) return true;
   return (
     isObject(value) &&
     Array.isArray(value.nodePreloads) &&
     Array.isArray(value.envAliases) &&
-    Array.isArray(value.secretScans)
+    Array.isArray(value.secretScans) &&
+    value.nodePreloads.every(isObject) &&
+    value.envAliases.every(isObject) &&
+    value.secretScans.every(isObject)
   );
 }

@@ -164,6 +164,33 @@ describe("parseSandboxMessagingPlan", () => {
 
     expect(parseSandboxMessagingPlan(plan)).toBeNull();
   });
+
+  it("rejects malformed object arrays without throwing", () => {
+    for (const field of [
+      "credentialBindings",
+      "agentRender",
+      "buildSteps",
+      "stateUpdates",
+      "healthChecks",
+    ]) {
+      const plan = makePlan() as unknown as Record<string, unknown>;
+      plan[field] = [null];
+
+      expect(parseSandboxMessagingPlan(plan), field).toBeNull();
+    }
+
+    const channelHooksPlan = makePlan() as unknown as { channels: { hooks: unknown[] }[] };
+    channelHooksPlan.channels[0].hooks = [null];
+    expect(parseSandboxMessagingPlan(channelHooksPlan), "channel hooks").toBeNull();
+
+    const runtimeSetupPlan = makePlan() as unknown as Record<string, unknown>;
+    runtimeSetupPlan.runtimeSetup = {
+      nodePreloads: [null],
+      envAliases: [],
+      secretScans: [],
+    };
+    expect(parseSandboxMessagingPlan(runtimeSetupPlan), "runtimeSetup.nodePreloads").toBeNull();
+  });
 });
 
 describe("plan channel derivation", () => {
