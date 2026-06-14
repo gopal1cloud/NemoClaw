@@ -303,6 +303,35 @@ function countActiveSandboxSessionsForRebuild(sandboxName: string): number {
   }
 }
 
+async function confirmSandboxRebuildIfNeeded(
+  skipConfirm: boolean,
+  rebuildActiveSessionCount: number,
+): Promise<boolean> {
+  if (skipConfirm) return true;
+
+  if (rebuildActiveSessionCount > 0) {
+    const plural = rebuildActiveSessionCount > 1 ? "sessions" : "session";
+    console.log(
+      `  ${YW}⚠  Active SSH ${plural} detected (${rebuildActiveSessionCount} connection${rebuildActiveSessionCount > 1 ? "s" : ""})${R}`,
+    );
+    console.log(
+      `  Rebuilding will terminate ${rebuildActiveSessionCount === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`,
+    );
+    console.log("");
+  }
+  console.log("  This will:");
+  console.log("    1. Back up workspace state");
+  console.log("    2. Destroy and recreate the sandbox with the current image");
+  console.log("    3. Restore workspace state into the new sandbox");
+  console.log("");
+  const answer = await askPrompt("  Proceed? [y/N]: ");
+  if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
+    console.log("  Cancelled.");
+    return false;
+  }
+  return true;
+}
+
 async function reapplyMessagingManifestAfterOpenClawDoctor(
   sandboxName: string,
   plan: SandboxMessagingPlan | null,
@@ -428,30 +457,11 @@ export async function rebuildSandbox(
   }
   console.log("");
 
-  let rebuildConfirmed = false;
-  if (!skipConfirm) {
-    if (rebuildActiveSessionCount > 0) {
-      const plural = rebuildActiveSessionCount > 1 ? "sessions" : "session";
-      console.log(
-        `  ${YW}⚠  Active SSH ${plural} detected (${rebuildActiveSessionCount} connection${rebuildActiveSessionCount > 1 ? "s" : ""})${R}`,
-      );
-      console.log(
-        `  Rebuilding will terminate ${rebuildActiveSessionCount === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`,
-      );
-      console.log("");
-    }
-    console.log("  This will:");
-    console.log("    1. Back up workspace state");
-    console.log("    2. Destroy and recreate the sandbox with the current image");
-    console.log("    3. Restore workspace state into the new sandbox");
-    console.log("");
-    const answer = await askPrompt("  Proceed? [y/N]: ");
-    if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
-      console.log("  Cancelled.");
-      return;
-    }
-    rebuildConfirmed = true;
-  }
+  const rebuildConfirmed = await confirmSandboxRebuildIfNeeded(
+    skipConfirm,
+    rebuildActiveSessionCount,
+  );
+  if (!rebuildConfirmed) return;
 
   // Step 0: Preflight — verify recreate preconditions BEFORE destroying
   // anything.  The most common rebuild failure is a missing provider
