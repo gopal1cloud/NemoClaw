@@ -15,6 +15,7 @@ vi.mock("../adapters/openshell/runtime", () => ({
 vi.mock("../inference/local", () => ({
   DEFAULT_OLLAMA_MODEL: "llama3.1",
   validateLocalProvider: vi.fn(() => ({ ok: true })),
+  isLocalProviderHostHealthy: vi.fn(() => true),
 }));
 
 vi.mock("../inference/ollama/proxy", () => ({
