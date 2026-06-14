@@ -12,10 +12,21 @@
 // provider startup failure as fatal. Non-Slack failures pass through to the
 // original event machinery unchanged.
 //
+// It also patches @openclaw/slack at module-load time so a denied explicit
+// @-mention still blocks the command but sends one bounded sender-facing
+// feedback message. Keeping this in the Slack runtime preload lets the channel
+// manifest own the behavior through runtime.nodePreloads instead of Dockerfile
+// channel-specific patch commands.
+//
 // Ref: https://github.com/NVIDIA/NemoClaw/issues/2340
+// Ref: https://github.com/NVIDIA/NemoClaw/issues/4752
 
 (function () {
   'use strict';
+
+  var HELPER_MARKER = '__nemoclawNotifyDeniedSlackMention';
+  var CALL_MARKER = 'nemoclaw: bounded denial feedback for explicit slack @-mentions';
+  var DENY_LOG_SIGNATURE = 'Blocked unauthorized slack sender';
 
   // Slack-specific error codes from @slack/web-api that indicate auth failure.
   // These appear as error.code on the WebAPIRequestError or CodedError objects.
@@ -54,6 +65,7 @@
 
   function isSlackRejection(reason) {
     if (!reason) return false;
+    if (isSlackDenyFeedbackPatchError(reason)) return false;
 
     // Check error code (Slack SDK sets .code on its errors)
     var code = reason.code || '';
@@ -85,6 +97,14 @@
     return false;
   }
 
+  function isSlackDenyFeedbackPatchError(reason) {
+    var msg = String((reason && reason.message) || reason || '');
+    return msg.indexOf('OpenClaw Slack ') !== -1 && (
+      msg.indexOf('shape not recognized') !== -1 ||
+      msg.indexOf('prepareSlackMessage definition not found') !== -1
+    );
+  }
+
   function handleSlackError(reason, source) {
     if (isSlackRejection(reason)) {
       var msg = (reason && reason.message) ? reason.message : String(reason);
@@ -103,6 +123,117 @@
   } catch (_e) {
     process.__nemoclawSlackChannelGuardInstalled = true;
   }
+
+  function buildDeniedMentionFeedbackHelperSource() {
+    return [
+      'async function __nemoclawNotifyDeniedSlackMention(params) {',
+      '\t// nemoclaw: bounded sender-facing feedback for an explicit @-mention whose',
+      '\t// command was denied by the channel allowlist. Keeps the command blocked,',
+      '\t// never reveals the allowlist, and emits exactly one sender-facing message',
+      '\t// (ephemeral in-channel, DM fallback). (#4752)',
+      '\tconst { ctx, message, senderId } = params;',
+      '\tif (!params.explicitMention) return;',
+      '\tconst client = ctx?.app?.client;',
+      '\tconst channel = message?.channel;',
+      '\tconst user = senderId ?? message?.user;',
+      '\tif (!client?.chat || !channel || !user) return;',
+      '\tconst text = "Sorry, you\\\'re not authorized to use this assistant in this channel, so your request was not processed.";',
+      '\tconst threadTs = message?.thread_ts ?? message?.ts;',
+      '\ttry {',
+      '\t\tawait client.chat.postEphemeral({ channel, user, text, ...threadTs ? { thread_ts: threadTs } : {} });',
+      '\t\treturn;',
+      '\t} catch (ephemeralError) {',
+      '\t\t// Only fall back to a DM when Slack definitively did not deliver the',
+      '\t\t// ephemeral. Ambiguous failures (network/HTTP, timeout, service errors)',
+      '\t\t// may have been accepted, so a DM there could double-notify the sender.',
+      '\t\tconst ephemeralErrorCode = ephemeralError?.data?.error ?? ephemeralError?.code;',
+      '\t\tctx?.logger?.warn?.({ err: ephemeralError, channel, code: ephemeralErrorCode }, "nemoclaw: slack denial ephemeral feedback failed (#4752)");',
+      '\t\tconst nonDeliveryCodes = ["user_not_in_channel", "not_in_channel", "channel_not_found", "cannot_reply_to_message", "is_archived", "messages_tab_disabled"];',
+      '\t\tif (!nonDeliveryCodes.includes(ephemeralErrorCode)) return;',
+      '\t\ttry {',
+      '\t\t\tconst opened = await client.conversations?.open?.({ users: user });',
+      '\t\t\tconst dmChannel = opened?.channel?.id;',
+      '\t\t\tif (dmChannel) await client.chat.postMessage({ channel: dmChannel, text });',
+      '\t\t} catch (dmError) {',
+      '\t\t\tctx?.logger?.warn?.({ err: dmError }, "nemoclaw: slack denial DM feedback failed (#4752)");',
+      '\t\t}',
+      '\t}',
+      '}',
+      '',
+    ].join('\n');
+  }
+
+  function isOpenClawSlackFile(filename) {
+    var normalized = String(filename || '').replace(/\\/g, '/');
+    return normalized.indexOf('/@openclaw/slack/') !== -1 && normalized.endsWith('.js');
+  }
+
+  function patchSlackPrepareSource(source, filename) {
+    if (source.indexOf('async function prepareSlackMessage') === -1) return source;
+    if (source.indexOf('async function ' + HELPER_MARKER + '(') !== -1 &&
+      source.indexOf(CALL_MARKER) !== -1) {
+      return source;
+    }
+    if (source.indexOf(DENY_LOG_SIGNATURE) === -1) {
+      throw new Error(
+        'OpenClaw Slack prepare module shape not recognized in ' + filename +
+        '; expected denied-sender log signature'
+      );
+    }
+    if (source.indexOf('explicitlyMentionedBotUser') === -1 ||
+      source.indexOf('explicitlyMentionedBotSubteam') === -1) {
+      throw new Error(
+        'OpenClaw Slack mention-state shape not recognized in ' + filename +
+        '; expected explicitlyMentionedBotUser/explicitlyMentionedBotSubteam in the prepare deny path'
+      );
+    }
+
+    var next = source;
+    if (next.indexOf(CALL_MARKER) === -1) {
+      next = next.replace(
+        /(logVerbose\(`Blocked unauthorized slack sender \$\{senderId\} \(not in channel users\)`\);\n)(\s*)return null;/,
+        function (_match, logLine, indent) {
+          return logLine + indent +
+            'await __nemoclawNotifyDeniedSlackMention({ ctx, message, senderId, ' +
+            'explicitMention: opts.source === "app_mention" || explicitlyMentionedBotUser || explicitlyMentionedBotSubteam }); ' +
+            '// ' + CALL_MARKER + ' (#4752)\n' +
+            indent + 'return null;';
+        }
+      );
+      if (next === source) {
+        throw new Error('OpenClaw Slack channel-users deny gate shape not recognized in ' + filename);
+      }
+    }
+
+    if (next.indexOf('async function ' + HELPER_MARKER + '(') === -1) {
+      var anchor = 'async function prepareSlackMessage(params) {';
+      if (next.indexOf(anchor) === -1) {
+        throw new Error('OpenClaw Slack prepareSlackMessage definition not found in ' + filename);
+      }
+      next = next.replace(anchor, buildDeniedMentionFeedbackHelperSource() + anchor);
+    }
+    return next;
+  }
+
+  function installSlackDenyFeedbackPatch() {
+    var Module = require('module');
+    var fs = require('fs');
+    var originalJsLoader = Module._extensions && Module._extensions['.js'];
+    if (typeof originalJsLoader !== 'function') return;
+
+    Module._extensions['.js'] = function nemoclawSlackJsLoader(mod, filename) {
+      if (isOpenClawSlackFile(filename)) {
+        var source = fs.readFileSync(filename, 'utf8');
+        var patched = patchSlackPrepareSource(source, filename);
+        if (patched !== source) {
+          return mod._compile(patched, filename);
+        }
+      }
+      return originalJsLoader.apply(this, arguments);
+    };
+  }
+
+  installSlackDenyFeedbackPatch();
 
   var origEmit = process.emit;
   process.emit = function (eventName) {
