@@ -21,6 +21,9 @@ const {
 const {
   createInferenceSelectionValidationHelpers,
 }: typeof import("./onboard/inference-selection-validation") = require("./onboard/inference-selection-validation");
+const {
+  createRemoteModelValidator,
+}: typeof import("./onboard/setup-nim-selection") = require("./onboard/setup-nim-selection");
 const inferenceInputCapability = require("./onboard/inference-input-capability");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const {
@@ -1032,6 +1035,19 @@ const {
   isNonInteractive,
   agentProductName,
   promptValidationRecovery,
+});
+const { validateSelectedRemoteModel } = createRemoteModelValidator({
+  OPENAI_ENDPOINT_URL,
+  ANTHROPIC_ENDPOINT_URL,
+  requireValue,
+  isBackToSelection,
+  validateCustomOpenAiLikeSelection,
+  validateCustomAnthropicSelection,
+  validateAnthropicSelectionWithRetryMessage,
+  validateOpenAiLikeSelection,
+  shouldRequireResponsesToolCalling,
+  shouldSkipResponsesProbe,
+  getProbeAuthMode,
 });
 
 const { promptCloudModel, promptRemoteModel, promptInputModel } = modelPrompts;
@@ -3364,129 +3380,6 @@ type RemoteProviderSelectionArgs = {
   sandboxName: string | null;
 };
 
-type RemoteProviderConfig = (typeof REMOTE_PROVIDER_CONFIG)[keyof typeof REMOTE_PROVIDER_CONFIG];
-
-type RemoteModelValidationResult = "selected" | "retry-model" | "retry-selection";
-
-async function validateSelectedRemoteModel(
-  selected: ProviderChoice,
-  remoteConfig: RemoteProviderConfig,
-  state: SetupNimSelectionState,
-  selectedCredentialEnv: string,
-): Promise<RemoteModelValidationResult> {
-  const selectedModel = requireValue(
-    isBackToSelection(state.model) ? null : state.model,
-    `Missing model for ${remoteConfig.label}`,
-  );
-  if (selected.key === "custom") {
-    const validation = await validateCustomOpenAiLikeSelection(
-      remoteConfig.label,
-      state.endpointUrl || OPENAI_ENDPOINT_URL,
-      selectedModel,
-      selectedCredentialEnv,
-      remoteConfig.helpUrl,
-    );
-    if (validation.ok) {
-      const explicitApi = (process.env.NEMOCLAW_PREFERRED_API || "").trim().toLowerCase();
-      if (
-        explicitApi &&
-        explicitApi !== "openai-completions" &&
-        explicitApi !== "chat-completions"
-      ) {
-        state.preferredInferenceApi = validation.api;
-      } else {
-        if (validation.api !== "openai-completions") {
-          console.log(
-            "  ℹ Using chat completions API (compatible endpoints may not support the Responses API developer role)",
-          );
-        }
-        state.preferredInferenceApi = "openai-completions";
-      }
-      return "selected";
-    }
-    if (
-      validation.retry === "credential" ||
-      validation.retry === "retry" ||
-      validation.retry === "model"
-    ) {
-      return "retry-model";
-    }
-    return validation.retry === "selection" ? "retry-selection" : "retry-model";
-  }
-
-  if (selected.key === "anthropicCompatible") {
-    const validation = await validateCustomAnthropicSelection(
-      remoteConfig.label,
-      state.endpointUrl || ANTHROPIC_ENDPOINT_URL,
-      selectedModel,
-      selectedCredentialEnv,
-      remoteConfig.helpUrl,
-    );
-    if (validation.ok) {
-      state.preferredInferenceApi = validation.api;
-      return "selected";
-    }
-    if (
-      validation.retry === "credential" ||
-      validation.retry === "retry" ||
-      validation.retry === "model"
-    ) {
-      return "retry-model";
-    }
-    return validation.retry === "selection" ? "retry-selection" : "retry-model";
-  }
-
-  const retryMessage = "Please choose a provider/model again.";
-  if (selected.key === "anthropic") {
-    const validation = await validateAnthropicSelectionWithRetryMessage(
-      remoteConfig.label,
-      state.endpointUrl || ANTHROPIC_ENDPOINT_URL,
-      selectedModel,
-      selectedCredentialEnv,
-      retryMessage,
-      remoteConfig.helpUrl,
-    );
-    if (validation.ok) {
-      state.preferredInferenceApi = validation.api;
-      return "selected";
-    }
-    if (
-      validation.retry === "credential" ||
-      validation.retry === "retry" ||
-      validation.retry === "model"
-    ) {
-      return "retry-model";
-    }
-    return "retry-selection";
-  }
-
-  const validation = await validateOpenAiLikeSelection(
-    remoteConfig.label,
-    requireValue(state.endpointUrl, `Missing endpoint URL for ${remoteConfig.label}`),
-    selectedModel,
-    selectedCredentialEnv,
-    retryMessage,
-    remoteConfig.helpUrl,
-    {
-      requireResponsesToolCalling: shouldRequireResponsesToolCalling(state.provider),
-      skipResponsesProbe: shouldSkipResponsesProbe(state.provider),
-      authMode: getProbeAuthMode(state.provider),
-    },
-  );
-  if (validation.ok) {
-    state.preferredInferenceApi = validation.api;
-    return "selected";
-  }
-  if (
-    validation.retry === "credential" ||
-    validation.retry === "retry" ||
-    validation.retry === "model"
-  ) {
-    return "retry-model";
-  }
-  return "retry-selection";
-}
-
 async function handleVllmSelection(
   state: SetupNimSelectionState,
 ): Promise<SetupNimSelectionResult> {
@@ -3947,7 +3840,7 @@ async function handleRemoteProviderSelection(
         !providerExistsInGateway(state.provider)
       ) {
         console.error(
-          `  ${selectedCredentialEnv} (or NEMOCLAW_PROVIDER_KEY) is required for ${remoteConfig.label} in non-interactive mode.`,
+          `  Provider credential (or NEMOCLAW_PROVIDER_KEY) is required for ${remoteConfig.label} in non-interactive mode.`,
         );
         process.exit(1);
       }
@@ -3999,12 +3892,12 @@ async function handleRemoteProviderSelection(
         return "retry-selection";
       }
 
-      const validationResult = await validateSelectedRemoteModel(
+      const validationResult = await validateSelectedRemoteModel({
         selected,
         remoteConfig,
         state,
         selectedCredentialEnv,
-      );
+      });
       if (validationResult === "selected") break;
       if (validationResult === "retry-selection") return "retry-selection";
     }
