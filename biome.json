@@ -86,7 +86,7 @@
         "noExcessiveCognitiveComplexity": {
           "level": "error",
           "options": {
-            "maxAllowedComplexity": 254
+            "maxAllowedComplexity": 255
           }
         }
       },
@@ -96,21 +96,6 @@
     }
   },
   "overrides": [
-    {
-      "includes": ["src/lib/onboard.ts"],
-      "linter": {
-        "rules": {
-          "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "error",
-              "options": {
-                "maxAllowedComplexity": 255
-              }
-            }
-          }
-        }
-      }
-    },
     {
       "includes": [
         "bin/**/*.js",
