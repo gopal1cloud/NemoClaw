@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ChannelManifest } from "../../manifest";
-import { WECHAT_PLUGIN_INSTALL_SPEC } from "./hooks/seed-openclaw-account";
 
 export const wechatManifest = {
   schemaVersion: 1,
@@ -131,7 +130,7 @@ export const wechatManifest = {
       id: "openclawPluginPackage",
       agent: "openclaw",
       manager: "openclaw-plugin",
-      spec: WECHAT_PLUGIN_INSTALL_SPEC,
+      spec: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
       pin: true,
       required: true,
     },

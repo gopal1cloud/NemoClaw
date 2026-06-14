@@ -537,6 +537,14 @@ describe("built-in channel manifests", () => {
     expect(renderJson(wechatManifest)).toContain("platforms.weixin");
     expect(renderJson(wechatManifest)).toContain("WEIXIN_TOKEN");
     expect(renderJson(wechatManifest)).toContain("credential.wechatBotToken.placeholder");
+    expect(wechatManifest.agentPackages).toContainEqual({
+      id: "openclawPluginPackage",
+      agent: "openclaw",
+      manager: "openclaw-plugin",
+      spec: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
+      pin: true,
+      required: true,
+    });
     expect(wechatManifest.hooks.map((hook) => hook.handler)).toEqual([
       "wechat.ilinkLogin",
       "common.configPrompt",

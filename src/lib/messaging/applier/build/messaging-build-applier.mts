@@ -102,20 +102,15 @@ export type BuildCommandResult = {
   readonly openclawVersion: string;
 };
 
+type OpenClawPluginInstall = {
+  readonly spec: string;
+  readonly pin: boolean;
+};
+
 export class MessagingBuildApplierError extends Error {}
 
 export const DEFAULT_MESSAGING_RUNTIME_PLAN_PATH =
   "/usr/local/share/nemoclaw/messaging-runtime-plan.json";
-
-const OPENCLAW_VERSIONED_MESSAGING_PLUGIN_PACKAGES: Readonly<Record<string, string>> = {
-  discord: "@openclaw/discord",
-  slack: "@openclaw/slack",
-  whatsapp: "@openclaw/whatsapp",
-};
-
-const OPENCLAW_FIXED_MESSAGING_PLUGIN_INSTALL_SPECS: Readonly<Record<string, string>> = {
-  wechat: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
-};
 
 export function readMessagingBuildPlanFromEnv(
   env: Env,
@@ -403,7 +398,15 @@ export function collectOpenClawMessagingPluginInstallSpecs(
   plan: MessagingBuildPlan | null,
   env: Env,
 ): string[] {
-  const specs: string[] = [];
+  return collectOpenClawMessagingPluginInstalls(plan, env).map((install) => install.spec);
+}
+
+function collectOpenClawMessagingPluginInstalls(
+  plan: MessagingBuildPlan | null,
+  env: Env,
+): OpenClawPluginInstall[] {
+  const installs: OpenClawPluginInstall[] = [];
+  const seen = new Set<string>();
   for (const step of enabledBuildStepsForPhase(plan, "agent-install")) {
     if (step.kind !== "package-install") continue;
     if (step.value === undefined) {
@@ -416,10 +419,13 @@ export function collectOpenClawMessagingPluginInstallSpecs(
     }
     const install = readOpenClawPackageInstall(step.value, step.outputId);
     const resolvedSpec = resolveOpenClawPackageSpec(install.spec, env);
-    assertAllowedOpenClawPackageSpec(step.channelId, resolvedSpec, env);
-    specs.push(resolvedSpec);
+    const resolvedInstall = { spec: resolvedSpec, pin: install.pin === true };
+    const key = JSON.stringify(resolvedInstall);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    installs.push(resolvedInstall);
   }
-  return uniqueStrings(specs);
+  return installs;
 }
 
 export function openClawDoctorEnvOverrides(
@@ -442,8 +448,11 @@ export function openClawDoctorEnvOverrides(
 }
 
 export function installOpenClawMessagingPlugins(plan: MessagingBuildPlan | null, env: Env): void {
-  for (const spec of collectOpenClawMessagingPluginInstallSpecs(plan, env)) {
-    runCommand(["openclaw", "plugins", "install", spec, "--pin"], env);
+  for (const install of collectOpenClawMessagingPluginInstalls(plan, env)) {
+    runCommand(
+      ["openclaw", "plugins", "install", install.spec, ...(install.pin ? ["--pin"] : [])],
+      env,
+    );
   }
 }
 
@@ -840,35 +849,6 @@ function resolveOpenClawPackageSpec(spec: string, env: Env): string {
     throw new MessagingBuildApplierError(`Unresolved package-install template in ${spec}`);
   }
   return resolved;
-}
-
-function assertAllowedOpenClawPackageSpec(channelId: string, resolvedSpec: string, env: Env): void {
-  const allowedSpecs = allowedOpenClawPackageSpecsForChannel(channelId, env);
-  if (!allowedSpecs.includes(resolvedSpec)) {
-    throw new MessagingBuildApplierError(
-      `Messaging package-install spec for ${channelId} is not allowed: ${resolvedSpec}`,
-    );
-  }
-}
-
-function allowedOpenClawPackageSpecsForChannel(channelId: string, env: Env): readonly string[] {
-  const versionedPackage = OPENCLAW_VERSIONED_MESSAGING_PLUGIN_PACKAGES[channelId];
-  if (versionedPackage) {
-    return ["npm:" + versionedPackage + "@" + requiredOpenClawVersion(env)];
-  }
-
-  const fixedSpec = OPENCLAW_FIXED_MESSAGING_PLUGIN_INSTALL_SPECS[channelId];
-  return fixedSpec ? [fixedSpec] : [];
-}
-
-function requiredOpenClawVersion(env: Env): string {
-  const version = (env.OPENCLAW_VERSION || "").trim();
-  if (!version) {
-    throw new MessagingBuildApplierError(
-      "OPENCLAW_VERSION is required when OpenClaw package install hooks are active",
-    );
-  }
-  return version;
 }
 
 function runCommand(args: readonly string[], env: Env): void {

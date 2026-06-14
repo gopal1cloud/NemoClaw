@@ -320,15 +320,15 @@ describe("messaging-build-applier.mts: agent-install", () => {
     }
   });
 
-  it("rejects tampered package-install specs before invoking OpenClaw", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-package-allowlist-"));
+  it("installs package-install specs supplied by the compiled plan", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-package-plan-"));
     const tracePath = path.join(tmp, "openclaw.trace");
     const fakeOpenclaw = path.join(tmp, "openclaw");
     fs.writeFileSync(
       fakeOpenclaw,
       [
         "#!/usr/bin/env node",
-        "require('node:fs').appendFileSync(process.env.OPENCLAW_TRACE, 'invoked\\n');",
+        "require('node:fs').appendFileSync(process.env.OPENCLAW_TRACE, `${process.argv.slice(2).join('|')}\\n`);",
         "process.exit(0);",
         "",
       ].join("\n"),
@@ -350,8 +350,8 @@ describe("messaging-build-applier.mts: agent-install", () => {
           required: true,
           value: {
             manager: "openclaw-plugin",
-            spec: "npm:@evil/plugin@1.0.0",
-            pin: true,
+            spec: "npm:@example/manifest-owned-plugin@{{openclaw.version}}",
+            pin: false,
           },
         },
       ],
@@ -381,9 +381,10 @@ describe("messaging-build-applier.mts: agent-install", () => {
         },
       );
 
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("not allowed");
-      expect(fs.existsSync(tracePath)).toBe(false);
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(tracePath, "utf-8").trim()).toBe(
+        "plugins|install|npm:@example/manifest-owned-plugin@2026.5.22",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
