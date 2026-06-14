@@ -78,7 +78,7 @@ function rejectNonOpenclawAgent(
   proc: NonNullable<AgentPassthroughDeps["process"]>,
 ): never {
   proc.stderr.write(
-    `  agent is currently supported only on OpenClaw sandboxes (got '${agent}').\n`,
+    `  Only OpenClaw sandboxes support the \`sandbox agent\` wrapper today (sandbox '${sandboxName}' runs '${agent}').\n`,
   );
   proc.stderr.write("  Hermes exposes an OpenAI-compatible API on port 8642 inside the sandbox;\n");
   proc.stderr.write(

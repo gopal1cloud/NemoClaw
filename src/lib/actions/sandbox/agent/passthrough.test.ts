@@ -40,7 +40,9 @@ describe("runAgentPassthrough", () => {
     expect(execMock).not.toHaveBeenCalled();
     expect(ensureLiveMock).not.toHaveBeenCalled();
     expect(exit).toHaveBeenCalledWith(2);
-    expect(writes.join("")).toMatch(/supported only on OpenClaw sandboxes \(got 'hermes'\)/);
+    expect(writes.join("")).toMatch(
+      /Only OpenClaw sandboxes support the `sandbox agent` wrapper today \(sandbox 'alpha' runs 'hermes'\)/,
+    );
     expect(writes.join("")).toMatch(/port 8642/);
   });
 

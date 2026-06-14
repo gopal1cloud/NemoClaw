@@ -435,10 +435,10 @@ The exit code is the remote command's exit code.
 ### `nemohermes <name> agent`
 
 Run one OpenClaw agent turn non-interactively in a running sandbox.
-The command is a thin pass-through to `openclaw agent ...` inside the sandbox via `openshell sandbox exec`, with `HOME=/sandbox` so the addressed agent profile resolves the same way as `connect`.
+This command forwards every argument verbatim to `openclaw agent ...` inside the sandbox via `openshell sandbox exec`, with `HOME=/sandbox` so the addressed agent profile resolves the same way as `connect`.
 Use this when driving the sandbox programmatically from another process (CI job, multi-agent platform, evaluation harness) rather than from an interactive terminal.
 
-`agent` is currently supported only on OpenClaw sandboxes. Hermes already exposes an OpenAI-compatible HTTP API on port `8642` inside the sandbox, so non-interactive use does not need a wrapper command.
+Only OpenClaw sandboxes support the `agent` wrapper today; Hermes sandboxes already expose an OpenAI-compatible HTTP API on port `8642` inside the sandbox, so non-interactive use does not need a wrapper command.
 
 Forward the port and POST chat completions directly:
 
