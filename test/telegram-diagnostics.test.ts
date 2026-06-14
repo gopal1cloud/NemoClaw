@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Unit tests for src/lib/messaging/channels/telegram/runtime/telegram-diagnostics.js.
+// Unit tests for src/lib/messaging/channels/telegram/runtime/telegram-diagnostics.ts.
 //
 // The diagnostics preload mutates global state on require (process.stderr,
 // http.request / https.request); each scenario runs in its own child Node
@@ -27,7 +27,7 @@ const DIAGNOSTICS_PATH = path.join(
   "channels",
   "telegram",
   "runtime",
-  "telegram-diagnostics.js",
+  "telegram-diagnostics.ts",
 );
 
 function runDriver(driverBody: string, env: Record<string, string> = {}) {

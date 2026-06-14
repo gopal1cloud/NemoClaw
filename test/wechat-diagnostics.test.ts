@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Unit tests for src/lib/messaging/channels/wechat/runtime/wechat-diagnostics.js.
+// Unit tests for src/lib/messaging/channels/wechat/runtime/wechat-diagnostics.ts.
 //
 // The script is a self-contained IIFE that mutates process.stderr.write,
 // http.request, http.get, https.request, and https.get globally on require —
@@ -26,7 +26,7 @@ const DIAGNOSTICS_PATH = path.join(
   "channels",
   "wechat",
   "runtime",
-  "wechat-diagnostics.js",
+  "wechat-diagnostics.ts",
 );
 
 function runDriver(driverBody: string, env: Record<string, string> = {}) {

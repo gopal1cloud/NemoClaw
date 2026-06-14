@@ -16,7 +16,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-GUARD_SOURCE="$SCRIPT_DIR/../src/lib/messaging/channels/slack/runtime/slack-channel-guard.js"
+GUARD_SOURCE="$SCRIPT_DIR/../src/lib/messaging/channels/slack/runtime/slack-channel-guard.ts"
 PASS=0
 FAIL=0
 

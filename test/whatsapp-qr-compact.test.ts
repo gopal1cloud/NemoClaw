@@ -18,7 +18,7 @@ const PRELOAD_SOURCE = path.join(
   "channels",
   "whatsapp",
   "runtime",
-  "whatsapp-qr-compact.js",
+  "whatsapp-qr-compact.ts",
 );
 
 // The WhatsApp pairing QR is rendered by the `qrcode` package (bundled inside

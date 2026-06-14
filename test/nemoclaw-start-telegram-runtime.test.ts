@@ -12,7 +12,7 @@ const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-s
 const TELEGRAM_RUNTIME_PRELOAD = path.join(
   import.meta.dirname,
   "..",
-  "src/lib/messaging/channels/telegram/runtime/telegram-diagnostics.js",
+  "src/lib/messaging/channels/telegram/runtime/telegram-diagnostics.ts",
 );
 
 function messagingRuntimeSetupSection(

@@ -27,7 +27,7 @@ const PRELOAD = path.join(
   "channels",
   "whatsapp",
   "runtime",
-  "whatsapp-qr-compact.js",
+  "whatsapp-qr-compact.ts",
 );
 const INSTALL_TIMEOUT_MS = 180_000;
 const PROBE_TIMEOUT_MS = 30_000;

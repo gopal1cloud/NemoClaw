@@ -527,8 +527,10 @@ COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 # Copy NODE_OPTIONS preload modules to a Landlock-accessible path. OpenShell ≥0.0.36
 # blocks /opt/nemoclaw-blueprint/ from non-root users, but the entrypoint
 # needs to read these files to install Node runtime preloads under /tmp.
+# Channel runtime preloads are TypeScript source files constrained to the
+# Node-executable JS subset; rename them to .js in the image for --require.
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
-COPY src/lib/messaging/channels/*/runtime/*.js /usr/local/lib/nemoclaw/preloads/
+COPY src/lib/messaging/channels/*/runtime/*.ts /usr/local/lib/nemoclaw/preloads-ts/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts
 COPY src/lib/messaging/ /src/lib/messaging/
@@ -540,6 +542,8 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
     && chmod -R a+rX /src/lib/messaging \
     && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
         /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py \
+    && if [ -d /usr/local/lib/nemoclaw/preloads-ts ]; then find /usr/local/lib/nemoclaw/preloads-ts -type f -name '*.ts' -exec sh -c 'for file do cp "$file" "/usr/local/lib/nemoclaw/preloads/$(basename "$file" .ts).js"; done' sh {} +; fi \
+    && rm -rf /usr/local/lib/nemoclaw/preloads-ts \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then find /usr/local/lib/nemoclaw/preloads -type f -name '*.js' -exec chmod 644 {} +; fi \
     && chmod 755 /usr/local/share/nemoclaw \
         /usr/local/share/nemoclaw/openclaw-plugins \

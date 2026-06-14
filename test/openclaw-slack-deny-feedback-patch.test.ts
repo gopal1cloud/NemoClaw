@@ -16,7 +16,7 @@ const SLACK_GUARD = path.join(
   "channels",
   "slack",
   "runtime",
-  "slack-channel-guard.js",
+  "slack-channel-guard.ts",
 );
 
 // Minimal stand-in for the compiled @openclaw/slack prepare module: a denying

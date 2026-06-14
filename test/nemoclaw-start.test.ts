@@ -136,9 +136,9 @@ function startScriptHeredoc(src: string, marker: string): string {
   if (preload) return fs.readFileSync(path.join(PRELOAD_SCRIPTS, preload), "utf-8");
   const channelPreload =
     marker === "SLACK_GUARD_EOF"
-      ? ["slack", "slack-channel-guard.js"]
+      ? ["slack", "slack-channel-guard.ts"]
       : marker === "TELEGRAM_DIAGNOSTICS_EOF"
-        ? ["telegram", "telegram-diagnostics.js"]
+        ? ["telegram", "telegram-diagnostics.ts"]
         : undefined;
   expect(channelPreload).toBeTruthy();
   return fs.readFileSync(
@@ -1473,7 +1473,7 @@ ${body}`,
     const scriptPath = path.join(tmpDir, "run.sh");
     fs.mkdirSync(sourcePrefix, { recursive: true });
     fs.copyFileSync(
-      path.join(CHANNEL_RUNTIME_SCRIPTS, "slack", "runtime", "slack-channel-guard.js"),
+      path.join(CHANNEL_RUNTIME_SCRIPTS, "slack", "runtime", "slack-channel-guard.ts"),
       guardSource,
     );
     const runtimeValue = {
