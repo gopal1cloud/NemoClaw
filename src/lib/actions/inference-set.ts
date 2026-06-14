@@ -11,6 +11,9 @@ import {
   getSandboxInferenceConfig,
   type SandboxInferenceConfig,
 } from "../inference/config";
+import { type ValidationResult, validateLocalProvider } from "../inference/local";
+import { ensureOllamaAuthProxy, isProxyHealthy } from "../inference/ollama/proxy";
+import { shouldFrontOllamaWithProxy } from "../onboard/local-inference-topology";
 import {
   type AgentConfigTarget,
   readSandboxConfig,
@@ -68,6 +71,9 @@ export interface InferenceSetDeps {
   runOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => OpenshellRunResult;
   appendAuditEntry: typeof appendAuditEntry;
   log: (message: string) => void;
+  isLocalInferenceProvider: (provider: string) => boolean;
+  validateLocalProvider: (provider: string) => ValidationResult;
+  ensureLocalProviderReachable: (provider: string) => boolean;
 }
 
 export class InferenceSetError extends Error {
@@ -110,7 +116,28 @@ function defaultDeps(): InferenceSetDeps {
     runOpenshell: (args, opts) => runOpenshell(args, opts),
     appendAuditEntry,
     log: console.log,
+    isLocalInferenceProvider: (provider) =>
+      provider === "ollama-local" || provider === "vllm-local",
+    validateLocalProvider,
+    ensureLocalProviderReachable,
   };
+}
+
+// Recovery + reachability probe for local inference providers, mirroring the
+// graceful fallback in onboard (src/lib/onboard/inference-providers/ollama-local.ts):
+// restart a stale or missing Ollama auth proxy before deciding a route is
+// unreachable. Returns true when the host inference stack is actually reachable,
+// even if NemoClaw's emulated container-reachability probe failed — that probe
+// uses Docker `--add-host host.openshell.internal:host-gateway`, which is
+// unreliable on some Docker setups, while the real sandbox path (k3s CoreDNS)
+// differs (see src/lib/onboard/inference-providers/ollama-local.ts:34-36).
+function ensureLocalProviderReachable(provider: string): boolean {
+  if (provider === "ollama-local" && shouldFrontOllamaWithProxy()) {
+    ensureOllamaAuthProxy();
+    return isProxyHealthy();
+  }
+  const validation = validateLocalProvider(provider);
+  return validation.ok || validation.diagnostic != null;
 }
 
 function trimRequired(value: string | null | undefined, label: string): string {
@@ -367,9 +394,38 @@ export async function runInferenceSet(
     );
   }
 
+  // Local providers (ollama-local, vllm-local) route through the sandbox-facing
+  // host.openshell.internal hostname, which the host-side `openshell inference set`
+  // verify cannot resolve — its default verification is a guaranteed false negative
+  // on a valid route. Validate the host stack ourselves, then skip the gateway-side
+  // verify. Only a genuinely-unreachable host stack hard-fails here, before the
+  // route is touched.
+  let effectiveNoVerify = options.noVerify === true;
+  if (deps.isLocalInferenceProvider(provider)) {
+    const localValidation = deps.validateLocalProvider(provider);
+    if (localValidation.ok) {
+      effectiveNoVerify = true;
+    } else if (deps.ensureLocalProviderReachable(provider)) {
+      if (localValidation.message) deps.log(`  ⚠ ${localValidation.message}`);
+      deps.log(
+        "  Host inference service is reachable — proceeding. The sandbox reaches it " +
+          "through the gateway route at runtime; host-side verification cannot resolve " +
+          "the container hostname, so it is skipped.",
+      );
+      effectiveNoVerify = true;
+    } else {
+      throw new InferenceSetError(
+        `Cannot reach local provider '${provider}': ${
+          localValidation.message ?? "the host inference service is not responding."
+        }${localValidation.diagnostic ? `\n  Diagnostic: ${localValidation.diagnostic}` : ""}`,
+        1,
+      );
+    }
+  }
+
   deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
   const setResult = deps.runOpenshell(
-    openshellInferenceSetArgs({ provider, model, noVerify: options.noVerify }),
+    openshellInferenceSetArgs({ provider, model, noVerify: effectiveNoVerify }),
     {
       ignoreError: true,
     },
