@@ -167,4 +167,66 @@ describe("Telegram runtime preload installation", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("loads Telegram diagnostics from the baked runtime artifact when env plan is absent", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-artifact-"));
+    const sourcePrefix = path.join(tmpDir, "preloads") + path.sep;
+    const sourcePath = path.join(sourcePrefix, "telegram-diagnostics.js");
+    const preloadPath = path.join(tmpDir, "telegram-diagnostics.js");
+    const planPath = path.join(tmpDir, "runtime-plan.json");
+    const artifactPath = path.join(tmpDir, "messaging-runtime-plan.json");
+    const connectPreloadsPath = path.join(tmpDir, "connect-preloads.list");
+    const scriptPath = path.join(tmpDir, "run.sh");
+    fs.mkdirSync(sourcePrefix, { recursive: true });
+    fs.copyFileSync(TELEGRAM_RUNTIME_PRELOAD, sourcePath);
+    const runtimeSetup = {
+      nodePreloads: [
+        {
+          source: sourcePath,
+          target: preloadPath,
+          injectInto: ["boot", "connect"],
+          optional: false,
+          installedMessage: "[channels] Telegram diagnostics installed from artifact",
+        },
+      ],
+    };
+    fs.writeFileSync(
+      artifactPath,
+      Buffer.from(encodeRuntimeSetupPlan("telegram", runtimeSetup), "base64").toString("utf-8"),
+    );
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
+        'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
+        "NODE_OPTIONS='--require /already-loaded.js'",
+        `export NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH=${JSON.stringify(artifactPath)}`,
+        "unset NEMOCLAW_MESSAGING_PLAN_B64 || true",
+        messagingRuntimeSetupSection(src, {
+          planPath,
+          connectPreloadsPath,
+          sourcePrefix,
+          targetPrefix: tmpDir + path.sep,
+        }),
+        "write_messaging_runtime_setup_plan",
+        "install_messaging_runtime_preloads",
+        'printf "NODE_OPTIONS=%s\\n" "$NODE_OPTIONS"',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(preloadPath)).toBe(true);
+      expect(result.stdout).toContain("--require /already-loaded.js");
+      expect(result.stdout).toContain(`--require ${preloadPath}`);
+      expect(result.stderr).toContain("Telegram diagnostics installed from artifact");
+      expect(fs.readFileSync(connectPreloadsPath, "utf-8")).toContain(preloadPath);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

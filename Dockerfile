@@ -645,6 +645,13 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=${NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME} \
     NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=${NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE}
 
+# Bake reduced messaging runtime metadata for the entrypoint. The full
+# NEMOCLAW_MESSAGING_PLAN_B64 is a build input; OpenShell sandbox create only
+# forwards explicit runtime env, so nemoclaw-start reads this generic artifact
+# when the env plan is absent.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase runtime-setup
+
 WORKDIR /sandbox
 USER sandbox
 

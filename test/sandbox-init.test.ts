@@ -881,6 +881,29 @@ EOF
       expect(stdout).toContain("slack");
       expect(stdout).not.toContain("discord");
     });
+
+    it("logs active channels from the baked runtime artifact when env plan is absent", () => {
+      const workDir = mkdtempSync(join(tmpdir(), "nemoclaw-messaging-artifact-log-"));
+      const artifactPath = join(workDir, "messaging-runtime-plan.json");
+      writeFileSync(
+        artifactPath,
+        Buffer.from(messagingPlanEnv(["telegram", "whatsapp"]), "base64").toString("utf-8"),
+      );
+
+      try {
+        const { stdout } = runWithLib("configure_messaging_channels 2>&1", {
+          env: {
+            NEMOCLAW_MESSAGING_PLAN_B64: "",
+            NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH: artifactPath,
+          },
+        });
+        expect(stdout).toContain("telegram");
+        expect(stdout).toContain("whatsapp");
+        expect(stdout).not.toContain("discord");
+      } finally {
+        rmSync(workDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("cleanup_on_signal", () => {

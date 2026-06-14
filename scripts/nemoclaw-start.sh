@@ -1163,6 +1163,7 @@ alias_marker = "-OPENSHELL-RESOLVE-ENV-"
 env_key_re = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
 revision_re = re.compile(r"^v[0-9]+_")
 keys = set()
+MESSAGING_RUNTIME_PLAN_DEFAULT_PATH = "/usr/local/share/nemoclaw/messaging-runtime-plan.json"
 
 
 def add_key(value):
@@ -1194,15 +1195,31 @@ try:
 except Exception:
     pass
 
-raw_plan = os.environ.get("NEMOCLAW_MESSAGING_PLAN_B64", "").strip()
-if raw_plan:
+def read_messaging_plan():
+    raw_plan = os.environ.get("NEMOCLAW_MESSAGING_PLAN_B64", "").strip()
+    if raw_plan:
+        try:
+            return json.loads(base64.b64decode(raw_plan).decode("utf-8"))
+        except Exception:
+            return None
+    artifact_path = os.environ.get(
+        "NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH",
+        MESSAGING_RUNTIME_PLAN_DEFAULT_PATH,
+    )
+    if not artifact_path or not os.path.isfile(artifact_path):
+        return None
     try:
-        plan = json.loads(base64.b64decode(raw_plan).decode("utf-8"))
-        for binding in plan.get("credentialBindings", []):
-            if isinstance(binding, dict) and isinstance(binding.get("providerEnvKey"), str):
-                add_key(binding["providerEnvKey"])
+        with open(artifact_path, encoding="utf-8") as f:
+            return json.load(f)
     except Exception:
-        pass
+        return None
+
+
+plan = read_messaging_plan()
+if isinstance(plan, dict):
+    for binding in plan.get("credentialBindings", []):
+        if isinstance(binding, dict) and isinstance(binding.get("providerEnvKey"), str):
+            add_key(binding["providerEnvKey"])
 
 base_keys = {
     key
@@ -1460,14 +1477,16 @@ PYPLACEHOLDERS
 }
 
 # ── Messaging runtime setup from manifest metadata ───────────────
-# Channel-owned runtime setup is serialized into NEMOCLAW_MESSAGING_PLAN_B64 at
-# image build time. The entrypoint only consumes generic declarations:
-# envAliases, nodePreloads, and secretScans.
+# Channel-owned runtime setup is compiled from manifests at image build time.
+# The entrypoint consumes only generic declarations: envAliases, nodePreloads,
+# and secretScans. Prefer a forwarded env plan when present; otherwise load the
+# reduced image artifact written by the messaging build applier.
+_MESSAGING_RUNTIME_PLAN_ARTIFACT="${NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH:-/usr/local/share/nemoclaw/messaging-runtime-plan.json}"
 _MESSAGING_RUNTIME_SETUP_PLAN="/tmp/nemoclaw-messaging-runtime-setup.json"
 _MESSAGING_CONNECT_PRELOADS_FILE="/tmp/nemoclaw-messaging-connect-preloads.list"
 
 write_messaging_runtime_setup_plan() {
-  python3 - <<'PYMESSAGINGRUNTIME' | emit_sandbox_sourced_file "$_MESSAGING_RUNTIME_SETUP_PLAN"
+  python3 - "$_MESSAGING_RUNTIME_PLAN_ARTIFACT" <<'PYMESSAGINGRUNTIME' | emit_sandbox_sourced_file "$_MESSAGING_RUNTIME_SETUP_PLAN"
 import base64
 import json
 import os
@@ -1577,15 +1596,27 @@ def clean_secret_scan(entry, index):
     }
 
 
-raw_plan = os.environ.get("NEMOCLAW_MESSAGING_PLAN_B64", "").strip()
-if not raw_plan:
+def load_messaging_plan():
+    raw_plan = os.environ.get("NEMOCLAW_MESSAGING_PLAN_B64", "").strip()
+    if raw_plan:
+        try:
+            return json.loads(base64.b64decode(raw_plan, validate=True).decode("utf-8"))
+        except Exception as exc:
+            fail(f"NEMOCLAW_MESSAGING_PLAN_B64 is not valid base64 JSON: {exc}")
+    artifact_path = sys.argv[1] if len(sys.argv) > 1 else ""
+    if not artifact_path or not os.path.isfile(artifact_path):
+        return None
+    try:
+        with open(artifact_path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception as exc:
+        fail(f"messaging runtime plan artifact {artifact_path} is not valid JSON: {exc}")
+
+
+plan = load_messaging_plan()
+if plan is None:
     print(json.dumps(EMPTY, sort_keys=True))
     raise SystemExit(0)
-
-try:
-    plan = json.loads(base64.b64decode(raw_plan, validate=True).decode("utf-8"))
-except Exception as exc:
-    fail(f"NEMOCLAW_MESSAGING_PLAN_B64 is not valid base64 JSON: {exc}")
 if not isinstance(plan, dict):
     fail("decoded plan must be an object")
 

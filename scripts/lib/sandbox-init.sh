@@ -768,10 +768,9 @@ harden_config_symlinks() {
 }
 
 # ── Messaging channels ──────────────────────────────────────────
-# Channel entries are baked into the config at image build time via
-# NEMOCLAW_MESSAGING_PLAN_B64 manifest render hooks. Placeholder tokens
-# flow through to the L7 proxy for rewriting at egress. Real tokens are
-# never visible inside the sandbox.
+# Channel entries are baked into the config at image build time via manifest
+# render hooks. Placeholder tokens flow through to the L7 proxy for rewriting
+# at egress. Real tokens are never visible inside the sandbox.
 #
 # This function just logs which channels are active. Runtime patching
 # of config files is not possible — Landlock enforces read-only at
@@ -792,25 +791,47 @@ EOF
 }
 
 read_messaging_plan_channels() {
-  [ -n "${NEMOCLAW_MESSAGING_PLAN_B64:-}" ] || return 0
   python3 - <<'PY'
 import base64
 import json
 import os
 
-raw = os.environ.get("NEMOCLAW_MESSAGING_PLAN_B64", "").strip()
-if not raw:
-    raise SystemExit(0)
-try:
-    plan = json.loads(base64.b64decode(raw).decode("utf-8"))
-except Exception:
+DEFAULT_ARTIFACT_PATH = "/usr/local/share/nemoclaw/messaging-runtime-plan.json"
+
+
+def read_plan():
+    raw = os.environ.get("NEMOCLAW_MESSAGING_PLAN_B64", "").strip()
+    if raw:
+        try:
+            return json.loads(base64.b64decode(raw).decode("utf-8"))
+        except Exception:
+            raise SystemExit(0)
+    artifact_path = os.environ.get("NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH", DEFAULT_ARTIFACT_PATH)
+    if not artifact_path or not os.path.isfile(artifact_path):
+        raise SystemExit(0)
+    try:
+        with open(artifact_path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception:
+        raise SystemExit(0)
+
+
+plan = read_plan()
+if not isinstance(plan, dict):
     raise SystemExit(0)
 seen = set()
+disabled = {
+    str(channel).strip().lower()
+    for channel in plan.get("disabledChannels", [])
+    if isinstance(channel, str)
+}
 for item in plan.get("channels", []):
+    if not isinstance(item, dict):
+        continue
     channel = str(item.get("channelId") or "").strip().lower()
     if not channel or channel in seen:
         continue
-    if item.get("active") is True and item.get("disabled") is not True:
+    if item.get("active") is True and item.get("disabled") is not True and channel not in disabled:
         seen.add(channel)
         print(channel)
 PY

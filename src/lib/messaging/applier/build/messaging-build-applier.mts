@@ -12,6 +12,7 @@ type Env = Record<string, string | undefined>;
 type JsonObject = Record<string, any>;
 type MessagingAgentId = "openclaw" | "hermes";
 type MessagingHookPhase = "agent-install" | "post-agent-install";
+type MessagingRuntimeSetupKey = "nodePreloads" | "envAliases" | "secretScans";
 type MessagingSerializableValue =
   | string
   | number
@@ -77,10 +78,13 @@ export type MessagingBuildPlan = {
   readonly schemaVersion: 1;
   readonly sandboxName: string;
   readonly agent: MessagingAgentId;
+  readonly workflow?: string;
   readonly channels: readonly MessagingPlanChannel[];
+  readonly disabledChannels?: readonly string[];
   readonly credentialBindings: readonly MessagingCredentialBinding[];
   readonly agentRender: readonly MessagingRenderEntry[];
   readonly buildSteps: readonly MessagingBuildStep[];
+  readonly runtimeSetup?: Partial<Record<MessagingRuntimeSetupKey, readonly JsonObject[]>>;
 };
 
 export type BuildFileOutput = {
@@ -92,12 +96,16 @@ export type BuildFileOutput = {
 
 export type BuildCommandResult = {
   readonly channels: readonly string[];
+  readonly runtimePlanPath: string;
   readonly doctorEnv: Record<string, string>;
   readonly installSpecs: readonly string[];
   readonly openclawVersion: string;
 };
 
 export class MessagingBuildApplierError extends Error {}
+
+export const DEFAULT_MESSAGING_RUNTIME_PLAN_PATH =
+  "/usr/local/share/nemoclaw/messaging-runtime-plan.json";
 
 const OPENCLAW_VERSIONED_MESSAGING_PLUGIN_PACKAGES: Readonly<Record<string, string>> = {
   discord: "@openclaw/discord",
@@ -232,6 +240,163 @@ export function activeChannels(plan: MessagingBuildPlan | null): string[] {
     }
   }
   return channels;
+}
+
+export function messagingRuntimePlanPath(env: Env = process.env): string {
+  const configured = env.NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH?.trim();
+  return configured || DEFAULT_MESSAGING_RUNTIME_PLAN_PATH;
+}
+
+export function buildMessagingRuntimePlanArtifact(
+  plan: MessagingBuildPlan | null,
+): JsonObject | null {
+  if (!plan) return null;
+  return {
+    schemaVersion: 1,
+    sandboxName: plan.sandboxName,
+    agent: plan.agent,
+    ...(typeof plan.workflow === "string" && plan.workflow ? { workflow: plan.workflow } : {}),
+    channels: sanitizeRuntimeArtifactChannels(plan.channels),
+    disabledChannels: sanitizeStringArray(plan.disabledChannels ?? []),
+    credentialBindings: sanitizeRuntimeArtifactCredentialBindings(plan.credentialBindings),
+    runtimeSetup: sanitizeRuntimeSetup(plan.runtimeSetup),
+  };
+}
+
+export function writeMessagingRuntimePlanArtifact(
+  plan: MessagingBuildPlan | null,
+  targetPath: string,
+): string | null {
+  const artifact = buildMessagingRuntimePlanArtifact(plan);
+  if (!artifact) return null;
+  mkdirSync(dirname(targetPath), { recursive: true });
+  writeFileSync(targetPath, `${JSON.stringify(artifact, null, 2)}\n`);
+  chmodSync(targetPath, 0o644);
+  return targetPath;
+}
+
+function sanitizeRuntimeArtifactChannels(
+  channels: readonly MessagingPlanChannel[],
+): readonly JsonObject[] {
+  return channels.flatMap((channel): JsonObject[] => {
+    const channelId = sanitizeOptionalString(channel.channelId);
+    if (!channelId) return [];
+    return [
+      {
+        channelId,
+        active: channel.active === true,
+        disabled: channel.disabled === true,
+      },
+    ];
+  });
+}
+
+function sanitizeRuntimeArtifactCredentialBindings(
+  bindings: readonly MessagingCredentialBinding[],
+): readonly JsonObject[] {
+  return bindings.flatMap((binding): JsonObject[] => {
+    const channelId = sanitizeOptionalString(binding.channelId);
+    const providerEnvKey = sanitizeOptionalString(binding.providerEnvKey);
+    if (!channelId || !providerEnvKey) return [];
+    return [{ channelId, providerEnvKey }];
+  });
+}
+
+function sanitizeRuntimeSetup(
+  setup: MessagingBuildPlan["runtimeSetup"] | undefined,
+): Record<MessagingRuntimeSetupKey, readonly JsonObject[]> {
+  return {
+    nodePreloads: sanitizeRuntimeSetupEntries(setup?.nodePreloads, [
+      "channelId",
+      "source",
+      "target",
+      "injectInto",
+      "optional",
+      "installMessage",
+      "installedMessage",
+    ]),
+    envAliases: sanitizeRuntimeSetupEntries(setup?.envAliases, [
+      "channelId",
+      "envKey",
+      "match",
+      "value",
+      "message",
+    ]),
+    secretScans: sanitizeRuntimeSetupEntries(setup?.secretScans, [
+      "channelId",
+      "path",
+      "pattern",
+      "message",
+      "exitCode",
+    ]),
+  };
+}
+
+function sanitizeRuntimeSetupEntries(
+  entries: readonly JsonObject[] | undefined,
+  allowedKeys: readonly string[],
+): readonly JsonObject[] {
+  if (!Array.isArray(entries)) return [];
+  return entries.map((entry, index) => {
+    if (!isObject(entry)) {
+      throw new MessagingBuildApplierError(
+        `Messaging runtime setup entry ${index} must be an object`,
+      );
+    }
+    const channelId = sanitizeOptionalString(entry.channelId);
+    if (!channelId) {
+      throw new MessagingBuildApplierError(
+        `Messaging runtime setup entry ${index} must include channelId`,
+      );
+    }
+    const sanitized: JsonObject = { channelId };
+    for (const key of allowedKeys) {
+      if (key === "channelId" || entry[key] === undefined) continue;
+      sanitized[key] = cloneRuntimeArtifactValue(entry[key], `runtime setup entry ${index}.${key}`);
+    }
+    return sanitized;
+  });
+}
+
+function cloneRuntimeArtifactValue(value: unknown, label: string): MessagingSerializableValue {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry, index) =>
+      cloneRuntimeArtifactValue(entry, `${label}[${String(index)}]`),
+    );
+  }
+  if (isObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => {
+        assertSafeObjectKey(key, label);
+        return [key, cloneRuntimeArtifactValue(entry, `${label}.${key}`)];
+      }),
+    );
+  }
+  throw new MessagingBuildApplierError(`${label} must be JSON-serializable`);
+}
+
+function sanitizeStringArray(values: readonly unknown[]): readonly string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const clean = sanitizeOptionalString(value);
+    if (!clean || seen.has(clean)) continue;
+    seen.add(clean);
+    out.push(clean);
+  }
+  return out;
+}
+
+function sanitizeOptionalString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 export function collectOpenClawMessagingPluginInstallSpecs(
@@ -1121,13 +1286,17 @@ function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export type MessagingBuildPhase = "agent-install" | "post-agent-install";
+export type MessagingBuildPhase = "runtime-setup" | "agent-install" | "post-agent-install";
 
 export function applyMessagingBuildPhase(
   plan: MessagingBuildPlan | null,
   phase: MessagingBuildPhase,
   env: Env = process.env,
 ): readonly string[] {
+  if (phase === "runtime-setup") {
+    const target = writeMessagingRuntimePlanArtifact(plan, messagingRuntimePlanPath(env));
+    return target ? [target] : [];
+  }
   if (phase === "agent-install") {
     installMessagingPackages(plan, env);
     return [];
@@ -1173,6 +1342,7 @@ export function describeMessagingBuildPhase(
     agent: plan?.agent ?? "unknown",
     phase,
     channels: activeChannels(plan),
+    runtimePlanPath: phase === "runtime-setup" ? messagingRuntimePlanPath(env) : "",
     doctorEnv: plan?.agent === "openclaw" ? openClawDoctorEnvOverrides(plan, env) : {},
     installSpecs:
       plan?.agent === "openclaw" ? collectOpenClawMessagingPluginInstallSpecs(plan, env) : [],
@@ -1243,8 +1413,12 @@ function readAgentArg(value: string | undefined): MessagingAgentId {
 }
 
 function readPhaseArg(value: string | undefined): MessagingBuildPhase {
-  if (value === "agent-install" || value === "post-agent-install") return value;
-  throw new MessagingBuildApplierError("--phase must be 'agent-install' or 'post-agent-install'");
+  if (value === "runtime-setup" || value === "agent-install" || value === "post-agent-install") {
+    return value;
+  }
+  throw new MessagingBuildApplierError(
+    "--phase must be 'runtime-setup', 'agent-install', or 'post-agent-install'",
+  );
 }
 
 function isMainModule(): boolean {
