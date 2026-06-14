@@ -24,8 +24,10 @@
 #   - NEMOCLAW_NON_INTERACTIVE=1
 #   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 
-# shellcheck disable=SC2016
+# shellcheck disable=SC2016,SC2030,SC2031
 # SC2016: remote sandbox scripts intentionally expand inside the sandbox.
+# SC2030/SC2031: Phase 7 spawns subshells purely to scope onboarding env
+# overrides; the variables are never read back outside the subshell.
 
 set -uo pipefail
 
