@@ -394,6 +394,201 @@ function stashWechatMetadataForRebuild(sandboxName: string, log: (msg: string) =
   }
 }
 
+type RebuildLiveState = {
+  staleRecovery: boolean;
+  staleRegistrySnapshot: ReturnType<typeof registry.load> | null;
+};
+
+async function resolveRebuildLiveState(
+  sandboxName: string,
+  sb: RebuildSandboxEntry,
+  log: (msg: string) => void,
+  bail: (msg: string, code?: number) => never,
+): Promise<RebuildLiveState | null> {
+  const recordedGateway = resolveSandboxGatewayName(sb);
+  log(`Checking sandbox liveness on ${recordedGateway}: openshell sandbox list`);
+  const liveRecovery = await captureSandboxListWithGatewayRecovery({
+    gatewayName: recordedGateway,
+  });
+  const isLive = liveRecovery.result;
+  log(
+    `openshell sandbox list exit=${isLive.status}, output=${(isLive.output || "").substring(0, 200)}`,
+  );
+  const liveListIssue = detectOpenShellStateRpcResultIssue(isLive);
+  if (liveListIssue) {
+    printOpenShellStateRpcIssue(liveListIssue, {
+      action: `rebuilding sandbox '${sandboxName}'`,
+      command: `${CLI_NAME} ${sandboxName} rebuild`,
+    });
+    bail("OpenShell gateway schema mismatch.");
+    return null;
+  }
+  if (isLive.status !== 0) {
+    printSandboxListFailureWithRecoveryContext(liveRecovery);
+    bail("Failed to query running sandboxes from OpenShell.", isLive.status || 1);
+    return null;
+  }
+
+  const liveNames = parseLiveSandboxNames(isLive.output || "");
+  log(`Live sandboxes: ${Array.from(liveNames).join(", ") || "(none)"}`);
+  if (liveNames.has(sandboxName)) {
+    return { staleRecovery: false, staleRegistrySnapshot: null };
+  }
+
+  const reconciled = await getReconciledSandboxGatewayState(sandboxName);
+  if (reconciled.state === "present") {
+    const lifecycle = getNamedGatewayLifecycleState(recordedGateway);
+    if (lifecycle.state !== "healthy_named") {
+      printWrongGatewayActiveGuidance(
+        sandboxName,
+        lifecycle.activeGateway,
+        console.error,
+        "rebuild --yes",
+      );
+      bail(
+        `Could not confirm '${sandboxName}' against gateway '${recordedGateway}' (gateway '${lifecycle.activeGateway ?? "unknown"}' is active).`,
+      );
+      return null;
+    }
+    log("Sandbox live on the healthy named gateway; using normal rebuild path");
+    return { staleRecovery: false, staleRegistrySnapshot: null };
+  }
+
+  if (reconciled.state === "missing") {
+    console.log("");
+    console.log(
+      `  ${YW}⚠${R} Sandbox '${sandboxName}' is registered locally but absent from the live OpenShell gateway.`,
+    );
+    console.log(
+      "  No live workspace state to back up — recreating from the preserved registry metadata.",
+    );
+    log(
+      "Stale-sandbox recovery: live sandbox missing on healthy named gateway; skipping backup/restore and recreating from registry metadata",
+    );
+    return {
+      staleRecovery: true,
+      staleRegistrySnapshot: JSON.parse(JSON.stringify(registry.load())),
+    };
+  }
+
+  if (reconciled.state === "gateway_schema_mismatch") {
+    console.error(reconciled.output);
+    bail("OpenShell gateway schema mismatch.");
+    return null;
+  }
+
+  if (reconciled.state === "wrong_gateway_active") {
+    printWrongGatewayActiveGuidance(
+      sandboxName,
+      reconciled.activeGateway,
+      console.error,
+      "rebuild --yes",
+    );
+  } else {
+    console.error(
+      `  Sandbox '${sandboxName}' is not visible on gateway '${recordedGateway}' and its live state could not be confirmed.`,
+    );
+    console.error("  Your local registry entry has been preserved — nothing was removed.");
+    printGatewayLifecycleHint(reconciled.output || "", sandboxName, console.error);
+  }
+  bail(`Could not confirm live state of '${sandboxName}' (gateway not in a known-good state).`);
+  return null;
+}
+
+function openRebuildShieldsWindowForState(
+  sandboxName: string,
+  staleRecovery: boolean,
+): { rebuildShieldsWindow: RebuildShieldsWindow | null; staleSandboxWasLocked: boolean } {
+  if (staleRecovery) {
+    return {
+      staleSandboxWasLocked: !shields.isShieldsDown(sandboxName),
+      rebuildShieldsWindow: { relocked: false, wasLocked: false },
+    };
+  }
+  return {
+    staleSandboxWasLocked: false,
+    rebuildShieldsWindow: openRebuildShieldsWindow(sandboxName, CLI_NAME),
+  };
+}
+
+function ensureRebuildAgentBaseImage(
+  rebuildAgent: string | null,
+  bail: (msg: string, code?: number) => never,
+): boolean {
+  if (!rebuildAgent) return true;
+  const agentDef = loadAgent(rebuildAgent);
+  try {
+    ensureAgentBaseImage(agentDef, { forceBaseImageRebuild: true });
+    return true;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("");
+    console.error(`  ${_RD}Rebuild preflight failed:${R} agent base image could not be built.`);
+    console.error(`  ${message}`);
+    console.error("");
+    console.error("  Sandbox is untouched — no data was lost.");
+    bail(message);
+    return false;
+  }
+}
+
+function backupSandboxStateForRebuild(
+  sandboxName: string,
+  sb: RebuildSandboxEntry,
+  staleRecovery: boolean,
+  log: (msg: string) => void,
+  relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean,
+  bail: (msg: string, code?: number) => never,
+): sandboxState.RebuildManifest | null | undefined {
+  if (staleRecovery) return null;
+
+  console.log("  Backing up sandbox state...");
+  log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
+  const backup = sandboxState.backupSandboxState(sandboxName);
+  log(
+    `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
+  );
+  const hasAnyBackup = backup.backedUpDirs.length > 0 || backup.backedUpFiles.length > 0;
+  if (!backup.success && !hasAnyBackup) {
+    console.error("  Failed to back up sandbox state.");
+    if (backup.failedDirs.length > 0) console.error(`  Failed: ${backup.failedDirs.join(", ")}`);
+    if (backup.failedFiles.length > 0) {
+      console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
+    }
+    console.error("  Aborting rebuild to prevent data loss.");
+    relockShieldsIfNeeded(true);
+    bail("Failed to back up sandbox state.");
+    return undefined;
+  }
+  const backupManifest = backup.manifest ?? null;
+  if (!backupManifest) {
+    console.error("  Failed to record backup metadata.");
+    console.error("  Aborting rebuild to prevent data loss.");
+    relockShieldsIfNeeded(true);
+    bail("Failed to record backup metadata.");
+    return undefined;
+  }
+  if (!backup.success) {
+    console.warn(
+      `  ${YW}⚠${R} Partial backup: ${backup.backedUpDirs.length} dirs and ` +
+        `${backup.backedUpFiles.length} files OK; ${backup.failedDirs.length} dirs and ` +
+        `${backup.failedFiles.length} files failed`,
+    );
+    if (backup.failedDirs.length > 0)
+      console.warn(`    Failed dirs: ${backup.failedDirs.join(", ")}`);
+    if (backup.failedFiles.length > 0) {
+      console.warn(`    Failed files: ${backup.failedFiles.join(", ")}`);
+    }
+    console.warn("    Rebuild will continue — failed state could not be preserved.");
+  } else {
+    console.log(
+      `  ${G}✓${R} State backed up (${backup.backedUpDirs.length} directories, ${backup.backedUpFiles.length} files)`,
+    );
+  }
+  console.log(`    Backup: ${backupManifest.backupPath}`);
+  return backupManifest;
+}
+
 async function stageRebuildMessagingPlanOrBail(
   sandboxName: string,
   sb: RebuildSandboxEntry,
@@ -614,143 +809,22 @@ export async function rebuildSandbox(
     bail,
   );
 
-  // Step 1: Ensure sandbox is live for backup
-  const recordedGateway = resolveSandboxGatewayName(sb);
-  log(`Checking sandbox liveness on ${recordedGateway}: openshell sandbox list`);
-  const liveRecovery = await captureSandboxListWithGatewayRecovery({
-    gatewayName: recordedGateway,
-  });
-  const isLive = liveRecovery.result;
-  log(
-    `openshell sandbox list exit=${isLive.status}, output=${(isLive.output || "").substring(0, 200)}`,
-  );
-  const liveListIssue = detectOpenShellStateRpcResultIssue(isLive);
-  if (liveListIssue) {
-    printOpenShellStateRpcIssue(liveListIssue, {
-      action: `rebuilding sandbox '${sandboxName}'`,
-      command: `${CLI_NAME} ${sandboxName} rebuild`,
-    });
-    bail("OpenShell gateway schema mismatch.");
-    return;
-  }
-  if (isLive.status !== 0) {
-    printSandboxListFailureWithRecoveryContext(liveRecovery);
-    bail("Failed to query running sandboxes from OpenShell.", isLive.status || 1);
-    return;
-  }
-  const liveNames = parseLiveSandboxNames(isLive.output || "");
-  log(`Live sandboxes: ${Array.from(liveNames).join(", ") || "(none)"}`);
-  // Stale-sandbox recovery (#4497): the local registry still holds this entry,
-  // but the live OpenShell gateway no longer lists the sandbox — a stuck or
-  // diverged provision, or the live container was reaped. This is exactly the
-  // state `status` flags with a `rebuild --yes` hint, and the non-destructive
-  // `connect` recovery now preserves the registry entry so this rebuild can act
-  // on it. There is no live workspace state to back up, so rather than aborting
-  // with "Cannot back up state" — which dead-ended the very recovery path the
-  // CLI recommended — skip the backup/restore steps and recreate the sandbox
-  // from the preserved registry + onboard-session metadata.
-  let staleRecovery = false;
-  // Full registry snapshot captured before stale recovery touches anything
-  // destructive. If the recovery recreate fails after the entry was removed,
-  // the snapshot is restored verbatim so no local metadata (defaultSandbox,
-  // customPolicies, every field) is silently dropped or mutated (#4497).
-  let staleRegistrySnapshot: ReturnType<typeof registry.load> | null = null;
-  if (!liveNames.has(sandboxName)) {
-    const reconciled = await getReconciledSandboxGatewayState(sandboxName);
-    if (reconciled.state === "present") {
-      const lifecycle = getNamedGatewayLifecycleState(recordedGateway);
-      if (lifecycle.state !== "healthy_named") {
-        printWrongGatewayActiveGuidance(
-          sandboxName,
-          lifecycle.activeGateway,
-          console.error,
-          "rebuild --yes",
-        );
-        bail(
-          `Could not confirm '${sandboxName}' against gateway '${recordedGateway}' (gateway '${lifecycle.activeGateway ?? "unknown"}' is active).`,
-        );
-        return;
-      }
-      // Live on the healthy named gateway (the list omitted it). Fall through to
-      // the normal backup/rebuild path so workspace state is preserved.
-      log("Sandbox live on the healthy named gateway; using normal rebuild path");
-    } else if (reconciled.state === "missing") {
-      // Genuinely absent on a healthy named gateway — stale-sandbox recovery.
-      staleRecovery = true;
-      staleRegistrySnapshot = JSON.parse(JSON.stringify(registry.load()));
-      console.log("");
-      console.log(
-        `  ${YW}⚠${R} Sandbox '${sandboxName}' is registered locally but absent from the live OpenShell gateway.`,
-      );
-      console.log(
-        "  No live workspace state to back up — recreating from the preserved registry metadata.",
-      );
-      log(
-        "Stale-sandbox recovery: live sandbox missing on healthy named gateway; skipping backup/restore and recreating from registry metadata",
-      );
-    } else if (reconciled.state === "gateway_schema_mismatch") {
-      console.error(reconciled.output);
-      bail("OpenShell gateway schema mismatch.");
-      return;
-    } else {
-      // Ambiguous gateway state (wrong gateway active, or the named gateway is
-      // missing/unreachable/drifted). Do NOT destroy — a transient gateway
-      // problem must never be mistaken for a gone sandbox. Surface guidance and
-      // abort with the registry entry intact.
-      if (reconciled.state === "wrong_gateway_active") {
-        printWrongGatewayActiveGuidance(
-          sandboxName,
-          reconciled.activeGateway,
-          console.error,
-          "rebuild --yes",
-        );
-      } else {
-        console.error(
-          `  Sandbox '${sandboxName}' is not visible on gateway '${recordedGateway}' and its live state could not be confirmed.`,
-        );
-        console.error("  Your local registry entry has been preserved — nothing was removed.");
-        printGatewayLifecycleHint(reconciled.output || "", sandboxName, console.error);
-      }
-      bail(`Could not confirm live state of '${sandboxName}' (gateway not in a known-good state).`);
-      return;
-    }
-  }
+  // Step 1: Ensure sandbox is live for backup, or identify stale-sandbox recovery.
+  const liveState = await resolveRebuildLiveState(sandboxName, sb, log, bail);
+  if (!liveState) return;
+  const { staleRecovery, staleRegistrySnapshot } = liveState;
 
   // Build agent base layers before backup/delete so Dockerfile.base errors leave
   // the existing sandbox intact. This is what applies local Hermes version edits.
-  if (rebuildAgent) {
-    const agentDef = loadAgent(rebuildAgent);
-    try {
-      ensureAgentBaseImage(agentDef, { forceBaseImageRebuild: true });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error("");
-      console.error(`  ${_RD}Rebuild preflight failed:${R} agent base image could not be built.`);
-      console.error(`  ${message}`);
-      console.error("");
-      console.error("  Sandbox is untouched — no data was lost.");
-      bail(message);
-      return;
-    }
-  }
+  if (!ensureRebuildAgentBaseImage(rebuildAgent, bail)) return;
 
   // On stale-sandbox recovery the live sandbox is gone, so the normal
-  // unlock→recreate→relock cycle cannot run: openRebuildShieldsWindow would call
-  // `shieldsDown`, which captures policy from the absent sandbox and fails, and
-  // a later `shieldsUp` would try to re-seal the fresh image against the gone
-  // sandbox's stale file-hash seal and may refuse (#4497). Instead, just note
-  // whether the sandbox was locked (read-only). The stale shields state is reset
-  // only AFTER the recreate succeeds (below) so a failed recreate leaves the
-  // lockdown record intact for a retry; the operator re-applies `shields up`
-  // post-recovery (printed on success) since the workspace state was lost anyway.
-  let staleSandboxWasLocked = false;
-  let rebuildShieldsWindow: RebuildShieldsWindow | null;
-  if (staleRecovery) {
-    staleSandboxWasLocked = !shields.isShieldsDown(sandboxName);
-    rebuildShieldsWindow = { relocked: false, wasLocked: false };
-  } else {
-    rebuildShieldsWindow = openRebuildShieldsWindow(sandboxName, CLI_NAME);
-  }
+  // unlock→recreate→relock cycle cannot run. Track stale lock state and defer
+  // clearing old shields state until recreate succeeds (#4497).
+  const { rebuildShieldsWindow, staleSandboxWasLocked } = openRebuildShieldsWindowForState(
+    sandboxName,
+    staleRecovery,
+  );
   if (!rebuildShieldsWindow) return bail("Failed to auto-unlock shields.");
 
   const relockShieldsIfNeeded = (sandboxStillExists: boolean): boolean =>
@@ -758,67 +832,17 @@ export async function rebuildSandbox(
 
   let sandboxStillExists = true;
 
-  // backupManifest stays null on stale-sandbox recovery (#4497): the live
-  // sandbox is gone, so there is nothing to back up and the downstream
-  // restore/preset steps are skipped in favor of recreating from registry
-  // metadata.
-  let backupManifest: sandboxState.RebuildManifest | null = null;
-
   try {
     // Step 2: Backup (skipped on stale-sandbox recovery -- no live state exists)
-    if (!staleRecovery) {
-      console.log("  Backing up sandbox state...");
-      log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
-      const backup = sandboxState.backupSandboxState(sandboxName);
-      log(
-        `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
-      );
-      const hasAnyBackup = backup.backedUpDirs.length > 0 || backup.backedUpFiles.length > 0;
-      if (!backup.success && !hasAnyBackup) {
-        // Total failure — nothing was backed up at all.
-        console.error("  Failed to back up sandbox state.");
-        if (backup.failedDirs.length > 0) {
-          console.error(`  Failed: ${backup.failedDirs.join(", ")}`);
-        }
-        if (backup.failedFiles.length > 0) {
-          console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
-        }
-        console.error("  Aborting rebuild to prevent data loss.");
-        relockShieldsIfNeeded(true);
-        bail("Failed to back up sandbox state.");
-        return;
-      }
-      backupManifest = backup.manifest ?? null;
-      if (!backupManifest) {
-        console.error("  Failed to record backup metadata.");
-        console.error("  Aborting rebuild to prevent data loss.");
-        relockShieldsIfNeeded(true);
-        bail("Failed to record backup metadata.");
-        return;
-      }
-      if (!backup.success) {
-        // Partial backup — some state succeeded, some failed (e.g. root-owned
-        // files caused tar permission errors).  Proceed with a warning so the
-        // rebuild isn't blocked by a handful of inaccessible files (#2727).
-        console.warn(
-          `  ${YW}⚠${R} Partial backup: ${backup.backedUpDirs.length} dirs and ` +
-            `${backup.backedUpFiles.length} files OK; ${backup.failedDirs.length} dirs and ` +
-            `${backup.failedFiles.length} files failed`,
-        );
-        if (backup.failedDirs.length > 0) {
-          console.warn(`    Failed dirs: ${backup.failedDirs.join(", ")}`);
-        }
-        if (backup.failedFiles.length > 0) {
-          console.warn(`    Failed files: ${backup.failedFiles.join(", ")}`);
-        }
-        console.warn("    Rebuild will continue — failed state could not be preserved.");
-      } else {
-        console.log(
-          `  ${G}\u2713${R} State backed up (${backup.backedUpDirs.length} directories, ${backup.backedUpFiles.length} files)`,
-        );
-      }
-      console.log(`    Backup: ${backupManifest.backupPath}`);
-    }
+    const backupManifest = backupSandboxStateForRebuild(
+      sandboxName,
+      sb,
+      staleRecovery,
+      log,
+      relockShieldsIfNeeded,
+      bail,
+    );
+    if (backupManifest === undefined) return;
 
     // Step 3: Delete sandbox without tearing down gateway or session.
     // sandboxDestroy() cleans up the gateway when it's the last sandbox and

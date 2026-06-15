@@ -24,6 +24,9 @@ const {
 const {
   createRemoteModelValidator,
 }: typeof import("./onboard/setup-nim-selection") = require("./onboard/setup-nim-selection");
+const {
+  createSetupNimOllamaHandlers,
+}: typeof import("./onboard/setup-nim-ollama") = require("./onboard/setup-nim-ollama");
 const inferenceInputCapability = require("./onboard/inference-input-capability");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const {
@@ -1067,6 +1070,36 @@ const {
   printOllamaExposureWarning,
   prepareOllamaModel,
 } = require("./inference/ollama/proxy");
+
+const {
+  handleWindowsHostOllamaSelection,
+  handleRunningOllamaSelection,
+  handleInstallOllamaSelection,
+} = createSetupNimOllamaHandlers({
+  OLLAMA_PORT,
+  OLLAMA_PROXY_PORT,
+  process,
+  isNonInteractive,
+  prompt,
+  checkOllamaPortsOrWarn,
+  ensureOllamaLoopbackSystemdOverride,
+  runOllamaStartupOrGate,
+  shouldFrontOllamaWithProxy,
+  startOllamaAuthProxy,
+  getLocalProviderBaseUrl,
+  selectAndValidateOllamaModel,
+  printOllamaExposureWarning,
+  switchToWindowsOllamaHost,
+  installOllamaOnWindowsHost,
+  awaitWindowsOllamaReady,
+  setupWindowsOllamaWith0000Binding,
+  printWindowsOllamaTimeoutDiagnostics,
+  resetOllamaHostCache,
+  installOllamaOnMacOS,
+  installOllamaOnLinux,
+  abortNonInteractive,
+  assertOllamaUpgradeApplied,
+});
 
 const ollamaModelSize: typeof import("./inference/ollama/model-size") = require("./inference/ollama/model-size");
 
@@ -4147,187 +4180,72 @@ async function setupNim(
         if (rejectWindowsHostOllama(selected.key, isWindowsHostOllama)) {
           continue selectionLoop;
         }
-        if (!checkOllamaPortsOrWarn({ isNonInteractive })) continue selectionLoop;
-        let ollamaReady = ollamaRunning;
-        const overrideState = ensureOllamaLoopbackSystemdOverride({ isNonInteractive });
-        if (overrideState === "ready") {
-          ollamaReady = true;
-        } else if (overrideState === "failed") {
-          console.error(
-            "  Ollama systemd restart did not recover after applying the loopback override.",
-          );
-          process.exit(1);
-        }
-        const ollamaStartup = runOllamaStartupOrGate({
-          ollamaReady,
-          ollamaPort: OLLAMA_PORT,
-          getLocalProviderBaseUrl,
-          isNonInteractive,
-        });
-        if (ollamaStartup.kind === "continue") continue selectionLoop;
-        if (ollamaStartup.kind === "fallback") {
-          ({ provider, credentialEnv, endpointUrl, model, preferredInferenceApi } =
-            ollamaStartup.result);
-          break;
-        }
-        if (shouldFrontOllamaWithProxy()) {
-          if (!startOllamaAuthProxy()) process.exit(1);
-          console.log(
-            `  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`,
-          );
-        } else {
-          console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
-        }
-        provider = "ollama-local";
-        // Local Ollama needs no user-supplied API key — the auth proxy uses
-        // an internal token (NEMOCLAW_OLLAMA_PROXY_TOKEN, set in setupInference).
-        // Leaving this null prevents the wizard from prompting for / caching
-        // OPENAI_API_KEY and prevents the rebuild preflight from requiring it.
-        // See GH #2519.
-        credentialEnv = null;
-        endpointUrl = getLocalProviderBaseUrl(provider);
-        if (!endpointUrl) {
-          console.error("  Local Ollama base URL could not be determined.");
-          process.exit(1);
-        }
-        {
-          const result = await selectAndValidateOllamaModel(gpu, provider, {
-            requestedModel,
-            recoveredModel: recoveredFromSandbox ? recoveredModel : null,
-          });
-          if (result.outcome === "back-to-selection") continue selectionLoop;
-          ({ model, allowToolsIncompatible } = result);
-          preferredInferenceApi = "openai-completions";
-        }
+        const state: SetupNimSelectionState = {
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          hermesAuthMethod,
+          hermesToolGateways,
+          preferredInferenceApi,
+          nimContainer,
+        };
+        const result = await handleRunningOllamaSelection(
+          gpu,
+          requestedModel,
+          recoveredFromSandbox ? recoveredModel : null,
+          ollamaRunning,
+          state,
+        );
+        ({ model, provider, endpointUrl, credentialEnv, preferredInferenceApi } = state);
+        if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (["start-windows-ollama", "install-windows-ollama"].includes(selected.key)) {
         if (rejectWindowsHostOllama(selected.key, true)) {
           continue selectionLoop;
         }
-        if (!checkOllamaPortsOrWarn({ isNonInteractive })) continue selectionLoop;
-        const isInstall = selected.key === "install-windows-ollama";
-        const isSwitch = !isInstall && windowsOllamaReachable;
-        const isRestart = !isInstall && !isSwitch && winOllamaLoopbackOnly;
-        if (!isSwitch) {
-          printOllamaExposureWarning();
-        }
-        const promptMsg = isInstall
-          ? "  Install and launch Ollama on the Windows host with OLLAMA_HOST=0.0.0.0:11434? [Y/n]: "
-          : isSwitch
-            ? "  Use Ollama on the Windows host (already running)? [Y/n]: "
-            : isRestart
-              ? "  Stop the running Ollama and restart it with OLLAMA_HOST=0.0.0.0:11434? [Y/n]: "
-              : "  Launch Ollama on the Windows host with OLLAMA_HOST=0.0.0.0:11434? [Y/n]: ";
-        const proceed = isNonInteractive()
-          ? true
-          : !(await prompt(promptMsg)).trim().toLowerCase().startsWith("n");
-        if (!proceed) {
-          continue selectionLoop;
-        }
-
-        if (isSwitch) {
-          switchToWindowsOllamaHost();
-        } else if (isInstall) {
-          const installResult = await installOllamaOnWindowsHost();
-          if (!installResult.ok) {
-            console.error(
-              "  Install did not produce ollama.exe on PATH. Check the installer output above.",
-            );
-            if (isNonInteractive()) process.exit(1);
-            continue selectionLoop;
-          }
-          if (!awaitWindowsOllamaReady()) {
-            console.log("  Installer did not leave a reachable Ollama daemon; restarting it...");
-            if (
-              !setupWindowsOllamaWith0000Binding({
-                installedPath: installResult.path,
-              })
-            ) {
-              printWindowsOllamaTimeoutDiagnostics();
-              if (isNonInteractive()) process.exit(1);
-              continue selectionLoop;
-            }
-          }
-          console.log(`  ✓ Using Ollama on host.docker.internal:${OLLAMA_PORT}`);
-        } else {
-          if (
-            !setupWindowsOllamaWith0000Binding({
-              announceStop: isRestart,
-              installedPath: winOllamaInstalledPath || undefined,
-            })
-          ) {
-            printWindowsOllamaTimeoutDiagnostics();
-            if (isNonInteractive()) process.exit(1);
-            continue selectionLoop;
-          }
-          console.log(`  ✓ Using Ollama on host.docker.internal:${OLLAMA_PORT}`);
-        }
-        provider = "ollama-local";
-        credentialEnv = null;
-        endpointUrl = getLocalProviderBaseUrl(provider);
-        if (!endpointUrl) {
-          console.error("  Local Ollama base URL could not be determined.");
-          process.exit(1);
-        }
-
-        {
-          const result = await selectAndValidateOllamaModel(gpu, provider, {
-            requestedModel,
-            recoveredModel: null,
-          });
-          if (result.outcome === "back-to-selection") {
-            // The Windows-host action pinned resolved host to
-            // host.docker.internal. Clear it so a subsequent provider pick
-            // (e.g. plain WSL Ollama) starts from a fresh probe.
-            resetOllamaHostCache();
-            continue selectionLoop;
-          }
-          ({ model, allowToolsIncompatible } = result);
-          preferredInferenceApi = "openai-completions";
-        }
+        const state: SetupNimSelectionState = {
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          hermesAuthMethod,
+          hermesToolGateways,
+          preferredInferenceApi,
+          nimContainer,
+        };
+        const result = await handleWindowsHostOllamaSelection(
+          gpu,
+          selected.key,
+          requestedModel,
+          windowsOllamaReachable,
+          winOllamaLoopbackOnly,
+          winOllamaInstalledPath,
+          state,
+        );
+        ({ model, provider, endpointUrl, credentialEnv, preferredInferenceApi } = state);
+        if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (selected.key === "install-ollama") {
-        if (!checkOllamaPortsOrWarn({ isNonInteractive })) continue selectionLoop;
-        const isUpgrade = ollamaInstallMenu.hasUpgradableOllama;
-        const installResult =
-          process.platform === "darwin"
-            ? installOllamaOnMacOS({ isNonInteractive, isUpgrade })
-            : installOllamaOnLinux({ isNonInteractive, isUpgrade });
-        if (!installResult.ok) {
-          if (isNonInteractive()) abortNonInteractive("Ollama install failed. See errors above.");
-          continue selectionLoop;
-        }
-        const upgradeCheck = assertOllamaUpgradeApplied(ollamaInstallMenu);
-        if (!upgradeCheck.ok) {
-          console.error(`  ${upgradeCheck.message}`);
-          if (isNonInteractive()) process.exit(1);
-          continue selectionLoop;
-        }
-        if (shouldFrontOllamaWithProxy()) {
-          if (!startOllamaAuthProxy()) process.exit(1);
-          console.log(
-            `  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`,
-          );
-        } else {
-          console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
-        }
-        provider = "ollama-local";
-        // See above ollama branch — internal proxy token, no user API key.
-        credentialEnv = null;
-        endpointUrl = getLocalProviderBaseUrl(provider);
-        if (!endpointUrl) {
-          console.error("  Local Ollama base URL could not be determined.");
-          process.exit(1);
-        }
-        {
-          const result = await selectAndValidateOllamaModel(gpu, provider, {
-            requestedModel,
-            recoveredModel: recoveredFromSandbox ? recoveredModel : null,
-          });
-          if (result.outcome === "back-to-selection") continue selectionLoop;
-          ({ model, allowToolsIncompatible } = result);
-          preferredInferenceApi = "openai-completions";
-        }
+        const state: SetupNimSelectionState = {
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          hermesAuthMethod,
+          hermesToolGateways,
+          preferredInferenceApi,
+          nimContainer,
+        };
+        const result = await handleInstallOllamaSelection(
+          gpu,
+          requestedModel,
+          recoveredFromSandbox ? recoveredModel : null,
+          state,
+          ollamaInstallMenu,
+        );
+        ({ model, provider, endpointUrl, credentialEnv, preferredInferenceApi } = state);
+        if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (selected.key === "install-vllm") {
         if (!vllmProfile) {
