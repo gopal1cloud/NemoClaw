@@ -225,31 +225,65 @@
     }
 
     if (next.indexOf("async function " + HELPER_MARKER + "(") === -1) {
-      var anchor = "async function prepareSlackMessage(params) {";
-      if (next.indexOf(anchor) === -1) {
+      var prepareAnchor = /((?:export\s+)?async function prepareSlackMessage\(params\) \{)/;
+      if (!prepareAnchor.test(next)) {
         throw new Error("OpenClaw Slack prepareSlackMessage definition not found in " + filename);
       }
-      next = next.replace(anchor, buildDeniedMentionFeedbackHelperSource() + anchor);
+      next = next.replace(prepareAnchor, buildDeniedMentionFeedbackHelperSource() + "$1");
     }
     return next;
+  }
+
+  function fileNameFromModuleUrl(urlValue) {
+    if (typeof urlValue !== "string" || !urlValue.startsWith("file:")) return "";
+    try {
+      return require("url").fileURLToPath(urlValue);
+    } catch (_e) {
+      return "";
+    }
+  }
+
+  function sourceToText(source) {
+    if (typeof source === "string") return source;
+    if (typeof Buffer !== "undefined") {
+      if (Buffer.isBuffer(source)) return source.toString("utf8");
+      if (source instanceof Uint8Array) return Buffer.from(source).toString("utf8");
+      if (source instanceof ArrayBuffer) return Buffer.from(source).toString("utf8");
+    }
+    return null;
   }
 
   function installSlackDenyFeedbackPatch() {
     var Module = require("module");
     var fs = require("fs");
     var originalJsLoader = Module._extensions && Module._extensions[".js"];
-    if (typeof originalJsLoader !== "function") return;
-
-    Module._extensions[".js"] = function nemoclawSlackJsLoader(mod, filename) {
-      if (isOpenClawSlackFile(filename)) {
-        var source = fs.readFileSync(filename, "utf8");
-        var patched = patchSlackPrepareSource(source, filename);
-        if (patched !== source) {
-          return mod._compile(patched, filename);
+    if (typeof originalJsLoader === "function") {
+      Module._extensions[".js"] = function nemoclawSlackJsLoader(mod, filename) {
+        if (isOpenClawSlackFile(filename)) {
+          var source = fs.readFileSync(filename, "utf8");
+          var patched = patchSlackPrepareSource(source, filename);
+          if (patched !== source) {
+            return mod._compile(patched, filename);
+          }
         }
-      }
-      return originalJsLoader.apply(this, arguments);
-    };
+        return originalJsLoader.apply(this, arguments);
+      };
+    }
+
+    if (typeof Module.registerHooks === "function") {
+      Module.registerHooks({
+        load: function nemoclawSlackLoadHook(urlValue, context, nextLoad) {
+          var result = nextLoad(urlValue, context);
+          var filename = fileNameFromModuleUrl(urlValue);
+          if (!isOpenClawSlackFile(filename)) return result;
+          var sourceText = sourceToText(result && result.source);
+          if (sourceText === null) return result;
+          var patched = patchSlackPrepareSource(sourceText, filename);
+          if (patched === sourceText) return result;
+          return Object.assign({}, result, { source: patched });
+        },
+      });
+    }
   }
 
   installSlackDenyFeedbackPatch();

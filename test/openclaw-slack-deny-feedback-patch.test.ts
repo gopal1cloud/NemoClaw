@@ -23,15 +23,16 @@ const SLACK_GUARD = path.join(
 // channel gate that mirrors the real dist's deny-log line and exposes the same
 // in-scope identifiers the patch references.
 function prepareModuleSource(
-  options: { withMentionState?: boolean; denyLine?: string } = {},
+  options: { moduleType?: "commonjs" | "esm"; withMentionState?: boolean; denyLine?: string } = {},
 ): string {
+  const moduleType = options.moduleType ?? "commonjs";
   const withMentionState = options.withMentionState ?? true;
   const denyLine =
     options.denyLine ??
     "logVerbose(`Blocked unauthorized slack sender ${senderId} (not in channel users)`);";
   return [
     "function logVerbose() {}",
-    "async function prepareSlackMessage(params) {",
+    `${moduleType === "esm" ? "export " : ""}async function prepareSlackMessage(params) {`,
     "\tconst { ctx, account, message, opts } = params;",
     "\tconst senderId = message.user;",
     withMentionState
@@ -49,21 +50,25 @@ function prepareModuleSource(
     "\t}",
     "\treturn { prepared: true };",
     "}",
-    "module.exports = { prepareSlackMessage };",
+    moduleType === "commonjs" ? "module.exports = { prepareSlackMessage };" : "",
     "",
   ].join("\n");
 }
 
 function writeSlackPackage(
   root: string,
-  options: { withMentionState?: boolean; denyLine?: string } = {},
+  options: { moduleType?: "commonjs" | "esm"; withMentionState?: boolean; denyLine?: string } = {},
 ): string {
   const pkgDir = path.join(root, "node_modules", "@openclaw", "slack");
   const distDir = path.join(pkgDir, "dist");
   fs.mkdirSync(distDir, { recursive: true });
   fs.writeFileSync(
     path.join(pkgDir, "package.json"),
-    JSON.stringify({ name: "@openclaw/slack", version: "2026.5.27" }),
+    JSON.stringify({
+      name: "@openclaw/slack",
+      version: "2026.5.27",
+      ...(options.moduleType === "esm" ? { type: "module" } : {}),
+    }),
   );
   const prepareFile = path.join(distDir, "prepare-fixture.js");
   fs.writeFileSync(prepareFile, prepareModuleSource(options));
@@ -72,12 +77,23 @@ function writeSlackPackage(
 
 type FeedbackCall = { method: string; channel?: string; user?: string; text?: string };
 
-function runGuardProbe(prepareFile: string, options: { requireGuardTwice?: boolean } = {}) {
+function runGuardProbe(
+  prepareFile: string,
+  options: { loadMode?: "require" | "import"; requireGuardTwice?: boolean } = {},
+) {
   const script = `
 const guard = ${JSON.stringify(SLACK_GUARD)};
 require(guard);
 ${options.requireGuardTwice ? "require(guard);" : ""}
-const { prepareSlackMessage } = require(process.env.PREPARE_FILE);
+const { pathToFileURL } = require("node:url");
+let prepareSlackMessage;
+async function loadPrepareSlackMessage() {
+  if (${JSON.stringify(options.loadMode ?? "require")} === "import") {
+    const module = await import(pathToFileURL(process.env.PREPARE_FILE).href);
+    return module.prepareSlackMessage;
+  }
+  return require(process.env.PREPARE_FILE).prepareSlackMessage;
+}
 const calls = [];
 const client = {
   chat: {
@@ -115,6 +131,7 @@ async function run(params) {
   return { result, calls: calls.slice() };
 }
 (async () => {
+  prepareSlackMessage = await loadPrepareSlackMessage();
   const output = {
     mention: await run({ opts: { source: "app_mention" } }),
     silent: await run({ opts: { source: "message" } }),
@@ -214,6 +231,29 @@ describe("OpenClaw Slack denial-feedback patch", () => {
       const ambiguous = output?.ambiguous as { result: unknown; calls: FeedbackCall[] };
       expect(ambiguous.result).toBeNull();
       expect(ambiguous.calls.map((call) => call.method)).toEqual(["chat.postEphemeral"]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("injects bounded sender feedback for ESM imports of @openclaw/slack", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-deny-esm-"));
+    const prepareFile = writeSlackPackage(tmp, { moduleType: "esm" });
+    try {
+      const { result, output } = runGuardProbe(prepareFile, { loadMode: "import" });
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(fs.readFileSync(prepareFile, "utf-8")).not.toContain(
+        "__nemoclawNotifyDeniedSlackMention",
+      );
+
+      const mention = output?.mention as { result: unknown; calls: FeedbackCall[] };
+      expect(mention.result).toBeNull();
+      expect(mention.calls).toHaveLength(1);
+      expect(mention.calls[0]).toMatchObject({
+        method: "chat.postEphemeral",
+        channel: "C1",
+        user: "U999DENIED",
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
