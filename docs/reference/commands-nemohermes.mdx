@@ -1018,7 +1018,7 @@ nemohermes my-assistant agents delete work --force --json
 
 Reconcile the live sandbox roster against a declarative [agents.yaml manifest](../inference/declarative-agents-manifest).
 The verb lists current agents via `openclaw agents list --json`, diffs them against the manifest, and adds missing secondaries or deletes orphan ones through `openclaw agents add|delete`.
-Per-agent `model`, `subagents.*`, top-level `defaults`, and `main` overrides need a sandbox rebuild and are surfaced as warnings rather than silently dropped; rerun `nemohermes onboard --agents <file> --recreate-sandbox` to bake those fields.
+Per-agent `model`, `subagents.*`, top-level `defaults`, and `main` overrides need a sandbox rebuild and are surfaced as warnings rather than silently dropped; rerun `nemohermes onboard --agents <agents.yaml> --recreate-sandbox` to bake those fields.
 
 ```bash
 nemohermes my-assistant agents apply -f ./agents.yaml
@@ -1026,7 +1026,7 @@ nemohermes my-assistant agents apply -f ./agents.yaml --yes
 nemohermes my-assistant agents apply -f ./agents.yaml --yes --non-interactive
 ```
 
-Pass `--yes` to confirm the roster diff above; `--non-interactive` fails fast when `--yes` is absent so scripted callers cannot accidentally hang on a missing prompt.
+Pass `-f` / `--file <agents.yaml>` to point at the manifest; `--yes` confirms the roster diff above; `--non-interactive` fails fast when `--yes` is absent so scripted callers cannot accidentally hang on a missing prompt.
 
 ### `nemohermes <name> sessions`
 
@@ -1496,7 +1496,7 @@ The `nemohermes setup` command is deprecated.
 Use `nemohermes onboard` instead.
 </Warning>
 
-This command remains as a compatibility alias to `nemohermes onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--agents`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `nemohermes onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 nemohermes setup
@@ -1509,7 +1509,7 @@ The `nemohermes setup-spark` command is deprecated.
 Use the standard installer and run `nemohermes onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
 </Warning>
 
-This command remains as a compatibility alias to `nemohermes onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--agents`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `nemohermes onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 nemohermes setup-spark

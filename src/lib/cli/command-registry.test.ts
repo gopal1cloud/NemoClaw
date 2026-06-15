@@ -55,12 +55,12 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 47 entries", () => {
-      // 41 visible + 6 hidden (shields×3 + config get/set/rotate-token).
-      // 41 visible includes the sessions group (root + list + reset + delete +
-      // export), the agents trio (add + delete + list), and the download +
-      // upload host-side openshell wrappers.
-      expect(sandboxCommands()).toHaveLength(47);
+    it("should return exactly 48 entries", () => {
+      // 42 visible + 6 hidden (shields×3 + config get/set/rotate-token).
+      // 42 visible includes the sessions group (root + list + reset + delete +
+      // export), the agents quartet (add + apply + delete + list), and the
+      // download + upload host-side openshell wrappers.
+      expect(sandboxCommands()).toHaveLength(48);
     });
 
     it("every entry has scope sandbox", () => {
