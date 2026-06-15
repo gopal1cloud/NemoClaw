@@ -86,7 +86,7 @@
         "noExcessiveCognitiveComplexity": {
           "level": "error",
           "options": {
-            "maxAllowedComplexity": 243
+            "maxAllowedComplexity": 225
           }
         }
       },

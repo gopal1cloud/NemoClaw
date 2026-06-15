@@ -332,6 +332,19 @@ async function confirmSandboxRebuildIfNeeded(
   return true;
 }
 
+function isSingleAgentRebuildSupported(
+  sb: registry.SandboxEntry & { agents?: unknown[] },
+  bail: (msg: string, code?: number) => never,
+): boolean {
+  if (sb.agents && sb.agents.length > 1) {
+    console.error("  Multi-agent sandbox rebuild is not yet supported.");
+    console.error(`  Back up state manually and recreate with \`${CLI_NAME} onboard\`.`);
+    bail("Multi-agent sandbox rebuild is not yet supported.");
+    return false;
+  }
+  return true;
+}
+
 async function reapplyMessagingManifestAfterOpenClawDoctor(
   sandboxName: string,
   plan: SandboxMessagingPlan | null,
@@ -396,12 +409,7 @@ export async function rebuildSandbox(
   }
 
   // Multi-agent guard (temporary — until swarm lands)
-  if (sb.agents && sb.agents.length > 1) {
-    console.error("  Multi-agent sandbox rebuild is not yet supported.");
-    console.error(`  Back up state manually and recreate with \`${CLI_NAME} onboard\`.`);
-    bail("Multi-agent sandbox rebuild is not yet supported.");
-    return;
-  }
+  if (!isSingleAgentRebuildSupported(sb, bail)) return;
 
   const rebuildAgent = sb.agent || null;
   const agent = agentRuntime.getSessionAgent(sandboxName);
