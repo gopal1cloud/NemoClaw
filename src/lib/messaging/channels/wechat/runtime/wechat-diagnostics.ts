@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -9,14 +8,32 @@
 // turn fails after the WeChat bridge has connected so operators can tell
 // "channel up, inference broken" apart from "channel never connected".
 
+type WechatDiagnosticsProcess = NodeJS.Process & {
+  __nemoclawWechatDiagnosticsInstalled?: boolean;
+};
+type WechatJsonObject = Record<string, unknown>;
+type WechatRequestInfo = { hostname: string; path: string };
+type WechatStderrWrite = (...args: unknown[]) => boolean;
+type WechatHttpModuleLike = Record<string, unknown>;
+type WechatRequestLike = {
+  once(eventName: string, listener: (...args: unknown[]) => void): unknown;
+};
+type WechatResponseLike = {
+  statusCode?: unknown;
+};
+type WechatHttpRequestLike = (this: unknown, ...args: unknown[]) => WechatRequestLike | undefined;
+
 (function () {
   "use strict";
 
-  if (process.__nemoclawWechatDiagnosticsInstalled) return;
+  var diagnosticsProcess = process as WechatDiagnosticsProcess;
+  if (diagnosticsProcess.__nemoclawWechatDiagnosticsInstalled) return;
   try {
-    Object.defineProperty(process, "__nemoclawWechatDiagnosticsInstalled", { value: true });
+    Object.defineProperty(diagnosticsProcess, "__nemoclawWechatDiagnosticsInstalled", {
+      value: true,
+    });
   } catch (_e) {
-    process.__nemoclawWechatDiagnosticsInstalled = true;
+    diagnosticsProcess.__nemoclawWechatDiagnosticsInstalled = true;
   }
 
   var providerStarted = false;
@@ -24,7 +41,13 @@
   var inferenceLogged = false;
   var inDiagnosticWrite = false;
 
-  function sanitize(value) {
+  function asObject(value: unknown): WechatJsonObject | null {
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? (value as WechatJsonObject)
+      : null;
+  }
+
+  function sanitize(value: unknown): string {
     var text = String(value || "");
     // iLink puts the bot token in URL query params (?bot_token=...) and
     // sometimes in JSON bodies; redact both shapes. Keep the parameter name
@@ -39,9 +62,10 @@
     return text;
   }
 
-  var originalStderrWrite = process.stderr.write.bind(process.stderr);
+  var stderr = process.stderr as NodeJS.WriteStream & { write: WechatStderrWrite };
+  var originalStderrWrite = stderr.write.bind(stderr) as WechatStderrWrite;
 
-  function emit(line) {
+  function emit(line: string): void {
     if (inDiagnosticWrite) return;
     inDiagnosticWrite = true;
     try {
@@ -51,18 +75,18 @@
     }
   }
 
-  function describeRequest(arg1, arg2) {
-    var url = null;
-    var opts = null;
+  function describeRequest(arg1: unknown, arg2: unknown): WechatRequestInfo {
+    var url: URL | null = null;
+    var opts: WechatJsonObject | null = null;
     if (typeof arg1 === "string" || arg1 instanceof URL) {
       try {
         url = new URL(String(arg1));
       } catch (_e) {
         url = null;
       }
-      if (arg2 && typeof arg2 === "object" && typeof arg2 !== "function") opts = arg2;
+      opts = asObject(arg2);
     } else if (arg1 && typeof arg1 === "object") {
-      opts = arg1;
+      opts = asObject(arg1);
     }
 
     var hostname = "";
@@ -83,7 +107,7 @@
   // *.weixin.qq.com — and *.wechat.com (e.g. ilinkai.wechat.com) — so match
   // the suffix rather than a single host. We treat any successful 2xx hit
   // on a /ilink/bot/* path as "provider ready".
-  function isWechatHost(hostname) {
+  function isWechatHost(hostname: string): boolean {
     if (!hostname) return false;
     return (
       hostname === "weixin.qq.com" ||
@@ -93,16 +117,16 @@
     );
   }
 
-  function accountIdFromEnv() {
+  function accountIdFromEnv(): string {
     var raw = process.env.WECHAT_ACCOUNT_ID;
     if (typeof raw !== "string") return "default";
     var trimmed = raw.trim();
     return trimmed || "default";
   }
 
-  function maybeLogWechatReady(info, statusCode) {
+  function maybeLogWechatReady(info: WechatRequestInfo, statusCode: unknown): void {
     if (readyLogged) return;
-    if (!info || !isWechatHost(info.hostname)) return;
+    if (!isWechatHost(info.hostname)) return;
     if (info.path.indexOf("/ilink/bot/") !== 0 && info.path.indexOf("/ilink/bot") !== 0) return;
     if (Number(statusCode) < 200 || Number(statusCode) >= 300) return;
     providerStarted = true;
@@ -114,23 +138,26 @@
     );
   }
 
-  function wrapHttp(mod, methodName) {
-    var original = mod[methodName];
+  function wrapHttp(mod: WechatHttpModuleLike, methodName: string): void {
+    var original = mod[methodName] as WechatHttpRequestLike | undefined;
     if (typeof original !== "function") return;
-    mod[methodName] = function () {
-      var info = describeRequest(arguments[0], arguments[1]);
-      var req = original.apply(this, arguments);
+    var originalRequest: WechatHttpRequestLike = original;
+    mod[methodName] = function (this: unknown, ...args: unknown[]) {
+      var info = describeRequest(args[0], args[1]);
+      var req = originalRequest.apply(this, args);
       if (isWechatHost(info.hostname) && req && typeof req.once === "function") {
         req.once("response", function (res) {
-          maybeLogWechatReady(info, res && res.statusCode);
+          var response = res as WechatResponseLike | null;
+          maybeLogWechatReady(info, response && response.statusCode);
         });
       }
       return req;
     };
   }
 
-  process.stderr.write = function (chunk, _encoding, _cb) {
-    var ret = originalStderrWrite.apply(process.stderr, arguments);
+  stderr.write = function (...args: unknown[]): boolean {
+    var chunk = args[0];
+    var ret = originalStderrWrite(...args);
     if (!inDiagnosticWrite && !inferenceLogged) {
       var text = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk || "");
       if (!providerStarted && /\[wechat\]\s*\[[^\]]+\]\s*starting provider\b/i.test(text)) {
@@ -142,7 +169,7 @@
       ) {
         inferenceLogged = true;
         var line =
-          text.split(/\r?\n/).find(function (entry) {
+          text.split(/\r?\n/).find(function (entry: string) {
             return /Embedded agent failed before reply|LLM request failed|FailoverError/i.test(
               entry,
             );

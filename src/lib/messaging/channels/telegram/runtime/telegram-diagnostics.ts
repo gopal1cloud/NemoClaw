@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -8,14 +7,36 @@
 // channel is initializing; an agent-turn failure later can be an inference
 // provider failure through inference.local, not a Telegram Bot API failure.
 
+type TelegramDiagnosticsProcess = NodeJS.Process & {
+  __nemoclawTelegramDiagnosticsInstalled?: boolean;
+};
+type TelegramJsonObject = Record<string, unknown>;
+type TelegramRequestInfo = { hostname: string; path: string };
+type TelegramStderrWrite = (...args: unknown[]) => boolean;
+type TelegramHttpModuleLike = Record<string, unknown>;
+type TelegramRequestLike = {
+  once(eventName: string, listener: (...args: unknown[]) => void): unknown;
+};
+type TelegramResponseLike = {
+  on(eventName: string, listener: (...args: unknown[]) => void): unknown;
+  statusCode?: unknown;
+};
+type TelegramHttpRequestLike = (
+  this: unknown,
+  ...args: unknown[]
+) => TelegramRequestLike | undefined;
+
 (function () {
   "use strict";
 
-  if (process.__nemoclawTelegramDiagnosticsInstalled) return;
+  var diagnosticsProcess = process as TelegramDiagnosticsProcess;
+  if (diagnosticsProcess.__nemoclawTelegramDiagnosticsInstalled) return;
   try {
-    Object.defineProperty(process, "__nemoclawTelegramDiagnosticsInstalled", { value: true });
+    Object.defineProperty(diagnosticsProcess, "__nemoclawTelegramDiagnosticsInstalled", {
+      value: true,
+    });
   } catch (_e) {
-    process.__nemoclawTelegramDiagnosticsInstalled = true;
+    diagnosticsProcess.__nemoclawTelegramDiagnosticsInstalled = true;
   }
 
   var providerStarted = false;
@@ -28,7 +49,13 @@
   var inboundUpdateLogged = false;
   var inDiagnosticWrite = false;
 
-  function sanitize(value) {
+  function asObject(value: unknown): TelegramJsonObject | null {
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? (value as TelegramJsonObject)
+      : null;
+  }
+
+  function sanitize(value: unknown): string {
     var text = String(value || "");
     text = text.replace(/\/bot[^/\s"']+/g, "/bot<redacted>");
     text = text.replace(/\/file\/bot[^/\s"']+/g, "/file/bot<redacted>");
@@ -40,9 +67,10 @@
     return text;
   }
 
-  var originalStderrWrite = process.stderr.write.bind(process.stderr);
+  var stderr = process.stderr as NodeJS.WriteStream & { write: TelegramStderrWrite };
+  var originalStderrWrite = stderr.write.bind(stderr) as TelegramStderrWrite;
 
-  function emit(line) {
+  function emit(line: string): void {
     if (inDiagnosticWrite) return;
     inDiagnosticWrite = true;
     try {
@@ -52,18 +80,18 @@
     }
   }
 
-  function describeRequest(arg1, arg2) {
-    var url = null;
-    var opts = null;
+  function describeRequest(arg1: unknown, arg2: unknown): TelegramRequestInfo {
+    var url: URL | null = null;
+    var opts: TelegramJsonObject | null = null;
     if (typeof arg1 === "string" || arg1 instanceof URL) {
       try {
         url = new URL(String(arg1));
       } catch (_e) {
         url = null;
       }
-      if (arg2 && typeof arg2 === "object" && typeof arg2 !== "function") opts = arg2;
+      opts = asObject(arg2);
     } else if (arg1 && typeof arg1 === "object") {
-      opts = arg1;
+      opts = asObject(arg1);
     }
 
     var hostname = "";
@@ -80,18 +108,18 @@
     return { hostname: hostname, path: path };
   }
 
-  function telegramApiMethod(info) {
-    if (!info || info.hostname !== "api.telegram.org") return;
+  function telegramApiMethod(info: TelegramRequestInfo): string {
+    if (info.hostname !== "api.telegram.org") return "";
     var match = /\/(?:bot[^/]+\/)?([^/?]+)(?:\?|$)/.exec(info.path || "");
     return match && match[1] ? match[1] : "";
   }
 
-  function isTelegramStartupProbe(info) {
+  function isTelegramStartupProbe(info: TelegramRequestInfo): boolean {
     var method = telegramApiMethod(info);
     return method === "getUpdates" || method === "getMe" || method === "getWebhookInfo";
   }
 
-  function maybeLogTelegramStartupProbe(info, statusCode) {
+  function maybeLogTelegramStartupProbe(info: TelegramRequestInfo, statusCode: unknown): void {
     if (!isTelegramStartupProbe(info)) return;
     providerStarted = true;
     var status = Number(statusCode);
@@ -118,15 +146,19 @@
     }
   }
 
-  function maybeLogTelegramStartupError(info, error) {
+  function maybeLogTelegramStartupError(info: TelegramRequestInfo, error: unknown): void {
     if (!isTelegramStartupProbe(info) || startupProbeLogged) return;
     providerStarted = true;
     startupProbeLogged = true;
-    var detail = error && (error.code || error.message) ? error.code || error.message : error;
+    var errorObject = asObject(error);
+    var detail =
+      errorObject && (errorObject.code || errorObject.message)
+        ? errorObject.code || errorObject.message
+        : error;
     emit("[telegram] [default] Bot API startup probe failed: " + sanitize(detail).slice(0, 300));
   }
 
-  function maybeLogTelegramSendMessage(info, statusCode) {
+  function maybeLogTelegramSendMessage(info: TelegramRequestInfo, statusCode: unknown): void {
     if (sendMessageLogged || telegramApiMethod(info) !== "sendMessage") return;
     sendMessageLogged = true;
     emit(
@@ -135,7 +167,7 @@
     );
   }
 
-  function senderAllowlistState(senderId) {
+  function senderAllowlistState(senderId: unknown): string {
     if (senderId === undefined || senderId === null) return "unknown";
     var configPath = process.env.OPENCLAW_CONFIG_PATH || "/sandbox/.openclaw/openclaw.json";
     try {
@@ -149,27 +181,27 @@
     }
   }
 
-  function maybeLogTelegramInboundUpdate(info, body) {
+  function maybeLogTelegramInboundUpdate(info: TelegramRequestInfo, body: unknown): void {
     if (inboundUpdateLogged || telegramApiMethod(info) !== "getUpdates") return;
-    var payload = null;
+    var payload: TelegramJsonObject | null = null;
     try {
-      payload = JSON.parse(String(body || ""));
+      payload = asObject(JSON.parse(String(body || "")));
     } catch (_e) {
       return;
     }
     if (!payload || payload.ok !== true || !Array.isArray(payload.result)) return;
     for (var i = 0; i < payload.result.length; i += 1) {
-      var update = payload.result[i];
-      if (!update || typeof update !== "object") continue;
+      var update = asObject(payload.result[i]);
+      if (!update) continue;
       var message =
-        update.message ||
-        update.edited_message ||
-        update.channel_post ||
-        update.edited_channel_post;
-      if (!message || typeof message !== "object") continue;
+        asObject(update.message) ||
+        asObject(update.edited_message) ||
+        asObject(update.channel_post) ||
+        asObject(update.edited_channel_post);
+      if (!message) continue;
       inboundUpdateLogged = true;
-      var chat = message.chat && typeof message.chat === "object" ? message.chat : {};
-      var from = message.from && typeof message.from === "object" ? message.from : {};
+      var chat = asObject(message.chat) || {};
+      var from = asObject(message.from) || {};
       var chatType =
         typeof chat.type === "string"
           ? sanitize(chat.type)
@@ -195,30 +227,32 @@
     }
   }
 
-  function readTelegramAccount(config) {
-    if (!config || typeof config !== "object") return null;
-    var channel = config.channels && config.channels.telegram;
-    if (!channel || typeof channel !== "object") return null;
-    var accounts = channel.accounts;
-    if (!accounts || typeof accounts !== "object") return null;
-    var account = accounts.default || accounts.main;
-    if (!account || typeof account !== "object") {
+  function readTelegramAccount(config: unknown): TelegramJsonObject | null {
+    var root = asObject(config);
+    if (!root) return null;
+    var channels = asObject(root.channels);
+    var channel = channels ? asObject(channels.telegram) : null;
+    if (!channel) return null;
+    var accounts = asObject(channel.accounts);
+    if (!accounts) return null;
+    var account = asObject(accounts.default) || asObject(accounts.main);
+    if (!account) {
       var keys = Object.keys(accounts);
-      account = keys.length ? accounts[keys[0]] : null;
+      account = keys.length ? asObject(accounts[keys[0]]) : null;
     }
-    return account && typeof account === "object" ? account : null;
+    return account;
   }
 
-  function readTelegramBotToken(config) {
+  function readTelegramBotToken(config: unknown): string {
     var account = readTelegramAccount(config);
     return account && typeof account.botToken === "string" ? account.botToken : "";
   }
 
-  function maybeLogRuntimeConfigDiagnostics() {
+  function maybeLogRuntimeConfigDiagnostics(): void {
     if (runtimeConfigLogged) return;
     runtimeConfigLogged = true;
     var configPath = process.env.OPENCLAW_CONFIG_PATH || "/sandbox/.openclaw/openclaw.json";
-    var account = null;
+    var account: TelegramJsonObject | null = null;
     try {
       var fs = require("fs");
       account = readTelegramAccount(JSON.parse(fs.readFileSync(configPath, "utf8")));
@@ -244,7 +278,7 @@
     }
   }
 
-  function maybeLogCredentialPlaceholderDiagnostics() {
+  function maybeLogCredentialPlaceholderDiagnostics(): void {
     if (credentialLogged) return;
     credentialLogged = true;
     var prefix = "openshell:resolve:env:";
@@ -272,31 +306,33 @@
     }
   }
 
-  function wrapHttp(mod, methodName) {
-    var original = mod[methodName];
+  function wrapHttp(mod: TelegramHttpModuleLike, methodName: string): void {
+    var original = mod[methodName] as TelegramHttpRequestLike | undefined;
     if (typeof original !== "function") return;
-    mod[methodName] = function () {
-      var info = describeRequest(arguments[0], arguments[1]);
-      var req = original.apply(this, arguments);
-      if (info && info.hostname === "api.telegram.org" && req && typeof req.once === "function") {
+    var originalRequest: TelegramHttpRequestLike = original;
+    mod[methodName] = function (this: unknown, ...args: unknown[]) {
+      var info = describeRequest(args[0], args[1]);
+      var req = originalRequest.apply(this, args);
+      if (info.hostname === "api.telegram.org" && req && typeof req.once === "function") {
         req.once("response", function (res) {
-          maybeLogTelegramStartupProbe(info, res && res.statusCode);
-          maybeLogTelegramSendMessage(info, res && res.statusCode);
+          var response = res as TelegramResponseLike | null;
+          maybeLogTelegramStartupProbe(info, response && response.statusCode);
+          maybeLogTelegramSendMessage(info, response && response.statusCode);
           if (
             !inboundUpdateLogged &&
             telegramApiMethod(info) === "getUpdates" &&
-            res &&
-            typeof res.on === "function"
+            response &&
+            typeof response.on === "function"
           ) {
-            var responseChunks = [];
+            var responseChunks: string[] = [];
             var responseBytes = 0;
-            res.on("data", function (chunk) {
+            response.on("data", function (chunk) {
               if (responseBytes >= 65536) return;
               var text = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk || "");
               responseBytes += Buffer.byteLength(text);
               if (responseBytes <= 65536) responseChunks.push(text);
             });
-            res.on("end", function () {
+            response.on("end", function () {
               maybeLogTelegramInboundUpdate(info, responseChunks.join(""));
             });
           }
@@ -309,8 +345,9 @@
     };
   }
 
-  process.stderr.write = function (chunk, encoding, cb) {
-    var ret = originalStderrWrite.apply(process.stderr, arguments);
+  stderr.write = function (...args: unknown[]): boolean {
+    var chunk = args[0];
+    var ret = originalStderrWrite(...args);
     if (!inDiagnosticWrite && !inferenceLogged) {
       var text = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk || "");
       if (!providerStarted && /\[telegram\] \[default\] starting provider\b/i.test(text)) {
@@ -322,7 +359,7 @@
       ) {
         inferenceLogged = true;
         var line =
-          text.split(/\r?\n/).find(function (entry) {
+          text.split(/\r?\n/).find(function (entry: string) {
             return /Embedded agent failed before reply|LLM request failed|FailoverError/i.test(
               entry,
             );
@@ -355,12 +392,14 @@
   // this file; without the gate the timer would emit a false "bridge did
   // not start" line from every Node command even while the real gateway
   // bridge is healthy. Mirrors sandbox-safety-net.js's gatewayProcessFlavor.
-  function basename(value) {
-    return String(value || "")
-      .split(/[\\/]/)
-      .pop();
+  function basename(value: unknown): string {
+    return (
+      String(value || "")
+        .split(/[\\/]/)
+        .pop() || ""
+    );
   }
-  function gatewayProcessFlavor() {
+  function gatewayProcessFlavor(): string {
     if (basename(process.argv0) === "openclaw-gateway") return "openclaw-gateway";
     if (basename(process.title) === "openclaw-gateway") return "openclaw-gateway";
     if (process.argv[2] === "gateway") return "launcher";
@@ -376,10 +415,11 @@
     var configPath = process.env.OPENCLAW_CONFIG_PATH || "/sandbox/.openclaw/openclaw.json";
     try {
       var fs = require("fs");
-      var cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
-      var telegram = cfg && cfg.channels && cfg.channels.telegram;
+      var cfg = asObject(JSON.parse(fs.readFileSync(configPath, "utf8")));
+      var channels = cfg ? asObject(cfg.channels) : null;
+      var telegram = channels ? asObject(channels.telegram) : null;
       if (!telegram || telegram.enabled === false) return;
-      var accounts = telegram.accounts || {};
+      var accounts = asObject(telegram.accounts) || {};
       if (!Object.keys(accounts).length) return;
     } catch (_e) {
       return;
