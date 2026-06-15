@@ -394,6 +394,22 @@ function stashWechatMetadataForRebuild(sandboxName: string, log: (msg: string) =
   }
 }
 
+function printRebuildVersionSummary(
+  sandboxName: string,
+  agentName: string,
+  versionCheck: ReturnType<typeof sandboxVersion.checkAgentVersion>,
+): void {
+  console.log("");
+  console.log(`  ${B}Rebuild sandbox '${sandboxName}'${R}`);
+  if (versionCheck.sandboxVersion) {
+    console.log(`    Current:  ${agentName} v${versionCheck.sandboxVersion}`);
+  }
+  if (versionCheck.expectedVersion) {
+    console.log(`    Target:   ${agentName} v${versionCheck.expectedVersion}`);
+  }
+  console.log("");
+}
+
 async function reapplyMessagingManifestAfterOpenClawDoctor(
   sandboxName: string,
   plan: SandboxMessagingPlan | null,
@@ -470,15 +486,7 @@ export async function rebuildSandbox(
 
   // Version check — show what's changing
   const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);
-  console.log("");
-  console.log(`  ${B}Rebuild sandbox '${sandboxName}'${R}`);
-  if (versionCheck.sandboxVersion) {
-    console.log(`    Current:  ${agentName} v${versionCheck.sandboxVersion}`);
-  }
-  if (versionCheck.expectedVersion) {
-    console.log(`    Target:   ${agentName} v${versionCheck.expectedVersion}`);
-  }
-  console.log("");
+  printRebuildVersionSummary(sandboxName, agentName, versionCheck);
 
   const rebuildConfirmed = await confirmSandboxRebuildIfNeeded(
     skipConfirm,
