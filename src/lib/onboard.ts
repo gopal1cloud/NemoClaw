@@ -23,6 +23,7 @@ const {
 }: typeof import("./onboard/inference-selection-validation") = require("./onboard/inference-selection-validation");
 const {
   createRemoteModelValidator,
+  requireProviderChoice,
 }: typeof import("./onboard/setup-nim-selection") = require("./onboard/setup-nim-selection");
 const inferenceInputCapability = require("./onboard/inference-input-capability");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
@@ -3379,14 +3380,6 @@ type RemoteProviderSelectionArgs = {
   recoveredModel: string | null;
   sandboxName: string | null;
 };
-
-function requireProviderChoice(selected: ProviderChoice | undefined): ProviderChoice {
-  if (!selected) {
-    console.error("  No provider was selected.");
-    process.exit(1);
-  }
-  return selected;
-}
 
 async function handleVllmSelection(
   state: SetupNimSelectionState,
