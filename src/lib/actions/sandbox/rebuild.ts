@@ -262,6 +262,8 @@ async function stageMessagingManifestPlanForRebuild(
   return plan;
 }
 
+type RebuildSandboxEntry = registry.SandboxEntry & { agents?: unknown[] };
+
 const runMessagingOpenshell: MessagingOpenShellRunner = (args, options = {}) =>
   runOpenshell([...args], {
     env: options.env as NodeJS.ProcessEnv | undefined,
@@ -332,6 +334,35 @@ async function confirmSandboxRebuildIfNeeded(
   return true;
 }
 
+function checkRebuildGatewaySchemaPreflight(
+  sandboxName: string,
+  bail: (msg: string, code?: number) => never,
+): boolean {
+  const gatewayPreflightIssue = detectOpenShellStateRpcPreflightIssue();
+  if (gatewayPreflightIssue) {
+    printOpenShellStateRpcIssue(gatewayPreflightIssue, {
+      action: `rebuilding sandbox '${sandboxName}'`,
+      command: `${CLI_NAME} ${sandboxName} rebuild`,
+    });
+    bail("OpenShell gateway schema mismatch.");
+    return false;
+  }
+  return true;
+}
+
+function getRebuildSandboxEntryOrBail(
+  sandboxName: string,
+  bail: (msg: string, code?: number) => never,
+): RebuildSandboxEntry | null {
+  const sb = registry.getSandbox(sandboxName) as RebuildSandboxEntry | null;
+  if (!sb) {
+    console.error(`  Sandbox '${sandboxName}' not found in registry.`);
+    bail(`Sandbox '${sandboxName}' not found in registry.`);
+    return null;
+  }
+  return sb;
+}
+
 function isSingleAgentRebuildSupported(
   sb: registry.SandboxEntry & { agents?: unknown[] },
   bail: (msg: string, code?: number) => never,
@@ -343,6 +374,24 @@ function isSingleAgentRebuildSupported(
     return false;
   }
   return true;
+}
+
+function stashWechatMetadataForRebuild(sandboxName: string, log: (msg: string) => void): void {
+  const rebuildSession = onboardSession.loadSession();
+  const wc =
+    rebuildSession?.sandboxName === sandboxName ? (rebuildSession.wechatConfig ?? null) : null;
+  if (wc?.accountId && !process.env.WECHAT_ACCOUNT_ID) {
+    process.env.WECHAT_ACCOUNT_ID = wc.accountId;
+  }
+  if (wc?.baseUrl && !process.env.WECHAT_BASE_URL) {
+    process.env.WECHAT_BASE_URL = wc.baseUrl;
+  }
+  if (wc?.userId && !process.env.WECHAT_USER_ID) {
+    process.env.WECHAT_USER_ID = wc.userId;
+  }
+  if (wc?.accountId) {
+    log(`Stashed WeChat account metadata for rebuild: accountId=${wc.accountId}`);
+  }
 }
 
 async function reapplyMessagingManifestAfterOpenClawDoctor(
@@ -401,12 +450,8 @@ export async function rebuildSandbox(
   // Active session detection — enrich the confirmation prompt if sessions are active
   const rebuildActiveSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
 
-  const sb = registry.getSandbox(sandboxName) as any;
-  if (!sb) {
-    console.error(`  Sandbox '${sandboxName}' not found in registry.`);
-    bail(`Sandbox '${sandboxName}' not found in registry.`);
-    return;
-  }
+  const sb = getRebuildSandboxEntryOrBail(sandboxName, bail);
+  if (!sb) return;
 
   // Multi-agent guard (temporary — until swarm lands)
   if (!isSingleAgentRebuildSupported(sb, bail)) return;
@@ -415,43 +460,13 @@ export async function rebuildSandbox(
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
 
-  const gatewayPreflightIssue = detectOpenShellStateRpcPreflightIssue();
-  if (gatewayPreflightIssue) {
-    printOpenShellStateRpcIssue(gatewayPreflightIssue, {
-      action: `rebuilding sandbox '${sandboxName}'`,
-      command: `${CLI_NAME} ${sandboxName} rebuild`,
-    });
-    bail("OpenShell gateway schema mismatch.");
-    return;
-  }
+  if (!checkRebuildGatewaySchemaPreflight(sandboxName, bail)) return;
 
   // Stash WeChat per-account metadata into process.env before the rebuild
-  // touches anything destructive. The metadata lives in session.wechatConfig
-  // (captured during the original onboard's host-side QR login) — the only
-  // durable source today. Surfacing it as WECHAT_ACCOUNT_ID / WECHAT_BASE_URL
-  // / WECHAT_USER_ID lets the in-process onboard --resume that fires later
-  // see it directly via the wechatConfig builder's process.env path.
-  // `openclaw-weixin/` runtime state is intentionally NOT in state_dirs —
-  // the manifest post-agent-install hook rebuilds account files from these
-  // env-backed config inputs every image build, so keeping the envs here is
-  // what the next image needs to put the right accountId/baseUrl/userId back
-  // into openclaw.json + the accounts state file.
-  {
-    // Only hydrate from the session when it belongs to THIS sandbox. The
-    // global session file holds the most recent onboard, which may be for a
-    // different sandbox — pulling its wechatConfig would leak that
-    // sandbox's accountId / baseUrl / userId into this image build.
-    const rebuildSession = onboardSession.loadSession();
-    const wc =
-      rebuildSession?.sandboxName === sandboxName ? (rebuildSession.wechatConfig ?? null) : null;
-    if (wc?.accountId && !process.env.WECHAT_ACCOUNT_ID)
-      process.env.WECHAT_ACCOUNT_ID = wc.accountId;
-    if (wc?.baseUrl && !process.env.WECHAT_BASE_URL) process.env.WECHAT_BASE_URL = wc.baseUrl;
-    if (wc?.userId && !process.env.WECHAT_USER_ID) process.env.WECHAT_USER_ID = wc.userId;
-    if (wc?.accountId) {
-      log(`Stashed WeChat account metadata for rebuild: accountId=${wc.accountId}`);
-    }
-  }
+  // touches anything destructive. Only hydrate from the session when it belongs
+  // to this sandbox so metadata from a different recent onboard cannot leak into
+  // this image build.
+  stashWechatMetadataForRebuild(sandboxName, log);
 
   // Version check — show what's changing
   const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);
