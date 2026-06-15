@@ -23,8 +23,6 @@ import {
 } from "../src/lib/messaging/applier/build/messaging-build-applier.mts";
 import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
 
-const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.mts");
-const SCRIPT_ARGS = ["--experimental-strip-types", SCRIPT_PATH];
 const APPLIER_PATH = path.join(
   import.meta.dirname,
   "..",
@@ -246,6 +244,17 @@ describe("generate-openclaw-config :: agents manifest", () => {
         }),
       },
       /must be of the form "provider\/model"/,
+    );
+  });
+
+  it("rejects per-agent model strings whose model portion is whitespace-only", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({
+          agents: [makeExtra({ model: "test-provider/ " })],
+        }),
+      },
+      /model portion must be non-empty and contain no surrounding whitespace/,
     );
   });
 

@@ -633,6 +633,17 @@ function validateModelRef(label: string, raw: unknown, primaryProvider: string):
     throw new Error(`${label} must be of the form "provider/model", got "${raw}"`);
   }
   const provider = raw.slice(0, slash);
+  const modelTail = raw.slice(slash + 1);
+  if (provider.trim() !== provider || provider.length === 0) {
+    throw new Error(
+      `${label} provider portion must be non-empty and contain no surrounding whitespace, got "${raw}"`,
+    );
+  }
+  if (modelTail.trim() !== modelTail || modelTail.length === 0) {
+    throw new Error(
+      `${label} model portion must be non-empty and contain no surrounding whitespace, got "${raw}"`,
+    );
+  }
   if (provider !== primaryProvider) {
     throw new Error(
       `${label} provider "${provider}" must match the onboard provider "${primaryProvider}"; cross-provider manifests are not supported`,

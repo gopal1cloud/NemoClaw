@@ -57,14 +57,23 @@ export interface AgentsManifestPayload {
  */
 export function loadAgentsManifest(filePath: string): AgentsManifestPayload {
   const resolved = path.resolve(filePath);
-  if (!fs.existsSync(resolved)) {
-    throw new Error(`--agents path not found: ${resolved}`);
+  let raw: string;
+  try {
+    // Single fs call avoids the existsSync/statSync/readFileSync TOCTOU
+    // window CodeQL flags as a race (CWE-367): the manifest path can change
+    // between the pre-check and the read on a shared filesystem.
+    raw = fs.readFileSync(resolved, "utf-8");
+  } catch (err) {
+    const nodeErr = err as NodeJS.ErrnoException;
+    if (nodeErr?.code === "ENOENT") {
+      throw new Error(`--agents path not found: ${resolved}`);
+    }
+    if (nodeErr?.code === "EISDIR") {
+      throw new Error(`--agents must point to a file: ${resolved}`);
+    }
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(`--agents read error: ${reason}`);
   }
-  const stat = fs.statSync(resolved);
-  if (!stat.isFile()) {
-    throw new Error(`--agents must point to a file: ${resolved}`);
-  }
-  const raw = fs.readFileSync(resolved, "utf-8");
   let parsed: unknown;
   try {
     parsed = loadYaml().parse(raw);

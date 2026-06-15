@@ -117,7 +117,7 @@ When a secondary agent declares its own `model` (or `subagents.model`), NemoClaw
 The base `contextWindow`, `maxTokens`, `reasoning`, and `input` settings from the onboard route apply to each appended entry.
 Per-model overrides beyond these defaults are out of scope for v1 — edit the generated `openclaw.json` in-place if you need finer control.
 
-## Example: Manager-Worker
+## Manager-Worker Example
 
 ```yaml
 defaults:
@@ -152,3 +152,12 @@ Workspaces under `/sandbox/.openclaw/workspace-<id>` are preserved across rebuil
 
 For ad-hoc per-agent edits inside an existing sandbox (no rebuild), use the in-sandbox CLI: `nemoclaw <name> agents add|delete|list`.
 The manifest path is for fixed, checked-in layouts; the CLI passthrough is for interactive work.
+
+## Next Steps
+
+Use the following resources for more information:
+
+- Refer to [OpenClaw Sub-Agents](https://docs.openclaw.ai/tools/subagents) for the runtime semantics of `sessions_spawn`, `subagents.allowAgents`, and nesting depth.
+- Refer to [Set Up Task-Specific Sub-Agents](set-up-sub-agent) for the in-sandbox path that edits `agents.list` directly without a rebuild.
+- Refer to [Switch Inference Providers](switch-inference-providers) before swapping the primary onboard provider — per-agent `model` refs must share that provider.
+- Refer to [Workspace Files](../manage-sandboxes/workspace-files) to understand how per-agent `workspace-<id>` directories are provisioned and persisted across rebuilds.
