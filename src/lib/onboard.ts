@@ -177,8 +177,9 @@ const {
 }: typeof import("./onboard/base-image") = require("./onboard/base-image");
 const { requireValue }: typeof import("./core/require-value") = require("./core/require-value");
 const {
-  logMissingNvidiaApiKeyHelp,
-}: typeof import("./onboard/missing-credential-hints") = require("./onboard/missing-credential-hints");
+  resolveNonInteractiveBuildCredential,
+  resolveBuildPreferredInferenceApi,
+}: typeof import("./onboard/build-credential-reuse") = require("./onboard/build-credential-reuse");
 
 type RunnerOptions = {
   env?: NodeJS.ProcessEnv;
@@ -3646,27 +3647,11 @@ async function setupNim(
             process.env.NVIDIA_INFERENCE_API_KEY = _nvProviderKey;
           }
           if (isNonInteractive()) {
-            const resolvedNvidiaKey = resolveProviderCredential("NVIDIA_INFERENCE_API_KEY");
-            if (resolvedNvidiaKey) {
-              const keyError = validateNvidiaApiKeyValue(resolvedNvidiaKey);
-              if (keyError) {
-                console.error(keyError);
-                console.error(`  Get a key from ${REMOTE_PROVIDER_CONFIG.build.helpUrl}`);
-                process.exit(1);
-              }
-            } else if (!providerExistsInGateway(provider)) {
-              logMissingNvidiaApiKeyHelp(REMOTE_PROVIDER_CONFIG.build.helpUrl);
-              process.exit(1);
-            } else {
-              // No local API key is staged, but the OpenShell gateway already
-              // holds a validated credential for this provider (recovered from
-              // the existing sandbox, e.g. --recreate-sandbox). The gateway is
-              // the system of record and nothing is written to disk, so we have
-              // no key to probe the endpoint with. Reuse the gateway credential
-              // and skip endpoint re-validation rather than probing the endpoint
-              // unauthenticated, which would fail. See issue #5441.
-              reuseGatewayCredentialWithoutLocalKey = true;
-            }
+            reuseGatewayCredentialWithoutLocalKey = resolveNonInteractiveBuildCredential({
+              provider,
+              helpUrl: REMOTE_PROVIDER_CONFIG.build.helpUrl,
+              providerExistsInGateway,
+            });
           } else {
             await ensureApiKey();
           }
@@ -3907,36 +3892,30 @@ async function setupNim(
           }
         }
 
-        if (selected.key === "build" && reuseGatewayCredentialWithoutLocalKey) {
-          // The gateway already holds a validated credential for this provider
-          // and no local key is available to probe with, so skip endpoint
-          // re-validation and reuse the existing credential. See issue #5441.
-          note("  Reusing existing gateway credential; skipping endpoint re-validation.");
-          preferredInferenceApi = "openai-completions";
-        } else if (selected.key === "build") {
-          while (true) {
-            const validation = await validateOpenAiLikeSelection(
-              remoteConfig.label,
-              requireValue(endpointUrl, `Missing endpoint URL for ${remoteConfig.label}`),
-              model,
-              credentialEnv,
-              "Please choose a provider/model again.",
-              remoteConfig.helpUrl,
-              {
-                requireResponsesToolCalling: shouldRequireResponsesToolCalling(provider),
-                skipResponsesProbe: shouldSkipResponsesProbe(provider),
-                authMode: getProbeAuthMode(provider),
-              },
-            );
-            if (validation.ok) {
-              preferredInferenceApi = validation.api;
-              break;
-            }
-            if (validation.retry === "credential" || validation.retry === "retry") {
-              continue;
-            }
-            continue selectionLoop;
-          }
+        if (selected.key === "build") {
+          // Capture the flow-narrowed (string) model so the deferred probe
+          // closure keeps the narrowing the synchronous call relied on.
+          const buildModel = model;
+          const buildValidation = await resolveBuildPreferredInferenceApi({
+            reuseGatewayCredentialWithoutLocalKey,
+            note,
+            probe: () =>
+              validateOpenAiLikeSelection(
+                remoteConfig.label,
+                requireValue(endpointUrl, `Missing endpoint URL for ${remoteConfig.label}`),
+                buildModel,
+                credentialEnv,
+                "Please choose a provider/model again.",
+                remoteConfig.helpUrl,
+                {
+                  requireResponsesToolCalling: shouldRequireResponsesToolCalling(provider),
+                  skipResponsesProbe: shouldSkipResponsesProbe(provider),
+                  authMode: getProbeAuthMode(provider),
+                },
+              ),
+          });
+          if (buildValidation.retrySelection) continue selectionLoop;
+          preferredInferenceApi = buildValidation.preferredInferenceApi;
         }
 
         console.log(`  Using ${remoteConfig.label} with model: ${model}`);
