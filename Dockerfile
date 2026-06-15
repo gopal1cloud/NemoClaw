@@ -25,7 +25,21 @@ COPY nemoclaw/src/ /opt/nemoclaw/src/
 WORKDIR /opt/nemoclaw
 RUN npm ci && npm run build
 
-# Stage 2: Runtime image — pull cached base from GHCR
+# Stage 2: Build root TypeScript runtime preloads.
+FROM node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d AS runtime-preload-builder
+ENV NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    NPM_CONFIG_FETCH_RETRIES=5 \
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
+    NPM_CONFIG_FETCH_TIMEOUT=300000
+WORKDIR /opt/nemoclaw-root
+COPY package.json package-lock.json tsconfig.src.json /opt/nemoclaw-root/
+COPY src/ /opt/nemoclaw-root/src/
+RUN npm ci --ignore-scripts && ./node_modules/.bin/tsc -p tsconfig.src.json
+
+# Stage 3: Runtime image — pull cached base from GHCR
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 ARG OPENCLAW_VERSION=2026.5.27
@@ -527,10 +541,10 @@ COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 # Copy NODE_OPTIONS preload modules to a Landlock-accessible path. OpenShell ≥0.0.36
 # blocks /opt/nemoclaw-blueprint/ from non-root users, but the entrypoint
 # needs to read these files to install Node runtime preloads under /tmp.
-# Channel runtime preloads are TypeScript source files constrained to the
-# Node-executable JS subset; rename them to .js in the image for --require.
+# Channel runtime preloads are authored as TypeScript and compiled in the
+# runtime-preload-builder stage before being flattened by filename for --require.
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
-COPY src/lib/messaging/channels/*/runtime/*.ts /usr/local/lib/nemoclaw/preloads-ts/
+COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts
 COPY src/lib/messaging/ /src/lib/messaging/
@@ -542,8 +556,11 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
     && chmod -R a+rX /src/lib/messaging \
     && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
         /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py \
-    && if [ -d /usr/local/lib/nemoclaw/preloads-ts ]; then find /usr/local/lib/nemoclaw/preloads-ts -type f -name '*.ts' -exec sh -c 'for file do cp "$file" "/usr/local/lib/nemoclaw/preloads/$(basename "$file" .ts).js"; done' sh {} +; fi \
-    && rm -rf /usr/local/lib/nemoclaw/preloads-ts \
+    && if [ -d /usr/local/lib/nemoclaw/preloads-compiled-channels ]; then \
+        find /usr/local/lib/nemoclaw/preloads-compiled-channels -path '*/runtime/*.js' -type f \
+            -exec sh -c 'for file do cp "$file" "/usr/local/lib/nemoclaw/preloads/$(basename "$file")"; done' sh {} +; \
+    fi \
+    && rm -rf /usr/local/lib/nemoclaw/preloads-compiled-channels \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then find /usr/local/lib/nemoclaw/preloads -type f -name '*.js' -exec chmod 644 {} +; fi \
     && chmod 755 /usr/local/share/nemoclaw \
         /usr/local/share/nemoclaw/openclaw-plugins \
