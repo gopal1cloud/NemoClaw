@@ -25,19 +25,13 @@ COPY nemoclaw/src/ /opt/nemoclaw/src/
 WORKDIR /opt/nemoclaw
 RUN npm ci && npm run build
 
-# Stage 2: Build root TypeScript runtime preloads.
-FROM node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d AS runtime-preload-builder
-ENV NPM_CONFIG_AUDIT=false \
-    NPM_CONFIG_FUND=false \
-    NPM_CONFIG_UPDATE_NOTIFIER=false \
-    NPM_CONFIG_FETCH_RETRIES=5 \
-    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
-    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
-    NPM_CONFIG_FETCH_TIMEOUT=300000
+# Stage 2: Build TypeScript messaging runtime preloads.
+FROM builder AS runtime-preload-builder
 WORKDIR /opt/nemoclaw-root
-COPY package.json package-lock.json tsconfig.src.json /opt/nemoclaw-root/
-COPY src/ /opt/nemoclaw-root/src/
-RUN npm ci --ignore-scripts && ./node_modules/.bin/tsc -p tsconfig.src.json
+COPY tsconfig.runtime-preloads.json /opt/nemoclaw-root/
+COPY src/lib/messaging/channels/ /opt/nemoclaw-root/src/lib/messaging/channels/
+RUN ln -s /opt/nemoclaw/node_modules /opt/nemoclaw-root/node_modules \
+    && /opt/nemoclaw/node_modules/.bin/tsc -p tsconfig.runtime-preloads.json
 
 # Stage 3: Runtime image — pull cached base from GHCR
 # hadolint ignore=DL3006

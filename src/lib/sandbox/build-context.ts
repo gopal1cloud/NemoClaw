@@ -43,6 +43,10 @@ function stageLegacySandboxBuildContext(
 ): StagedBuildContext {
   const buildCtx = createBuildContextDir(tmpDir);
   fs.copyFileSync(path.join(rootDir, "Dockerfile"), path.join(buildCtx, "Dockerfile"));
+  fs.copyFileSync(
+    path.join(rootDir, "tsconfig.runtime-preloads.json"),
+    path.join(buildCtx, "tsconfig.runtime-preloads.json"),
+  );
   fs.cpSync(path.join(rootDir, "nemoclaw"), path.join(buildCtx, "nemoclaw"), { recursive: true });
   fs.cpSync(path.join(rootDir, "nemoclaw-blueprint"), path.join(buildCtx, "nemoclaw-blueprint"), {
     recursive: true,
@@ -77,6 +81,10 @@ function stageOptimizedSandboxBuildContext(
   const stagedScriptsDir = path.join(buildCtx, "scripts");
 
   fs.copyFileSync(path.join(rootDir, "Dockerfile"), stagedDockerfile);
+  fs.copyFileSync(
+    path.join(rootDir, "tsconfig.runtime-preloads.json"),
+    path.join(buildCtx, "tsconfig.runtime-preloads.json"),
+  );
 
   fs.mkdirSync(stagedNemoclawDir, { recursive: true });
   for (const fileName of [

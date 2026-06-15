@@ -30,6 +30,7 @@ describe("sandbox build context staging", () => {
     }
 
     writeFixture("Dockerfile");
+    writeFixture("tsconfig.runtime-preloads.json", "{}\n");
     for (const fileName of [
       "package.json",
       "package-lock.json",
@@ -229,6 +230,7 @@ describe("sandbox build context staging", () => {
     try {
       const { buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
       expectDockerfileScriptCopiesExist(buildCtx, stagedDockerfile);
+      expect(fs.existsSync(path.join(buildCtx, "tsconfig.runtime-preloads.json"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", ".venv"))).toBe(false);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "blueprint.yaml"))).toBe(true);
       expect(
