@@ -76,10 +76,14 @@ function createFixture(opts: {
   /** If set, the onboard-session.json provider_selection step status */
   providerSelectionStatus?: string;
   agent?: string | null;
+  agents?: unknown[] | null;
   hermesAuthMethod?: string | null;
   messagingPlanChannels?: string[] | null;
   dockerBuildExitCode?: number;
   providerRegistered?: boolean;
+  sessionSandboxName?: string;
+  wechatConfig?: { accountId?: string; baseUrl?: string; userId?: string } | null;
+  dockerEnvCaptureFile?: string | null;
 }) {
   const {
     sandboxName = "my-assistant",
@@ -88,10 +92,14 @@ function createFixture(opts: {
     savedCredential,
     providerSelectionStatus = "complete",
     agent = null,
+    agents = null,
     hermesAuthMethod = null,
     messagingPlanChannels = null,
     dockerBuildExitCode = 0,
     providerRegistered = true,
+    sessionSandboxName = sandboxName,
+    wechatConfig = null,
+    dockerEnvCaptureFile = null,
   } = opts;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
   tmpFixtures.push(tmpDir);
@@ -115,6 +123,7 @@ function createFixture(opts: {
           gpuEnabled: false,
           policies: [],
           agent,
+          ...(agents ? { agents } : {}),
           ...(messagingPlan ? { messaging: { schemaVersion: 1, plan: messagingPlan } } : {}),
         },
       },
@@ -137,7 +146,7 @@ function createFixture(opts: {
       lastCompletedStep: "policies",
       failure: null,
       agent: null,
-      sandboxName,
+      sandboxName: sessionSandboxName,
       provider,
       model: "meta/llama-3.3-70b-instruct",
       endpointUrl: null,
@@ -149,6 +158,7 @@ function createFixture(opts: {
       policyPresets: [],
       messagingPlan: null,
       metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
+      ...(wechatConfig ? { wechatConfig } : {}),
       steps: {
         preflight: {
           status: "complete",
@@ -232,6 +242,15 @@ function createFixture(opts: {
     path.join(tmpDir, "openshell"),
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
+const capture = ${JSON.stringify(dockerEnvCaptureFile)};
+function captureWechatEnv() {
+  if (!capture) return;
+  require("fs").writeFileSync(capture, JSON.stringify({
+    accountId: process.env.WECHAT_ACCOUNT_ID || null,
+    baseUrl: process.env.WECHAT_BASE_URL || null,
+    userId: process.env.WECHAT_USER_ID || null,
+  }));
+}
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
@@ -240,7 +259,7 @@ if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("nemoclaw\\n
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
 if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider":"${provider}","model":"meta/llama-3.3-70b-instruct"}\\n'); process.exit(0); }
 if (a[0]==="inference" && a[1]==="set")      { process.exit(0); }
-if (a[0]==="provider" && a[1]==="get")       { process.exit(${providerRegistered ? 0 : 1}); }
+if (a[0]==="provider" && a[1]==="get")       { captureWechatEnv(); process.exit(${providerRegistered ? 0 : 1}); }
 if (a[0]==="provider")                       { process.exit(0); }
 if (a[0]==="forward")                        { process.exit(0); }
 process.exit(0);
@@ -255,6 +274,15 @@ process.exit(0);
     path.join(tmpDir, "docker"),
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
+const capture = ${JSON.stringify(dockerEnvCaptureFile)};
+const fs = require("fs");
+if (capture && a[0]==="build" && !fs.existsSync(capture)) {
+  fs.writeFileSync(capture, JSON.stringify({
+    accountId: process.env.WECHAT_ACCOUNT_ID || null,
+    baseUrl: process.env.WECHAT_BASE_URL || null,
+    userId: process.env.WECHAT_USER_ID || null,
+  }));
+}
 if (a[0]==="build") { process.exit(${dockerBuildExitCode}); }
 if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
 if (a[0]==="inspect") { process.stdout.write("true\\n"); process.exit(0); }
@@ -371,6 +399,27 @@ describe("Issue #2273: atomic rebuild", () => {
       expect(output).not.toContain("Cancelled.");
       expect(output).not.toContain("preflight failed");
       expect(output).toContain("Backing up sandbox state");
+    });
+
+    it("aborts multi-agent rebuild before prompting, preflight, or backup", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        agents: [{ name: "openclaw" }, { name: "hermes" }],
+        savedCredential: {
+          key: "NVIDIA_INFERENCE_API_KEY",
+          value: "nvapi-test-key-for-rebuild",
+        },
+      });
+
+      const result = runRebuild(f, {}, { yes: false, input: "YES\n" });
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("Multi-agent sandbox rebuild is not yet supported");
+      expect(output).not.toContain("Proceed? [y/N]:");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(registryHasSandbox(f)).toBe(true);
     });
 
     it("aborts rebuild BEFORE destroying sandbox when credential is missing", {
