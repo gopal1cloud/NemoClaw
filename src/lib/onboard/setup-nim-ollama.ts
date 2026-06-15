@@ -92,6 +92,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     });
     if (result.outcome === "back-to-selection") return "retry-selection";
     state.model = result.model;
+    state.allowToolsIncompatible = result.allowToolsIncompatible;
     state.preferredInferenceApi = "openai-completions";
     return "selected";
   }

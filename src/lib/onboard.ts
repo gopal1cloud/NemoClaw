@@ -3402,6 +3402,7 @@ type SetupNimSelectionState = {
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   nimContainer: string | null;
+  allowToolsIncompatible: boolean;
 };
 
 type SetupNimSelectionResult = "selected" | "retry-selection";
@@ -4125,6 +4126,7 @@ async function setupNim(
           hermesToolGateways,
           preferredInferenceApi,
           nimContainer,
+          allowToolsIncompatible,
         };
         const result = await handleRemoteProviderSelection(
           { selected, requestedModel, recoveredFromSandbox, recoveredModel, sandboxName },
@@ -4138,6 +4140,7 @@ async function setupNim(
           hermesAuthMethod,
           hermesToolGateways,
           preferredInferenceApi,
+          allowToolsIncompatible,
         } = state);
         if (result === "retry-selection") continue selectionLoop;
         break;
@@ -4151,6 +4154,7 @@ async function setupNim(
           hermesToolGateways,
           preferredInferenceApi,
           nimContainer,
+          allowToolsIncompatible,
         };
         const result = await handleNimLocalSelection(
           gpu,
@@ -4182,6 +4186,7 @@ async function setupNim(
           hermesToolGateways,
           preferredInferenceApi,
           nimContainer,
+          allowToolsIncompatible,
         };
         const result = await handleRunningOllamaSelection(
           gpu,
@@ -4190,7 +4195,14 @@ async function setupNim(
           ollamaRunning,
           state,
         );
-        ({ model, provider, endpointUrl, credentialEnv, preferredInferenceApi } = state);
+        ({
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          preferredInferenceApi,
+          allowToolsIncompatible,
+        } = state);
         if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (["start-windows-ollama", "install-windows-ollama"].includes(selected.key)) {
@@ -4206,6 +4218,7 @@ async function setupNim(
           hermesToolGateways,
           preferredInferenceApi,
           nimContainer,
+          allowToolsIncompatible,
         };
         const result = await handleWindowsHostOllamaSelection(
           gpu,
@@ -4216,7 +4229,14 @@ async function setupNim(
           winOllamaInstalledPath,
           state,
         );
-        ({ model, provider, endpointUrl, credentialEnv, preferredInferenceApi } = state);
+        ({
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          preferredInferenceApi,
+          allowToolsIncompatible,
+        } = state);
         if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (selected.key === "install-ollama") {
@@ -4229,6 +4249,7 @@ async function setupNim(
           hermesToolGateways,
           preferredInferenceApi,
           nimContainer,
+          allowToolsIncompatible,
         };
         const result = await handleInstallOllamaSelection(
           gpu,
@@ -4237,7 +4258,14 @@ async function setupNim(
           state,
           ollamaInstallMenu,
         );
-        ({ model, provider, endpointUrl, credentialEnv, preferredInferenceApi } = state);
+        ({
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          preferredInferenceApi,
+          allowToolsIncompatible,
+        } = state);
         if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (selected.key === "install-vllm") {
@@ -4270,10 +4298,18 @@ async function setupNim(
           hermesToolGateways,
           preferredInferenceApi,
           nimContainer,
+          allowToolsIncompatible,
         };
         const result = await handleVllmSelection(state);
-        ({ model, provider, endpointUrl, credentialEnv, preferredInferenceApi, nimContainer } =
-          state);
+        ({
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          preferredInferenceApi,
+          nimContainer,
+          allowToolsIncompatible,
+        } = state);
         if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (selected.key === "routed") {
@@ -4286,10 +4322,18 @@ async function setupNim(
           hermesToolGateways,
           preferredInferenceApi,
           nimContainer,
+          allowToolsIncompatible,
         };
         const result = await handleRoutedSelection(state);
-        ({ model, provider, endpointUrl, credentialEnv, preferredInferenceApi, nimContainer } =
-          state);
+        ({
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+          preferredInferenceApi,
+          nimContainer,
+          allowToolsIncompatible,
+        } = state);
         if (result === "retry-selection") continue selectionLoop;
         break;
       }

@@ -12,6 +12,7 @@ export type SetupNimSelectionState = {
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   nimContainer: string | null;
+  allowToolsIncompatible: boolean;
 };
 
 type ProviderChoice = {
