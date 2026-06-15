@@ -16,8 +16,38 @@ function loadYaml(): YamlLoader {
 const ALLOWED_TOP_KEYS = new Set<string>(["agents", "defaults", "main"]);
 const AGENT_DATA_ROOT = "/sandbox/.openclaw";
 
+// Defence-in-depth credential-name denylist: the authoritative reject lives
+// at the build-time validator (scripts/generate-openclaw-config.mts) which
+// only permits a small allowlist of nested keys. Even so, the host writes
+// `NEMOCLAW_EXTRA_AGENTS_JSON` and the Dockerfile patcher base64-bakes the
+// payload into `NEMOCLAW_EXTRA_AGENTS_JSON_B64` before the build runs. A
+// pre-transport scan keeps obvious credential-named values from ever
+// reaching the staged Dockerfile/build context if an operator accidentally
+// drops `apiKey`, `token`, `secret`, etc. into the YAML.
+const CREDENTIAL_NAME_PATTERN =
+  /^(?:api[-_]?key|token|secret|password|passphrase|credential|bearer|auth)$/i;
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function assertNoCredentialFields(value: unknown, label: string): void {
+  if (isObject(value)) {
+    for (const [key, child] of Object.entries(value)) {
+      if (CREDENTIAL_NAME_PATTERN.test(key)) {
+        throw new Error(
+          `agents manifest field "${label}.${key}" looks like a credential and is not allowed; pass credentials through the OpenShell provider profile instead`,
+        );
+      }
+      assertNoCredentialFields(child, `${label}.${key}`);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((child, index) => {
+      assertNoCredentialFields(child, `${label}[${index}]`);
+    });
+  }
 }
 
 function expectedAgentPath(kind: "workspace" | "agentDir", id: string): string {
@@ -111,6 +141,7 @@ export function loadAgentsManifest(filePath: string): AgentsManifestPayload {
   if (parsed.main !== undefined) {
     out.main = parsed.main;
   }
+  assertNoCredentialFields(out, "agents-manifest");
   return out;
 }
 

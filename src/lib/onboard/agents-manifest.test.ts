@@ -151,6 +151,32 @@ describe("loadAgentsManifest", () => {
     fs.mkdirSync(dir);
     expect(() => loadAgentsManifest(dir)).toThrow(/must point to a file:/);
   });
+
+  it("rejects manifests with nested credential-named keys before they reach the build", () => {
+    for (const key of [
+      "apiKey",
+      "api_key",
+      "token",
+      "secret",
+      "password",
+      "credential",
+      "bearer",
+    ]) {
+      const file = manifestPath(
+        `credential-${key}.yaml`,
+        [
+          "agents:",
+          "  - id: alpha",
+          "    tools:",
+          "      allow: [read]",
+          "    subagents:",
+          `      ${key}: leaking-secret-disguised-as-config`,
+          "",
+        ].join("\n"),
+      );
+      expect(() => loadAgentsManifest(file)).toThrow(/looks like a credential and is not allowed/);
+    }
+  });
 });
 
 describe("applyAgentsManifestEnv", () => {
