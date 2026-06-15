@@ -1250,6 +1250,20 @@ $$nemoclaw my-assistant agents delete work
 $$nemoclaw my-assistant agents delete work --force --json
 ```
 
+### `$$nemoclaw <name> agents apply`
+
+Reconcile the live sandbox roster against a declarative [agents.yaml manifest](../inference/declarative-agents-manifest).
+The verb lists current agents via `openclaw agents list --json`, diffs them against the manifest, and adds missing secondaries or deletes orphan ones through `openclaw agents add|delete`.
+Per-agent `model`, `subagents.*`, top-level `defaults`, and `main` overrides need a sandbox rebuild and are surfaced as warnings rather than silently dropped; rerun `nemoclaw onboard --agents <file> --recreate-sandbox` to bake those fields.
+
+```bash
+$$nemoclaw my-assistant agents apply -f ./agents.yaml
+$$nemoclaw my-assistant agents apply -f ./agents.yaml --yes
+$$nemoclaw my-assistant agents apply -f ./agents.yaml --yes --non-interactive
+```
+
+Pass `--yes` to confirm the roster diff above; `--non-interactive` fails fast when `--yes` is absent so scripted callers cannot accidentally hang on a missing prompt.
+
 ### `$$nemoclaw <name> sessions`
 
 List OpenClaw conversation sessions in the sandbox.

@@ -158,6 +158,18 @@ Workspaces under `/sandbox/.openclaw/workspace-<id>` are preserved across rebuil
 For ad-hoc per-agent edits inside an existing sandbox (no rebuild), use the in-sandbox CLI: `nemoclaw <name> agents add|delete|list`.
 The manifest path is for fixed, checked-in layouts; the CLI passthrough is for interactive work.
 
+## Apply To An Existing Sandbox
+
+`nemoclaw <name> agents apply -f <agents.yaml>` reconciles the live sandbox roster against the manifest **without a rebuild**.
+The verb lists current agents via `openclaw agents list --json`, diffs them against the manifest, and drives `openclaw agents add|delete` per item.
+Per-agent `model`, `subagents.*`, top-level `defaults`, and `main` overrides require a sandbox rebuild and are reported as warnings the verb prints before exit; rerun `nemoclaw onboard --agents <file> --recreate-sandbox` to bake those.
+
+```bash
+nemoclaw my-assistant agents apply -f ./agents.yaml --yes
+```
+
+The flag pair `--yes / --non-interactive` is required for scripted use: `--yes` confirms the printed roster diff, and `--non-interactive` makes the verb fail fast when `--yes` is absent rather than waiting for an interactive prompt that scripted callers cannot deliver.
+
 ## Next Steps
 
 Use the following resources for more information:
