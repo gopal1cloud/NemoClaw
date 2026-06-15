@@ -876,7 +876,6 @@ describe("generate-openclaw-config.mts: config generation", () => {
   // without "main" present.
 
   const TOOLS_OK = { profile: "minimal", allow: ["read"], deny: ["exec"] };
-  const SUBAGENTS_OK = { maxSpawnDepth: 0 };
 
   function makeExtra(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
@@ -884,7 +883,6 @@ describe("generate-openclaw-config.mts: config generation", () => {
       workspace: "/sandbox/.openclaw/workspace-research",
       agentDir: "/sandbox/.openclaw/agents/research",
       tools: TOOLS_OK,
-      subagents: SUBAGENTS_OK,
       ...overrides,
     };
   }
@@ -1056,27 +1054,28 @@ describe("generate-openclaw-config.mts: config generation", () => {
     );
   });
 
-  it("rejects extras whose subagents.maxSpawnDepth is missing or invalid", () => {
-    expectBuildConfigError(
-      {
-        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ subagents: undefined })]),
-      },
-      /\.subagents must be an object/,
-    );
+  it("treats subagents as optional and omits it when absent or empty", () => {
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra()]),
+    });
+    expect(config.agents.list[1]).not.toHaveProperty("subagents");
+  });
+
+  it("rejects per-agent subagents.maxSpawnDepth with a migration hint", () => {
     expectBuildConfigError(
       {
         NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
-          makeExtra({ subagents: { maxSpawnDepth: -1 } }),
+          makeExtra({ subagents: { maxSpawnDepth: 2 } }),
         ]),
       },
-      /maxSpawnDepth must be a non-negative integer/,
+      /maxSpawnDepth is not accepted per-agent.*defaults\.subagents\.maxSpawnDepth/,
     );
   });
 
-  it("rejects extras when the payload is not an array", () => {
+  it("rejects extras when the payload is neither array nor object", () => {
     expectBuildConfigError(
-      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({ id: "research" }) },
-      /must decode to a JSON array/,
+      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64("not-a-list") },
+      /must decode to a JSON array of agent objects or an object with/,
     );
   });
 
@@ -1105,22 +1104,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
   it("rejects extras that smuggle credential-like keys inside subagents", () => {
     expectBuildConfigError(
       {
-        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
-          makeExtra({ subagents: { ...SUBAGENTS_OK, token: "x" } }),
-        ]),
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ subagents: { token: "x" } })]),
       },
       /\.subagents contains unsupported field\(s\): token/,
-    );
-  });
-
-  it("rejects extras with an operator-supplied model override (currently unsupported)", () => {
-    expectBuildConfigError(
-      {
-        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
-          makeExtra({ model: { primary: "evil/model" } }),
-        ]),
-      },
-      /contains unsupported field\(s\): model/,
     );
   });
 
@@ -1143,11 +1129,15 @@ describe("generate-openclaw-config.mts: config generation", () => {
   });
 
   it("strips operator entries to the allowlist when writing agents.list", () => {
-    // Even if the operator includes an unrecognised but harmless-looking
-    // field, the validator must drop it before it reaches the baked image.
-    // (The previous test confirms unknown fields fail; this test guards
-    // against an allowlist drift where an unknown field is accepted but a
-    // known one is dropped.)
+    // The validator must drop unknown keys at every nesting level before
+    // they reach the baked image. (The previous tests confirm unknown
+    // fields fail; this test guards against an allowlist drift where an
+    // unknown field is accepted but a known one is dropped.)
+    const subagentsInput = {
+      delegationMode: "prefer",
+      allowAgents: ["analyst"],
+      requireAgentId: true,
+    };
     const config = runConfigScript({
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
         {
@@ -1155,7 +1145,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
           workspace: "/sandbox/.openclaw/workspace-research",
           agentDir: "/sandbox/.openclaw/agents/research",
           tools: TOOLS_OK,
-          subagents: SUBAGENTS_OK,
+          subagents: subagentsInput,
           description: "Researches things",
         },
       ]),
@@ -1165,7 +1155,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
       workspace: "/sandbox/.openclaw/workspace-research",
       agentDir: "/sandbox/.openclaw/agents/research",
       tools: TOOLS_OK,
-      subagents: SUBAGENTS_OK,
+      subagents: subagentsInput,
       description: "Researches things",
     });
   });
@@ -1189,6 +1179,197 @@ describe("generate-openclaw-config.mts: config generation", () => {
     const list: Array<{ id: string; default?: boolean }> = config.agents.list;
     const resolved = list.find((entry) => entry.default === true)?.id ?? list[0]?.id;
     expect(resolved).toBe("main");
+  });
+
+  // ─── agents-manifest extensions ───────────────────────────────────────────
+  // These exercise the v1 `{agents,defaults?,main?}` payload shape that the
+  // YAML loader emits: per-agent model + subagents OpenClaw-native fields,
+  // agents.defaults bake, main-agent augmentation, and providers.models
+  // expansion for unique secondary model refs.
+
+  it("accepts the new payload object shape {agents, defaults?, main?}", () => {
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({
+        agents: [makeExtra({ id: "research" })],
+      }),
+    });
+    expect(config.agents.list[1]).toMatchObject({ id: "research" });
+  });
+
+  it("rejects unknown top-level keys in the object payload", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({
+          agents: [],
+          rogue: "x",
+        }),
+      },
+      /NEMOCLAW_EXTRA_AGENTS_JSON contains unsupported field\(s\): rogue/,
+    );
+  });
+
+  it("accepts a same-provider per-agent model and adds it to providers.models[]", () => {
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({
+        agents: [makeExtra({ model: "test-provider/secondary-1" })],
+      }),
+    });
+    expect(config.agents.list[1].model).toBe("test-provider/secondary-1");
+    const refs = config.models.providers["test-provider"].models.map(
+      (entry: { name: string }) => entry.name,
+    );
+    expect(refs).toEqual(["test-ref", "test-provider/secondary-1"]);
+    const secondary = config.models.providers["test-provider"].models[1];
+    expect(secondary.id).toBe("secondary-1");
+  });
+
+  it("dedups model refs across multiple agents and the main override", () => {
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({
+        agents: [
+          makeExtra({ id: "research", model: "test-provider/shared-model" }),
+          makeExtra({
+            id: "writing",
+            workspace: "/sandbox/.openclaw/workspace-writing",
+            agentDir: "/sandbox/.openclaw/agents/writing",
+            model: "test-provider/shared-model",
+            subagents: { model: "test-provider/shared-model" },
+          }),
+        ],
+        main: {
+          subagents: {
+            allowAgents: ["research", "writing"],
+            model: "test-provider/shared-model",
+          },
+        },
+      }),
+    });
+    const refs = config.models.providers["test-provider"].models.map(
+      (entry: { name: string }) => entry.name,
+    );
+    expect(refs).toEqual(["test-ref", "test-provider/shared-model"]);
+  });
+
+  it("rejects a per-agent model whose provider does not match the onboard provider", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({
+          agents: [makeExtra({ model: "other-provider/model-x" })],
+        }),
+      },
+      /model provider "other-provider" must match the onboard provider "test-provider"/,
+    );
+  });
+
+  it("rejects per-agent model strings without a provider/model split", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({
+          agents: [makeExtra({ model: "bare-name" })],
+        }),
+      },
+      /must be of the form "provider\/model"/,
+    );
+  });
+
+  it("accepts subagents.allowAgents and bakes it verbatim under the agent entry", () => {
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({
+        agents: [
+          makeExtra({
+            subagents: {
+              allowAgents: ["analyst", "writer"],
+              delegationMode: "prefer",
+              requireAgentId: true,
+            },
+          }),
+        ],
+      }),
+    });
+    expect(config.agents.list[1].subagents).toEqual({
+      allowAgents: ["analyst", "writer"],
+      delegationMode: "prefer",
+      requireAgentId: true,
+    });
+  });
+
+  it("rejects subagents.delegationMode values outside the OpenClaw enum", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({
+          agents: [makeExtra({ subagents: { delegationMode: "force" } })],
+        }),
+      },
+      /delegationMode must be one of: prefer, suggest/,
+    );
+  });
+
+  it("rejects subagents.allowAgents that is not an array of non-empty strings", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({
+          agents: [makeExtra({ subagents: { allowAgents: ["", "ok"] } })],
+        }),
+      },
+      /allowAgents must be an array of non-empty strings/,
+    );
+  });
+
+  it("bakes defaults.subagents.maxSpawnDepth into agents.defaults.subagents", () => {
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({
+        agents: [],
+        defaults: { subagents: { maxSpawnDepth: 3 } },
+      }),
+    });
+    expect(config.agents.defaults.subagents).toEqual({ maxSpawnDepth: 3 });
+  });
+
+  it("rejects defaults.subagents.maxSpawnDepth outside OpenClaw's 1..5 range", () => {
+    for (const depth of [0, 6, -1, 1.5]) {
+      expectBuildConfigError(
+        {
+          NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({
+            agents: [],
+            defaults: { subagents: { maxSpawnDepth: depth } },
+          }),
+        },
+        /maxSpawnDepth must be an integer between 1 and 5/,
+      );
+    }
+  });
+
+  it("merges main.subagents and main.tools onto the canonical main entry", () => {
+    const mainTools = { profile: "minimal", allow: ["read", "write"] };
+    const mainSubagents = {
+      allowAgents: ["research"],
+      delegationMode: "prefer",
+      requireAgentId: true,
+    };
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({
+        agents: [makeExtra({ id: "research" })],
+        main: { tools: mainTools, subagents: mainSubagents },
+      }),
+    });
+    expect(config.agents.list[0]).toEqual({
+      id: "main",
+      default: true,
+      tools: mainTools,
+      subagents: mainSubagents,
+    });
+  });
+
+  it("rejects main overrides that target fields outside the allowlist", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({
+          agents: [],
+          main: { workspace: "/sandbox/.openclaw/workspace-main" },
+        }),
+      },
+      /NEMOCLAW_EXTRA_AGENTS_JSON\.main contains unsupported field\(s\): workspace/,
+    );
   });
 
   it("keeps compatible endpoints on the managed inference.local OpenClaw provider", () => {
