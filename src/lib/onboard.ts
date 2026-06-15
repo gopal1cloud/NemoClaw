@@ -3380,6 +3380,14 @@ type RemoteProviderSelectionArgs = {
   sandboxName: string | null;
 };
 
+function requireProviderChoice(selected: ProviderChoice | undefined): ProviderChoice {
+  if (!selected) {
+    console.error("  No provider was selected.");
+    process.exit(1);
+  }
+  return selected;
+}
+
 async function handleVllmSelection(
   state: SetupNimSelectionState,
 ): Promise<SetupNimSelectionResult> {
@@ -4075,10 +4083,7 @@ async function setupNim(
         });
       }
 
-      if (!selected) {
-        console.error("  No provider was selected.");
-        process.exit(1);
-      }
+      selected = requireProviderChoice(selected);
       if (selected.key !== "hermesProvider") {
         hermesAuthMethod = null;
         hermesToolGateways = [];
