@@ -394,6 +394,112 @@ function stashWechatMetadataForRebuild(sandboxName: string, log: (msg: string) =
   }
 }
 
+async function stageRebuildMessagingPlanOrBail(
+  sandboxName: string,
+  sb: RebuildSandboxEntry,
+  rebuildAgent: string | null,
+  log: (msg: string) => void,
+  bail: (msg: string, code?: number) => never,
+): Promise<SandboxMessagingPlan | null> {
+  try {
+    return await stageMessagingManifestPlanForRebuild(sandboxName, sb, rebuildAgent, log);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("");
+    console.error(
+      `  ${_RD}Rebuild preflight failed:${R} messaging manifest plan could not be staged.`,
+    );
+    console.error(`  ${message}`);
+    console.error("");
+    console.error("  Sandbox is untouched — no data was lost.");
+    bail(message);
+    return null;
+  }
+}
+
+function preflightRebuildCredentials(
+  sandboxName: string,
+  sb: RebuildSandboxEntry,
+  log: (msg: string) => void,
+  bail: (msg: string, code?: number) => never,
+): boolean {
+  const session = onboardSession.loadSession();
+  const sessionMatchesTarget = session?.sandboxName === sandboxName;
+  let rebuildCredentialEnv = sessionMatchesTarget
+    ? session?.credentialEnv || null
+    : getRebuildCredentialEnvFromRegistry(sb.provider);
+  if (!sessionMatchesTarget && session?.sandboxName) {
+    log(
+      `Preflight warning: session belongs to '${session.sandboxName}', not '${sandboxName}' — using registry credential env ${rebuildCredentialEnv || "(none)"}`,
+    );
+    console.log(
+      `  ${D}Note: onboard session belongs to '${session.sandboxName}', not '${sandboxName}'. ` +
+        `Using the '${sandboxName}' registry entry for credential preflight.${R}`,
+    );
+  }
+
+  const rebuildProvider = sessionMatchesTarget ? session?.provider || sb.provider : sb.provider;
+  if (
+    (session?.provider === "ollama-local" || session?.provider === "vllm-local") &&
+    rebuildCredentialEnv === "OPENAI_API_KEY"
+  ) {
+    console.log(
+      `  ${D}Note: migrating ${session.provider} sandbox off OPENAI_API_KEY (GH #2519). ` +
+        `Local inference does not require a host API key.${R}`,
+    );
+    log(
+      `Preflight: legacy ${session.provider} sandbox detected (credentialEnv=OPENAI_API_KEY) — clearing for rebuild`,
+    );
+    rebuildCredentialEnv = null;
+  }
+
+  if (rebuildProvider === hermesProviderAuth.HERMES_PROVIDER_NAME) {
+    if (
+      !preflightHermesProviderCredentials(
+        sessionMatchesTarget ? session : null,
+        rebuildCredentialEnv,
+        log,
+      )
+    ) {
+      bail("Missing Hermes Provider credentials");
+      return false;
+    }
+    rebuildCredentialEnv = null;
+  }
+
+  if (!rebuildCredentialEnv) {
+    log(
+      "Preflight credential check: no credentialEnv in session (local inference or missing session)",
+    );
+    return true;
+  }
+
+  const credentialValue = hydrateCredentialEnv(rebuildCredentialEnv);
+  log(
+    `Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`,
+  );
+  if (credentialValue) return true;
+  if (rebuildProvider && providerExistsInGateway(rebuildProvider, runOpenshell)) {
+    log(
+      `Preflight credential check: provider '${rebuildProvider}' registered in gateway — skipping env check for ${rebuildCredentialEnv}`,
+    );
+    return true;
+  }
+
+  console.error("");
+  console.error(`  ${_RD}Rebuild preflight failed:${R} provider credential not found.`);
+  console.error(`  The non-interactive recreate step requires ${rebuildCredentialEnv},`);
+  console.error("  but it is not set in the environment.");
+  console.error("");
+  console.error("  To fix, do one of:");
+  console.error(`    export ${rebuildCredentialEnv}=<your-key>`);
+  console.error(`    ${CLI_NAME} onboard          # re-enter the key interactively`);
+  console.error("");
+  console.error("  Sandbox is untouched — no data was lost.");
+  bail(`Missing credential: ${rebuildCredentialEnv}`);
+  return false;
+}
+
 function printRebuildVersionSummary(
   sandboxName: string,
   agentName: string,
@@ -495,133 +601,18 @@ export async function rebuildSandbox(
   if (!rebuildConfirmed) return;
 
   // Step 0: Preflight — verify recreate preconditions BEFORE destroying
-  // anything.  The most common rebuild failure is a missing provider
-  // credential when onboard runs in non-interactive mode.  Checking now
-  // lets us abort with the sandbox still intact.  See #2273.
-  const session = onboardSession.loadSession();
-  const sessionMatchesTarget = session?.sandboxName === sandboxName;
-  let rebuildCredentialEnv: string | null = null;
-  if (!sessionMatchesTarget) {
-    // Session belongs to a different sandbox — its credentialEnv may be
-    // wrong (e.g. hermes session while rebuilding openclaw). Resolve the
-    // target sandbox provider from the registry instead so destructive
-    // operations still get a credential preflight for the sandbox being rebuilt.
-    rebuildCredentialEnv = getRebuildCredentialEnvFromRegistry(sb.provider);
-    if (session?.sandboxName) {
-      log(
-        `Preflight warning: session belongs to '${session.sandboxName}', not '${sandboxName}' — using registry credential env ${rebuildCredentialEnv || "(none)"}`,
-      );
-      console.log(
-        `  ${D}Note: onboard session belongs to '${session.sandboxName}', not '${sandboxName}'. ` +
-          `Using the '${sandboxName}' registry entry for credential preflight.${R}`,
-      );
-    }
-  } else {
-    rebuildCredentialEnv = session?.credentialEnv || null;
-  }
-  const rebuildProvider = sessionMatchesTarget ? session?.provider || sb.provider : sb.provider;
-  // Legacy migration: pre-fix local-inference sandboxes (GH #2519, GH #2625)
-  // recorded credentialEnv="OPENAI_API_KEY" in onboard-session.json even
-  // though the sandbox does not actually need a host OpenAI key (ollama-local
-  // uses an auth proxy with an internal token; vllm-local accepts a static
-  // dummy bearer). Treat the legacy value as null so rebuild does not demand
-  // a credential that was never actually used.
-  //
-  // Post-#2625 the write path persists credentialEnv=null directly when the
-  // wizard selects a local provider, so fresh sessions no longer need this
-  // migration. We retain it for users whose session.json on disk predates
-  // the fix.
-  if (
-    (session?.provider === "ollama-local" || session?.provider === "vllm-local") &&
-    rebuildCredentialEnv === "OPENAI_API_KEY"
-  ) {
-    console.log(
-      `  ${D}Note: migrating ${session.provider} sandbox off OPENAI_API_KEY (GH #2519). ` +
-        `Local inference does not require a host API key.${R}`,
-    );
-    log(
-      `Preflight: legacy ${session.provider} sandbox detected (credentialEnv=OPENAI_API_KEY) — clearing for rebuild`,
-    );
-    rebuildCredentialEnv = null;
-  }
-  if (rebuildProvider === hermesProviderAuth.HERMES_PROVIDER_NAME) {
-    if (
-      !preflightHermesProviderCredentials(
-        sessionMatchesTarget ? session : null,
-        rebuildCredentialEnv,
-        log,
-      )
-    ) {
-      bail("Missing Hermes Provider credentials");
-      return;
-    }
-    // Hermes Provider credentials belong to OpenShell provider storage. Do not
-    // fall through to the generic env-var preflight, which would incorrectly
-    // demand OPENAI_API_KEY/NOUS_API_KEY after the provider is registered.
-    rebuildCredentialEnv = null;
-  }
-  if (rebuildCredentialEnv) {
-    // hydrateCredentialEnv migrates any pre-fix legacy credentials.json
-    // into process.env once, so users upgrading from a release that wrote
-    // the plaintext file can still rebuild without re-entering keys.
-    const credentialValue = hydrateCredentialEnv(rebuildCredentialEnv);
-    log(
-      `Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`,
-    );
-    if (!credentialValue) {
-      // When the inference provider is already registered in the OpenShell
-      // gateway, the recreate step does not need a host env value — the
-      // gateway is the source of truth for the secret. Skip the env-only
-      // preflight in that case so flows like `channels add` + rebuild keep
-      // working when the user has logged out of the original shell.
-      if (rebuildProvider && providerExistsInGateway(rebuildProvider, runOpenshell)) {
-        log(
-          `Preflight credential check: provider '${rebuildProvider}' registered in gateway — skipping env check for ${rebuildCredentialEnv}`,
-        );
-      } else {
-        console.error("");
-        console.error(`  ${_RD}Rebuild preflight failed:${R} provider credential not found.`);
-        console.error(`  The non-interactive recreate step requires ${rebuildCredentialEnv},`);
-        console.error("  but it is not set in the environment.");
-        console.error("");
-        console.error("  To fix, do one of:");
-        console.error(`    export ${rebuildCredentialEnv}=<your-key>`);
-        console.error(`    ${CLI_NAME} onboard          # re-enter the key interactively`);
-        console.error("");
-        console.error("  Sandbox is untouched — no data was lost.");
-        bail(`Missing credential: ${rebuildCredentialEnv}`);
-        return;
-      }
-    }
-  } else {
-    // No credentialEnv in session — local inference (Ollama/vLLM) or
-    // session was lost.  Either way, skip the credential preflight;
-    // onboard will handle it.
-    log(
-      "Preflight credential check: no credentialEnv in session (local inference or missing session)",
-    );
-  }
+  // anything. The most common rebuild failure is a missing provider credential
+  // when onboard runs in non-interactive mode. Checking now lets us abort with
+  // the sandbox still intact. See #2273.
+  if (!preflightRebuildCredentials(sandboxName, sb, log, bail)) return;
 
-  let rebuildMessagingPlan: SandboxMessagingPlan | null = null;
-  try {
-    rebuildMessagingPlan = await stageMessagingManifestPlanForRebuild(
-      sandboxName,
-      sb,
-      rebuildAgent,
-      log,
-    );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("");
-    console.error(
-      `  ${_RD}Rebuild preflight failed:${R} messaging manifest plan could not be staged.`,
-    );
-    console.error(`  ${message}`);
-    console.error("");
-    console.error("  Sandbox is untouched — no data was lost.");
-    bail(message);
-    return;
-  }
+  const rebuildMessagingPlan = await stageRebuildMessagingPlanOrBail(
+    sandboxName,
+    sb,
+    rebuildAgent,
+    log,
+    bail,
+  );
 
   // Step 1: Ensure sandbox is live for backup
   const recordedGateway = resolveSandboxGatewayName(sb);
